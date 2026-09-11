@@ -1,0 +1,208 @@
+# Architecture
+
+**Status:** PROPOSED — this is the **target** architecture. None of the
+directories below exist in the repository yet except where explicitly noted.
+See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for real, current status.
+
+## Architectural principles
+
+1. **Modular monolith, not microservices.** One deployable FastAPI backend,
+   internally organized into modules with clear boundaries. See
+   [`docs/DECISIONS/0001-modular-monolith-over-microservices.md`](DECISIONS/0001-modular-monolith-over-microservices.md).
+2. **PostgreSQL + pgvector is the only database/vector store** for the
+   initial implementation. See
+   [`docs/DECISIONS/0002-postgresql-pgvector-initial-vector-store.md`](DECISIONS/0002-postgresql-pgvector-initial-vector-store.md).
+3. **No premature infrastructure.** Kubernetes, Kafka, Redis, Celery,
+   Qdrant, and additional databases are explicitly excluded unless a
+   documented, measured requirement justifies them via a new ADR. This
+   includes rate limiting: the initial approach is in-process and/or
+   PostgreSQL-backed, not Redis — see [`docs/SECURITY.md`](SECURITY.md)
+   §"Rate limiting approach".
+4. **Provider abstraction** for swappable external capabilities:
+   `EmbeddingProvider`, `Reranker`, `LLMProvider`, `SpeechToTextProvider`,
+   `TextToSpeechProvider`, `StorageProvider`. No commercial provider is
+   selected yet; this repository contains no such decision.
+5. **Text RAG before voice.** Voice is a mode within chat, added after the
+   text pipeline is proven, not a parallel system.
+6. **Authentication is not purely stateless.** Short-lived bearer access
+   tokens are backed by server-tracked refresh/session records (in
+   PostgreSQL, no separate session store) enabling per-device session
+   listing and revocation. See
+   [`docs/DECISIONS/0003-authentication-session-architecture.md`](DECISIONS/0003-authentication-session-architecture.md).
+
+## System flow
+
+```
+USER
+ ├── TEXT
+ └── VOICE → STT
+          ↓
+   Query Understanding
+          ↓
+   Query Processing / Rewrite
+          ↓
+   Dense Retrieval + BM25
+          ↓
+   Result Fusion
+          ↓
+     Reranker
+          ↓
+   Metadata Filtering
+          ↓
+    Top-K Evidence
+          ↓
+    Context Builder
+          ↓
+        LLM
+          ↓
+ Answer + Citations
+ ├── TEXT
+ └── VOICE → TTS
+```
+
+Supporting systems (cross-cutting, not pipeline stages): authentication,
+authorization, multi-user workspaces, document management, collections,
+conversations, search, evaluation, observability, audit logging, security
+controls, testing, CI/CD, deployment.
+
+## Target repository structure
+
+```
+advanced-rag-knowledge-assistant/
+├── START_HERE.md
+├── AGENTS.md
+├── CLAUDE.md
+├── GEMINI.md
+├── PROJECT_STATE.md
+├── HANDOFF.md
+├── SOLVING.md
+├── CHANGELOG.md
+├── README.md
+├── .gitignore
+├── .gitattributes
+├── .env.example
+├── docs/
+│   ├── PROJECT_BRIEF.md
+│   ├── REQUIREMENTS.md
+│   ├── ARCHITECTURE.md
+│   ├── API_CONTRACT.md
+│   ├── DATA_MODEL.md
+│   ├── SECURITY.md
+│   ├── RAG_DESIGN.md
+│   ├── EVALUATION.md
+│   ├── DEPLOYMENT.md
+│   └── DECISIONS/
+├── backend/                     # PLANNED — does not exist yet
+│   ├── app/
+│   │   ├── api/                 # HTTP routes per API_CONTRACT.md
+│   │   ├── core/                # config, security, dependencies
+│   │   ├── models/               # SQLAlchemy models per DATA_MODEL.md
+│   │   ├── schemas/              # Pydantic request/response schemas
+│   │   ├── repositories/         # data access layer
+│   │   ├── services/              # business logic orchestration
+│   │   ├── ingestion/             # parse/clean/chunk/embed/index
+│   │   ├── retrieval/             # dense, BM25, fusion, rerank, filters
+│   │   ├── generation/            # context builder, LLM calls, citations
+│   │   ├── voice/                 # STT/TTS integration
+│   │   ├── evaluation/            # metrics, experiment runner
+│   │   └── observability/         # logging, tracing, metrics
+│   └── tests/
+├── frontend/                     # PLANNED — does not exist yet
+│   ├── app/                       # Next.js routes
+│   ├── components/
+│   ├── hooks/
+│   ├── lib/
+│   ├── types/
+│   └── tests/
+├── eval/                          # PLANNED — does not exist yet
+│   ├── datasets/
+│   ├── scripts/
+│   └── results/
+├── infra/                         # PLANNED — does not exist yet
+│   ├── docker/
+│   └── compose/
+├── .agents/
+│   └── skills/                    # roster documented; individual skills PLANNED
+└── .github/
+    └── workflows/                 # PLANNED — does not exist yet
+```
+
+Directories marked PLANNED are documented here for design purposes only —
+their absence from the working tree is expected at this phase.
+
+## Backend module responsibilities (target)
+
+| Module | Responsibility |
+|---|---|
+| `api/` | HTTP routing, request/response wiring, auth dependencies |
+| `core/` | configuration, security primitives, shared dependencies |
+| `models/` | SQLAlchemy ORM models |
+| `schemas/` | Pydantic schemas for request/response validation |
+| `repositories/` | data access — the only layer that talks to the DB directly |
+| `services/` | business logic orchestrating repositories/providers |
+| `ingestion/` | parsing, cleaning, chunking, embedding, indexing pipeline |
+| `retrieval/` | dense retrieval, BM25, fusion, reranking, metadata filtering |
+| `generation/` | context building, LLM invocation, citation generation |
+| `voice/` | STT/TTS provider integration |
+| `evaluation/` | retrieval/generation metrics, experiment tracking |
+| `observability/` | structured logging, request IDs, latency/token metrics |
+
+## Frontend UX direction
+
+The application should **not** look like a generic admin dashboard. Design
+direction: a ChatGPT-like conversational experience combined with
+Notion-like knowledge organization, modern developer-tool clarity, and its
+own visual identity appropriate for enterprise knowledge software.
+
+Core UX story: **Upload knowledge → retrieve evidence → receive grounded
+answer → inspect citations.**
+
+### Target routes
+
+```
+/
+/login
+/register
+/dashboard
+/workspace
+/documents
+/documents/[id]
+/collections
+/collections/[id]
+/chat/[id]
+/search
+/evaluations
+/analytics
+/settings
+```
+
+Requirements: responsive across desktop/tablet/mobile, accessible and
+reusable components, explicit loading/empty/error/success/processing states,
+and a command palette (`Ctrl+K`) with actions such as open document, new
+chat, search, switch workspace, evaluations, settings.
+
+## Provider abstractions
+
+Interfaces to be defined in `backend/app/services/` (or a dedicated
+`providers/` module, to be decided when implementation starts):
+
+- `EmbeddingProvider`
+- `Reranker`
+- `LLMProvider`
+- `SpeechToTextProvider`
+- `TextToSpeechProvider`
+- `StorageProvider`
+
+No commercial vendor is selected for any of these yet. A selection becomes
+real only once recorded as an ADR in `docs/DECISIONS/`. Development tooling
+(e.g. Claude Code) is not the application's runtime LLM provider — the two
+are unrelated.
+
+## Related documents
+
+- API surface: [`docs/API_CONTRACT.md`](API_CONTRACT.md)
+- Data model: [`docs/DATA_MODEL.md`](DATA_MODEL.md)
+- RAG pipeline detail: [`docs/RAG_DESIGN.md`](RAG_DESIGN.md)
+- Security model: [`docs/SECURITY.md`](SECURITY.md)
+- Deployment approach: [`docs/DEPLOYMENT.md`](DEPLOYMENT.md)
+- Decisions: [`docs/DECISIONS/`](DECISIONS/)
