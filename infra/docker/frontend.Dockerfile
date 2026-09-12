@@ -10,6 +10,12 @@ RUN npm ci
 
 COPY . .
 
+# `public/` is optional — this app has no static assets there yet (the
+# favicon lives at app/favicon.ico) — and Git does not track empty
+# directories, so a clean checkout may not contain it at all. Ensure it
+# exists so the runner stage's COPY below always succeeds.
+RUN mkdir -p public
+
 # NEXT_PUBLIC_* variables are inlined into the client bundle at build time,
 # not read at container runtime — so this must be a build ARG, not just a
 # runtime `environment:` entry in docker-compose.
