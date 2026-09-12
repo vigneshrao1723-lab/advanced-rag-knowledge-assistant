@@ -1,9 +1,12 @@
 # Advanced RAG Knowledge Intelligence Assistant
 
-> **Status: Documentation / Initialization phase.** No application code exists
-> yet. This repository currently contains project documentation, architecture
-> decisions, and planning artifacts only. See [`PROJECT_STATE.md`](PROJECT_STATE.md)
-> for the authoritative, up-to-date snapshot of what is implemented vs. planned.
+> **Status: Application Foundation (GitHub Issue #1) implemented.** A runnable
+> skeleton exists — FastAPI backend, Next.js frontend, PostgreSQL + pgvector,
+> Docker Compose for local dev, and a CI workflow — with no product
+> functionality (auth, ingestion, retrieval, generation, voice) yet; that is
+> real, tracked future work under Issues #2–#8. See
+> [`PROJECT_STATE.md`](PROJECT_STATE.md) for the authoritative, up-to-date
+> snapshot of what is implemented vs. planned.
 
 A multi-user, voice-enabled RAG (Retrieval-Augmented Generation) knowledge
 platform, **designed** with production-oriented engineering practices (see
@@ -40,7 +43,7 @@ retrieval/generation evaluation, observability, audit logging, and security
 controls. Full detail lives in [`docs/RAG_DESIGN.md`](docs/RAG_DESIGN.md) and
 [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md).
 
-## Target architecture (not yet implemented)
+## Target architecture (Application Foundation implemented; product logic not yet implemented)
 
 - **Backend:** Python, FastAPI, PostgreSQL + pgvector, SQLAlchemy, Pydantic —
   a **modular monolith** (explicitly not microservices).
@@ -58,25 +61,29 @@ Redis, Celery, Qdrant, multi-database setups) and why — is documented in
 |---|---|
 | Project documentation & architecture | IMPLEMENTED |
 | Repository scaffold (`.gitignore`, `.env.example`, remote) | IMPLEMENTED |
-| Backend application | PLANNED — not started |
-| Frontend application | PLANNED — not started |
-| Database schema | PLANNED — not started |
-| Ingestion / retrieval / generation pipeline | PLANNED — not started |
-| Voice (STT/TTS) | PLANNED — not started |
-| Evaluation harness | PLANNED — not started |
-| CI/CD | PLANNED — not started |
-| Deployment | PLANNED — not started |
+| Backend application (Issue #1 — foundation only, no feature logic) | IMPLEMENTED |
+| Frontend application (Issue #1 — shell + stub routes only) | IMPLEMENTED |
+| Database schema | PLANNED — Alembic/pgvector plumbing exists (Issue #1); no entity tables yet |
+| Authentication / workspaces | PLANNED — Issue #2 |
+| Ingestion / retrieval / generation pipeline | PLANNED — Issues #3–#4 |
+| Voice (STT/TTS) | PLANNED — Issue #6 |
+| Evaluation harness | PLANNED — Issue #7 |
+| CI/CD | IMPLEMENTED — Issue #1 |
+| Deployment (local Docker Compose) | IMPLEMENTED — Issue #1; production deployment is Issue #8 |
 
-No functionality described above should be read as already built. See
-[`PROJECT_STATE.md`](PROJECT_STATE.md) for status of individual components as
-work begins.
+This table names Issue #1's foundation as implemented; it is not a claim
+that any product feature (auth, ingestion, retrieval, generation, voice) is
+built. See [`PROJECT_STATE.md`](PROJECT_STATE.md) for the authoritative,
+current status of every component.
 
 ## Getting started (for contributors and AI agents)
 
 Read [`START_HERE.md`](START_HERE.md) first — it defines the mandatory reading
-order and repository rules. There is no runnable application yet, so there is
-no setup/run procedure to document here. This section will be replaced with
-real setup instructions once the backend and frontend scaffolds exist.
+order and repository rules. A runnable Application Foundation exists (see
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the local Docker Compose
+setup), but it has no product functionality yet — there is nothing to
+demo as a user-facing feature. Real end-user setup/run instructions will
+replace this section as product functionality (Issues #2–#8) lands.
 
 ## Documentation map
 
@@ -96,10 +103,12 @@ real setup instructions once the backend and frontend scaffolds exist.
 
 ## Roadmap
 
-See the issue plan in [`AGENTS.md`](AGENTS.md#github--collaboration-model) and
-[`PROJECT_STATE.md`](PROJECT_STATE.md#immediate-priorities) for the intended
-sequencing of work, starting with architecture documentation and the frontend
-design system before any backend implementation begins.
+Real GitHub issues `#1`–`#8` track the work (`#1` Application Foundation —
+implemented; `#2` Authentication & Workspaces; `#3` Knowledge Ingestion; `#4`
+Hybrid RAG Pipeline; `#5` Product Experience; `#6` Voice; `#7` Evaluation,
+Security & Observability; `#8` CI/CD, Deployment & Finalization). See
+[`PROJECT_STATE.md`](PROJECT_STATE.md#immediate-priorities) for current
+status and the exact next step.
 
 ## License
 

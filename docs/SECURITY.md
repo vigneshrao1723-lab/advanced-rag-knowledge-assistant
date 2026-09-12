@@ -1,8 +1,17 @@
 # Security
 
 **Status:** PROPOSED — this document defines the security model the
-implementation must satisfy. No security controls are implemented yet
-(there is no application code); see [`PROJECT_STATE.md`](../PROJECT_STATE.md).
+implementation must satisfy. Application code now exists (GitHub Issue #1 —
+Application Foundation), but none of the security controls described below
+are implemented yet: there is no authentication/authorization, no workspace
+isolation, no upload validation, and no rate limiting, because none of the
+surfaces those controls protect (auth, uploads, workspaces) exist yet
+either. The Issue #1 foundation does implement generic, non-auth-related
+protections already required by this document — centralized error handling
+that never leaks stack traces/internal paths (see "Errors and information
+disclosure" below) and loud-failure config loading for missing required
+settings (see "Secret management" below). See
+[`PROJECT_STATE.md`](../PROJECT_STATE.md) for current, per-control status.
 
 ## Trust boundaries and core principles
 

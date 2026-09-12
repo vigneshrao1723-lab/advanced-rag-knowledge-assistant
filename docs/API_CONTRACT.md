@@ -1,8 +1,11 @@
 # API Contract
 
-**Status:** PROPOSED — no API endpoints are implemented. This document
-records the intended API namespace layout only, to keep future
-implementation consistent. It is not a claim that any endpoint exists.
+**Status:** PARTIALLY IMPLEMENTED — `/api/v1/health` (liveness and
+readiness) is implemented (GitHub Issue #1 — Application Foundation). Every
+other namespace below is still PROPOSED / target only; this document
+records the intended API namespace layout to keep future implementation
+consistent, not a claim that those endpoints exist. See
+[`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 
 ## Conventions (intended)
 
@@ -38,7 +41,7 @@ implementation consistent. It is not a claim that any endpoint exists.
 | `/api/v1/conversations` | Chat sessions, messages, regenerate/retry, feedback |
 | `/api/v1/evaluations` | Trigger and inspect evaluation runs and results |
 | `/api/v1/voice` | STT/TTS session endpoints, integrated with conversations |
-| `/api/v1/health` | Liveness/readiness checks |
+| `/api/v1/health` | Liveness/readiness checks (**implemented**, Issue #1) |
 
 ## Not yet defined
 

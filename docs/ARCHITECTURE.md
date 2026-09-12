@@ -1,8 +1,13 @@
 # Architecture
 
-**Status:** PROPOSED — this is the **target** architecture. None of the
-directories below exist in the repository yet except where explicitly noted.
-See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for real, current status.
+**Status:** PARTIALLY IMPLEMENTED — the Application Foundation (GitHub
+Issue #1) implements the repository structure, backend skeleton, frontend
+shell, and local Docker/CI infrastructure described below. The pipeline
+stages, provider abstractions, and product functionality described in this
+document (ingestion, retrieval, generation, voice, evaluation, etc.) remain
+**PROPOSED / target** design — none of that logic is implemented yet; it is
+tracked as Issues #2–#8. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for
+real, current, per-component status.
 
 ## Architectural principles
 
@@ -92,43 +97,45 @@ advanced-rag-knowledge-assistant/
 │   ├── EVALUATION.md
 │   ├── DEPLOYMENT.md
 │   └── DECISIONS/
-├── backend/                     # PLANNED — does not exist yet
+├── backend/                     # IMPLEMENTED (Issue #1 — foundation only)
 │   ├── app/
-│   │   ├── api/                 # HTTP routes per API_CONTRACT.md
-│   │   ├── core/                # config, security, dependencies
-│   │   ├── models/               # SQLAlchemy models per DATA_MODEL.md
-│   │   ├── schemas/              # Pydantic request/response schemas
-│   │   ├── repositories/         # data access layer
-│   │   ├── services/              # business logic orchestration
-│   │   ├── ingestion/             # parse/clean/chunk/embed/index
-│   │   ├── retrieval/             # dense, BM25, fusion, rerank, filters
-│   │   ├── generation/            # context builder, LLM calls, citations
-│   │   ├── voice/                 # STT/TTS integration
-│   │   ├── evaluation/            # metrics, experiment runner
-│   │   └── observability/         # logging, tracing, metrics
-│   └── tests/
-├── frontend/                     # PLANNED — does not exist yet
-│   ├── app/                       # Next.js routes
+│   │   ├── api/                 # HTTP routes per API_CONTRACT.md — health only so far
+│   │   ├── core/                # config, security, dependencies — implemented
+│   │   ├── models/               # SQLAlchemy models per DATA_MODEL.md — base only, no entities yet
+│   │   ├── schemas/              # Pydantic request/response schemas — PLANNED (Issue #2+)
+│   │   ├── repositories/         # data access layer — PLANNED (Issue #2+)
+│   │   ├── services/              # business logic orchestration — PLANNED (Issue #2+)
+│   │   ├── ingestion/             # parse/clean/chunk/embed/index — PLANNED (Issue #3)
+│   │   ├── retrieval/             # dense, BM25, fusion, rerank, filters — PLANNED (Issue #4)
+│   │   ├── generation/            # context builder, LLM calls, citations — PLANNED (Issue #4)
+│   │   ├── voice/                 # STT/TTS integration — PLANNED (Issue #6)
+│   │   ├── evaluation/            # metrics, experiment runner — PLANNED (Issue #7)
+│   │   └── observability/         # logging, tracing, metrics — implemented (structured logging, request IDs)
+│   └── tests/                     # implemented (health/config coverage)
+├── frontend/                     # IMPLEMENTED (Issue #1 — shell + stub routes only)
+│   ├── app/                       # Next.js routes — implemented as stubs; real UI is Issue #5
 │   ├── components/
 │   ├── hooks/
 │   ├── lib/
 │   ├── types/
 │   └── tests/
-├── eval/                          # PLANNED — does not exist yet
+├── eval/                          # PLANNED — does not exist yet (Issue #7)
 │   ├── datasets/
 │   ├── scripts/
 │   └── results/
-├── infra/                         # PLANNED — does not exist yet
+├── infra/                         # IMPLEMENTED (Issue #1 — local dev only; production packaging is Issue #8)
 │   ├── docker/
 │   └── compose/
 ├── .agents/
 │   └── skills/                    # roster documented; individual skills PLANNED
 └── .github/
-    └── workflows/                 # PLANNED — does not exist yet
+    └── workflows/                 # IMPLEMENTED (Issue #1 — lint/typecheck/test/build/Docker-build CI)
 ```
 
-Directories marked PLANNED are documented here for design purposes only —
-their absence from the working tree is expected at this phase.
+Directories/modules marked IMPLEMENTED exist on disk and are verified working
+(see `PROJECT_STATE.md`); those marked PLANNED are documented here for design
+purposes only and their absence from the working tree is expected at this
+phase.
 
 ## Backend module responsibilities (target)
 

@@ -6,12 +6,33 @@ touching any file.
 
 ## 1. What this repository is, right now
 
-This is the **Advanced RAG Knowledge Intelligence Assistant** repository. As
-of this writing it contains **documentation and project scaffolding only** —
-no backend, no frontend, no database, no CI, no deployed infrastructure. The
-target system is described in `docs/`, but describing a system is not
-evidence that it exists. Treat the actual files on disk as ground truth, not
-this document's description of the target.
+This is the **Advanced RAG Knowledge Intelligence Assistant** repository.
+The documentation/project-memory system (this file, `AGENTS.md`, `docs/`,
+etc.) is committed. **GitHub Issue #1 (Application Foundation)** — a FastAPI
+backend, a Next.js frontend, PostgreSQL + pgvector, Docker/Compose for local
+development, and a GitHub Actions CI workflow — has been implemented and
+locally verified (see `PROJECT_STATE.md`), but as of this writing it exists
+only in the local working tree on branch `issue-1-application-foundation`
+and has **not yet been committed, pushed, or merged** — `git status` is the
+ground truth for this, not this file. No product functionality (auth,
+ingestion, retrieval, generation, chat, voice) exists yet; that is real,
+tracked, future work — see §1a. The target system is described in `docs/`,
+but describing a system is not evidence that it exists. Treat the actual
+files on disk (and `git log`/`git status`) as ground truth, not this
+document's description.
+
+## 1a. GitHub issue tracking
+
+The repository `vigneshrao1723-lab/advanced-rag-knowledge-assistant` has
+real, filed GitHub issues #1–#8, each covering a phase of the work:
+`#1` Application Foundation, `#2` Authentication & Workspaces, `#3`
+Knowledge Ingestion, `#4` Hybrid RAG Pipeline, `#5` Product Experience, `#6`
+Voice, `#7` Evaluation, Security & Observability, `#8` CI/CD, Deployment &
+Finalization. These are the authoritative unit of work — distinct from the
+finer-grained `#1`–`#43` planning baseline in `AGENTS.md` §9, which is an
+internal task-breakdown reference that does not map one-to-one onto the
+real, filed issues (each real issue bundles several baseline reference
+items). Do not confuse the two numbering schemes.
 
 ## 2. Mandatory reading order
 
