@@ -1,8 +1,12 @@
 # Data Model
 
-**Status:** PROPOSED — no database schema or migrations exist yet. This
-document records the intended core entities so future implementation stays
-consistent; it is not evidence of an implemented schema.
+**Status:** PROPOSED — no entity schema (the tables listed below) exists
+yet. Alembic migration plumbing does exist (GitHub Issue #1 — Application
+Foundation): a real migration chain runs against PostgreSQL and enables the
+`pgvector` extension, but it creates no application tables. This document
+records the intended core entities so future implementation stays
+consistent; it is not evidence that any of them are implemented. See
+[`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 
 ## Core entities (proposed)
 
