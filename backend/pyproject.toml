@@ -9,9 +9,11 @@ dependencies = [
     "sqlalchemy>=2.0",
     "alembic>=1.13",
     "psycopg[binary]>=3.2",
-    "pydantic>=2.9",
+    "pydantic[email]>=2.9",
     "pydantic-settings>=2.6",
     "pgvector>=0.3.6",
+    "argon2-cffi>=25.1.0",
+    "pyjwt>=2.14.0",
 ]
 
 [dependency-groups]
@@ -30,7 +32,10 @@ src = ["app", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
-ignore = []
+# B008: FastAPI's dependency-injection pattern (`param: T = Depends(...)`)
+# calls a function in an argument default by design — that's the intended
+# API, not the mutable-default-argument bug this rule otherwise catches.
+ignore = ["B008"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]

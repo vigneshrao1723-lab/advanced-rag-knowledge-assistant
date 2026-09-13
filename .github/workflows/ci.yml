@@ -13,6 +13,27 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    services:
+      # Real PostgreSQL + pgvector — Issue #2's integration/security tests
+      # exercise auth and workspace isolation against a real database, per
+      # docs/DECISIONS/0002 (no sqlite substitute). Service container ports
+      # are published to `localhost` on the job's own runner.
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: raguser
+          POSTGRES_PASSWORD: ragpass
+          POSTGRES_DB: ragdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U raguser -d ragdb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://raguser:ragpass@localhost:5432/ragdb
+      SECRET_KEY: ci-test-secret-key-not-for-production
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +55,9 @@ jobs:
 
       - name: Mypy
         run: uv run mypy .
+
+      - name: Run Alembic migrations
+        run: uv run alembic upgrade head
 
       - name: Pytest
         run: uv run pytest -v

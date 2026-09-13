@@ -31,6 +31,10 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-local}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      # Local-dev-only placeholder — override with a real generated secret
+      # (e.g. `openssl rand -hex 32`) via a `.env` file for anything beyond
+      # a throwaway local stack; never commit a real value.
+      SECRET_KEY: ${SECRET_KEY:-local-dev-only-secret-do-not-use-in-production}
     ports:
       - "8000:8000"
     depends_on:

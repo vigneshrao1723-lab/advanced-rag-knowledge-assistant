@@ -40,8 +40,17 @@ class Settings(BaseSettings):
     def cors_allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
+    # Required as of Issue #2: signs/verifies access tokens (app/core/security.py).
+    # No fake default — config loading fails loudly if it's missing, per
+    # docs/SECURITY.md "Secret management".
+    secret_key: str
+
+    # Access tokens are short-lived and validated without a DB round-trip
+    # (ADR 0003); refresh tokens are long-lived but revocable server-side.
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 30
+
     # Reserved for future issues — not consumed by any code path yet.
-    secret_key: str | None = None
     llm_api_key: str | None = None
     embedding_api_key: str | None = None
     reranker_api_key: str | None = None
