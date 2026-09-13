@@ -1,16 +1,14 @@
 # Security
 
-**Status:** PROPOSED — this document defines the security model the
-implementation must satisfy. Application code now exists (GitHub Issue #1 —
-Application Foundation), but none of the security controls described below
-are implemented yet: there is no authentication/authorization, no workspace
-isolation, no upload validation, and no rate limiting, because none of the
-surfaces those controls protect (auth, uploads, workspaces) exist yet
-either. The Issue #1 foundation does implement generic, non-auth-related
-protections already required by this document — centralized error handling
-that never leaks stack traces/internal paths (see "Errors and information
-disclosure" below) and loud-failure config loading for missing required
-settings (see "Secret management" below). See
+**Status:** PARTIALLY IMPLEMENTED — authentication, authorization, workspace
+isolation, and rate limiting on auth endpoints are now implemented and
+tested (GitHub Issue #2 — Authentication & Workspaces; see "Authentication
+& authorization" and "Rate limiting approach" below for exactly what's
+real). Upload validation, prompt-injection defense, and audit logging
+remain not implemented — there's no upload or generation surface yet for
+them to protect. The Issue #1 foundation's generic protections (centralized
+error handling, loud-failure config loading) are also in place — see
+"Errors and information disclosure" and "Secret management" below. See
 [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current, per-control status.
 
 ## Trust boundaries and core principles
@@ -43,20 +41,27 @@ settings (see "Secret management" below). See
 
 ## Authentication & authorization
 
-- Passwords hashed with a modern, salted algorithm (algorithm choice to be
-  recorded as an ADR when authentication is implemented).
+**Implemented (Issue #2)**, all in `backend/app/core/security.py` and
+`backend/app/services/auth_service.py` unless noted:
+
+- Passwords hashed with Argon2id (see
+  [ADR 0004](DECISIONS/0004-password-hashing-argon2id.md)).
 - Short-lived bearer access tokens backed by server-tracked refresh/session
   records — the architecture is **not** purely stateless. See
   [`docs/DECISIONS/0003-authentication-session-architecture.md`](DECISIONS/0003-authentication-session-architecture.md)
   for the full model.
 - Sessions/devices are listable and individually revocable by the user;
   refresh tokens rotate on use; **logout invalidates the corresponding
-  session's refresh capability immediately.**
+  session's refresh capability immediately.** Reuse of a rotated-out
+  refresh token revokes that session outright.
 - Role-based authorization within a workspace: `OWNER`, `ADMIN`, `MEMBER`,
-  `VIEWER` — enforced server-side on every workspace-scoped endpoint, not
-  just at the UI layer.
+  `VIEWER` — enforced server-side on every workspace-scoped endpoint via
+  `backend/app/core/dependencies.py`'s `require_workspace_role`, not just
+  at the UI layer. See `docs/API_CONTRACT.md`'s authorization matrix.
 - Rate limiting and brute-force protection on login/registration/refresh
   (see "Rate limiting approach" below).
+- Login failures return the same generic message whether the account
+  exists or not, resisting enumeration via the login endpoint.
 
 ## Rate limiting approach
 
@@ -75,8 +80,11 @@ external session/cache store is introduced solely to implement it:
 - If horizontal scaling later makes in-process/PostgreSQL-backed limiting
   inadequate, that is revisited through a new ADR backed by measured
   evidence, not decided in advance.
-- This section describes the intended approach only — **rate limiting is
-  not implemented yet.**
+- **Implemented (Issue #2):** an in-process fixed-window limiter
+  (`backend/app/core/rate_limit.py`) guards `register`, `login`, and
+  `refresh`, keyed by client IP — correct for the current single-process
+  deployment (`infra/docker/backend.Dockerfile` runs no `--workers`); no
+  PostgreSQL-backed counters were needed yet.
 
 ## Upload & document safety
 
@@ -128,23 +136,36 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
 
 - **Cross-workspace access tests** — attempt to read/write another
   workspace's documents, conversations, and collections; must fail.
+  **Implemented (Issue #2)** for workspaces/membership themselves —
+  `backend/tests/test_workspaces.py` proves a non-member gets `404` (never
+  `403`, never real data) on every workspace-scoped endpoint. Documents/
+  conversations/collections don't exist yet, so this extends to them when
+  they're built.
 - **Malicious upload tests** — oversized files, mismatched
   extension/content, malformed PDFs/DOCX, zip-bomb-style payloads; must be
-  rejected or safely contained.
+  rejected or safely contained. Not implemented — no upload surface exists
+  yet (Issue #3).
 - **Prompt injection tests** — documents containing instruction-like text
   ("ignore the above," attempts to leak system prompt or other users'
-  data); the system must not comply with injected instructions.
+  data); the system must not comply with injected instructions. Not
+  implemented — no generation surface exists yet (Issue #4).
 - **Auth bypass tests** — attempt to access protected endpoints without a
   valid session, with an expired session, or with a session from a
-  different workspace.
+  different workspace. **Implemented (Issue #2)** —
+  `backend/tests/test_auth.py` covers missing/garbage/expired/wrong-signature
+  access tokens and revoked refresh tokens; `test_workspaces.py` covers a
+  valid session with no membership in the target workspace.
 - **Path traversal tests** — filenames/paths like `../../etc/passwd` must
-  be neutralized.
+  be neutralized. Not implemented — no file storage surface exists yet
+  (Issue #3).
 - **Rate limiting tests** — confirm limits actually trigger under load on
-  login and expensive endpoints.
+  login and expensive endpoints. **Implemented (Issue #2)** —
+  `backend/tests/test_auth.py` drives `register`/`login`/`refresh` past
+  their limits and asserts `429`.
 
-None of these tests exist yet — they are written alongside the
-corresponding feature per the Definition of Done in `AGENTS.md` §7, not
-deferred to a later "security phase."
+The remaining tests (malicious upload, prompt injection, path traversal)
+are written alongside their corresponding feature per the Definition of
+Done in `AGENTS.md` §7, not deferred to a later "security phase."
 
 ## Related documents
 

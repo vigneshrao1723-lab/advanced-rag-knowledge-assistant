@@ -1,12 +1,14 @@
 # Architecture
 
-**Status:** PARTIALLY IMPLEMENTED — the Application Foundation (GitHub
-Issue #1) implements the repository structure, backend skeleton, frontend
-shell, and local Docker/CI infrastructure described below. The pipeline
-stages, provider abstractions, and product functionality described in this
-document (ingestion, retrieval, generation, voice, evaluation, etc.) remain
-**PROPOSED / target** design — none of that logic is implemented yet; it is
-tracked as Issues #2–#8. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for
+**Status:** PARTIALLY IMPLEMENTED — the Application Foundation (Issue #1)
+implements the repository structure, backend skeleton, frontend shell, and
+local Docker/CI infrastructure; Authentication & Workspaces (Issue #2) adds
+the first real feature vertical slice (auth, sessions, workspace
+CRUD/membership/roles) on top of it — see the module tree below. The
+pipeline stages, provider abstractions, and remaining product functionality
+(ingestion, retrieval, generation, voice, evaluation, etc.) remain
+**PROPOSED / target** design; that is tracked as Issues #3–#8. See
+[`PROJECT_STATE.md`](../PROJECT_STATE.md) for
 real, current, per-component status.
 
 ## Architectural principles
@@ -97,23 +99,23 @@ advanced-rag-knowledge-assistant/
 │   ├── EVALUATION.md
 │   ├── DEPLOYMENT.md
 │   └── DECISIONS/
-├── backend/                     # IMPLEMENTED (Issue #1 — foundation only)
+├── backend/                     # IMPLEMENTED (Issues #1–#2)
 │   ├── app/
-│   │   ├── api/                 # HTTP routes per API_CONTRACT.md — health only so far
-│   │   ├── core/                # config, security, dependencies — implemented
-│   │   ├── models/               # SQLAlchemy models per DATA_MODEL.md — base only, no entities yet
-│   │   ├── schemas/              # Pydantic request/response schemas — PLANNED (Issue #2+)
-│   │   ├── repositories/         # data access layer — PLANNED (Issue #2+)
-│   │   ├── services/              # business logic orchestration — PLANNED (Issue #2+)
+│   │   ├── api/                 # HTTP routes per API_CONTRACT.md — health, auth, users, workspaces
+│   │   ├── core/                # config, security (hashing/JWT), rate limiting, auth dependencies — implemented
+│   │   ├── models/               # SQLAlchemy models per DATA_MODEL.md — users/sessions/workspaces/workspace_members implemented
+│   │   ├── schemas/              # Pydantic request/response schemas — implemented (auth, user, workspace)
+│   │   ├── repositories/         # data access layer — implemented (user/session/workspace/workspace_member)
+│   │   ├── services/              # business logic orchestration — implemented (auth_service, workspace_service)
 │   │   ├── ingestion/             # parse/clean/chunk/embed/index — PLANNED (Issue #3)
 │   │   ├── retrieval/             # dense, BM25, fusion, rerank, filters — PLANNED (Issue #4)
 │   │   ├── generation/            # context builder, LLM calls, citations — PLANNED (Issue #4)
 │   │   ├── voice/                 # STT/TTS integration — PLANNED (Issue #6)
 │   │   ├── evaluation/            # metrics, experiment runner — PLANNED (Issue #7)
 │   │   └── observability/         # logging, tracing, metrics — implemented (structured logging, request IDs)
-│   └── tests/                     # implemented (health/config coverage)
-├── frontend/                     # IMPLEMENTED (Issue #1 — shell + stub routes only)
-│   ├── app/                       # Next.js routes — implemented as stubs; real UI is Issue #5
+│   └── tests/                     # implemented (health/config/security/rate-limit/auth/workspaces coverage)
+├── frontend/                     # IMPLEMENTED (Issues #1–#2)
+│   ├── app/                       # Next.js routes — login/register/dashboard/settings/workspace implemented; documents/collections/chat/search/evaluations/analytics remain stubs (Issue #5)
 │   ├── components/
 │   ├── hooks/
 │   ├── lib/

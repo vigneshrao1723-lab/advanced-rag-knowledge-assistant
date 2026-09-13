@@ -8,135 +8,135 @@ in-flight task — overwrite it as work progresses, don't append a history
 
 ## Current task
 
-Complete GitHub Issue #1 — Application Foundation. A prior session
-implemented the backend/frontend/infra scaffolding; this session resumed
-that work to run the full local verification pass Issue #1 requires (Docker
-builds, Compose stack, PostgreSQL + pgvector, Alembic against the real
-database, health/readiness, frontend↔backend integration) and to add the
-CI workflow. No product functionality (auth, ingestion, retrieval,
-generation, voice) was implemented — out of scope for this issue.
+Implement GitHub Issue #2 — Authentication & Workspaces, on branch
+`issue-2-authentication-workspaces`. Issue #1 (Application Foundation) is
+already merged to `main` (PR #9). Full scope: registration, login, logout,
+JWT access tokens + PostgreSQL-backed sessions with refresh rotation and
+reuse-detection revocation (per ADR 0003), session/device management,
+workspace CRUD/membership/four-role authorization, server-side workspace
+isolation, and a minimal frontend vertical slice
+(`/register`, `/login`, `/dashboard`, `/settings`, `/workspace`).
 
 ## Completed work
 
-- Re-verified backend: `ruff check` clean, `mypy --strict` clean (30
-  files), `pytest` 7/7 passing.
-- Re-verified frontend: `eslint` clean, `tsc --noEmit` clean, `vitest` 3/3
-  passing, `next build` succeeds (14 routes).
-- Validated `infra/compose/docker-compose.yml` with `docker compose config`.
-- Built both Docker images (`docker compose build backend frontend`) —
-  succeeded.
-- Started the full stack (`docker compose up -d`): Postgres+pgvector,
-  backend, frontend.
-- **Found and fixed a real bug**: the backend container crash-looped
-  (`Restarting`, exit code 2) on first boot. `infra/docker/backend.Dockerfile`
-  built `.venv` as root, then switched to `USER appuser` without transferring
-  ownership; `docker-entrypoint.sh`'s `uv run alembic upgrade head` tries to
-  resync the editable install at every container start and got
-  `Permission denied` trying to write into the root-owned `.venv`. Fixed by
-  adding `chown -R appuser:appuser /app` before the `USER appuser` line.
-  Rebuilt and confirmed the backend now starts cleanly, runs the Alembic
-  migration, and serves requests.
-- **Found and fixed a second real bug**: the backend had no CORS
-  middleware. `curl` against `/api/v1/health/ready` from the host worked
-  (no browser CORS enforcement), which could have been mistaken for working
-  frontend↔backend communication — but a real browser at
-  `http://localhost:3000` fetching `http://localhost:8000` would have been
-  silently blocked (verified: no `Access-Control-Allow-Origin` header
-  before the fix). Added `CORSMiddleware` in `backend/app/main.py`, a new
-  `cors_allowed_origins` setting in `backend/app/core/config.py` (default
-  `http://localhost:3000`), and wired `CORS_ALLOWED_ORIGINS` through
-  `.env.example` and `infra/compose/docker-compose.yml`. Re-verified:
-  backend lint/typecheck/tests still pass; rebuilt the backend image;
-  confirmed `Access-Control-Allow-Origin: http://localhost:3000` is now
-  present on responses to requests carrying `Origin: http://localhost:3000`.
-- Verified pgvector is actually enabled in the running container:
-  `psql \dx` inside `compose-db-1` shows `vector 0.8.6`.
-- Verified Alembic ran against the real container: migration `0001` (enable
-  pgvector extension) applied; `alembic current` reports `0001 (head)`.
-- Verified `/api/v1/health` (liveness) and `/api/v1/health/ready`
-  (readiness, real DB round-trip) both return HTTP 200 from the running
-  container.
-- Verified the frontend serves (`HTTP 200` on `/`) and the page embedding
-  the `BackendStatus` widget (`frontend/app/page.tsx`) renders (confirmed
-  the "Backend status" / "Checking…" markup is present in the served HTML).
-  **Not verified**: the widget's resolved end state
-  ("Backend reachable, database ready") in an actual rendered DOM — that
-  requires a real or headless browser executing the client-side `useEffect`
-  fetch, which wasn't available in this environment without installing new
-  browser binaries (judged out of scope for a one-off check). The
-  CORS-enabled fetch itself was verified directly with `curl` using the
-  frontend's exact origin header, which is the substantive risk the widget
-  depends on.
-- Created `.github/workflows/ci.yml`: backend job (ruff, mypy, pytest),
-  frontend job (eslint, tsc, vitest, next build), and a docker-build job
-  (builds both images with the same `context`/`file` arguments
-  `docker/build-push-action` would use, plus `docker compose config`).
-  Validated the YAML syntax and reproduced both Docker build invocations
-  locally byte-for-byte (context= `backend`/`frontend`, file path relative
-  to repo root) — they succeed. The workflow itself has not run on GitHub
-  Actions since nothing is committed/pushed yet.
-- Brought the stack down cleanly (`docker compose down`) after verification.
-- Updated `PROJECT_STATE.md` component table and priorities to reflect the
-  real, verified state of `backend/`, `frontend/`, `infra/`, and
-  `.github/workflows/`.
+- **Backend**: `users`, `sessions`, `workspaces`, `workspace_members`
+  SQLAlchemy models + Alembic migration `0002` (applied and verified
+  reversible against the real Postgres container).
+- **Security primitives** (`app/core/security.py`): Argon2id password
+  hashing (new [ADR 0004](docs/DECISIONS/0004-password-hashing-argon2id.md)),
+  JWT access tokens (15 min default) carrying `sub`+`sid` claims, opaque
+  `<session_id>.<secret>` refresh tokens (only a SHA-256 hash of the secret
+  is ever persisted).
+- **Auth service/API** (`app/services/auth_service.py`,
+  `app/api/v1/auth.py`): register, login (generic error message either way,
+  resists enumeration), refresh (rotation; reuse of a rotated-out token
+  revokes the session), logout, session list/revoke. Rate-limited
+  (`app/core/rate_limit.py`, in-process fixed-window) on
+  register/login/refresh.
+- **Workspace service/API** (`app/services/workspace_service.py`,
+  `app/api/v1/workspaces.py`): CRUD, membership, role changes, with the
+  OWNER/ADMIN/MEMBER/VIEWER matrix documented in
+  `docs/API_CONTRACT.md`. Every workspace-scoped route resolves
+  `workspace_id` through `app/core/dependencies.py`'s
+  `require_workspace_role`, which 404s for both nonexistent workspaces and
+  ones the caller isn't a member of (never 403 — avoids confirming
+  existence to non-members).
+- **Backend tests**: 69 pytest tests total — unit (password hashing,
+  JWT encode/decode, refresh-token parsing, rate limiter) and integration
+  (`tests/test_auth.py`, `tests/test_workspaces.py`) against a **real**
+  Postgres via SQLAlchemy's "join an external transaction" pattern
+  (`tests/conftest.py` — each test rolls back cleanly even though app code
+  calls `session.commit()`). Explicit security tests: cross-workspace
+  IDOR attempts (404 for a non-member on every workspace endpoint),
+  auth-bypass (missing/garbage/expired/wrong-signature tokens, revoked
+  sessions), refresh-token reuse detection, and rate-limit triggering.
+- **CI** (`.github/workflows/ci.yml`): added a `pgvector/pgvector:pg16`
+  service container and an Alembic-migration step to the backend job, so
+  the new integration tests actually run in CI against a real database.
+- **Frontend**: `lib/api-client.ts` (Zod-validated API boundary, automatic
+  401→refresh→retry-once), `lib/auth-context.tsx`, `lib/workspace-context.tsx`,
+  `components/protected-route.tsx`. Real `/register`, `/login` forms;
+  `/dashboard` and `/settings` (profile + session/device list with revoke)
+  behind auth; `/workspace` (list/create/switch/rename/delete +
+  member list/add/role-change/remove, all gated in the UI by role and
+  enforced server-side regardless). Nav shows current user, a workspace
+  selector, and logout when authenticated.
+- **Frontend tests**: 22 vitest tests (up from 3) — register/login form
+  validation and error handling, Nav auth-state/workspace-selector/logout,
+  workspace-page permission-sensitive rendering (OWNER vs VIEWER),
+  auth-storage round-trip.
+- **Fixed two non-obvious bugs** (full write-ups in `SOLVING.md`):
+  (1) a Postgres native-enum double-`CREATE TYPE` in the Alembic migration;
+  (2) Testing-Library's automatic cleanup never running because
+  `vitest.config.mts` doesn't set `globals: true` — fixed by an explicit
+  `afterEach(cleanup)` in `vitest.setup.ts`.
+- **New ADR**: [`docs/DECISIONS/0004-password-hashing-argon2id.md`](docs/DECISIONS/0004-password-hashing-argon2id.md).
+- Verified end-to-end against the real Docker Compose stack: both images
+  rebuilt with the new backend dependencies (`argon2-cffi`, `pyjwt`), full
+  stack starts healthy, migrations apply, and a live
+  register→get-current-user→create-workspace→list→refresh→
+  cross-workspace-isolation-check flow was exercised via curl against the
+  running containers (see "Tests run" below for exact commands/results).
+- Updated `docs/API_CONTRACT.md` (concrete auth/workspace schemas +
+  authorization matrix, previously deferred), `docs/SECURITY.md` (marks
+  auth/authorization/rate-limiting/relevant security tests as
+  implemented), `docs/DATA_MODEL.md` and `docs/ARCHITECTURE.md` (new
+  tables/modules marked implemented), `README.md`, `PROJECT_STATE.md`.
 
 ## Remaining work
 
-- Nothing in `backend/`, `frontend/`, `infra/`, `.github/workflows/`, or the
-  `.env.example`/doc updates from this session is committed — see
-  `git status`. This session was explicitly told not to commit or push.
-- The CI workflow has never run on GitHub Actions (no push yet) — only its
-  constituent commands were verified locally.
-- The `BackendStatus` widget's resolved rendered state was not confirmed in
-  an actual browser DOM (see above) — only the underlying CORS-enabled
-  fetch path was confirmed directly.
-- Everything in `PROJECT_STATE.md` marked `PLANNED` — all product
-  functionality (auth, workspaces, ingestion, retrieval, generation, chat,
-  search, voice, evaluation, audit logging beyond structured request logs).
-- Implementation-detail items ADR 0003 explicitly leaves open: exact token
-  lifetimes, refresh-token delivery mechanism, reuse-detection response,
-  password hashing algorithm choice.
+- Nothing for Issue #2's own scope is outstanding against its Definition of
+  Done (see below) — remaining items are deliberately out of scope for
+  this issue: email verification, password reset, full profile editing,
+  audit logging of auth events (Issue #7), browser-based E2E (Playwright).
+- Everything above is uncommitted in the working tree on
+  `issue-2-authentication-workspaces` — see `git status`.
+- The CI workflow's new Postgres-service block has not yet run on real
+  GitHub Actions (no push yet) — its constituent commands (including
+  `alembic upgrade head`) were verified locally instead.
 
 ## Blockers
 
-None. Docker/Compose access is confirmed working in the current shell
-(`docker ps` succeeds; this was previously blocked by group membership in
-an older shell, per the user).
+None. Docker Compose, the local Postgres container, and `gh` CLI access
+are all confirmed working in this environment.
 
 ## Tests run
 
-- Backend: `uv run ruff check .` (pass), `uv run mypy .` (pass, 30 files),
-  `uv run pytest -v` (7/7 pass).
-- Frontend: `npm run lint` (pass), `npm run typecheck` (pass),
-  `npm run test` (3/3 pass), `npm run build` (pass, 14 routes).
-- `docker compose -f infra/compose/docker-compose.yml config` (valid).
-- `docker compose -f infra/compose/docker-compose.yml build backend frontend`
-  (both succeed, after the Dockerfile fix for backend).
+- Backend: `uv run ruff check .` (pass), `uv run mypy .` (pass, 54 files),
+  `uv run pytest -v` (69/69 pass, against real Postgres on
+  `localhost:5432`, credentials `raguser`/`ragpass`/`ragdb`).
+- Frontend: `npm run lint` (pass), `npm run typecheck` (pass — verified
+  from a clean `.next`-free state), `npm run test` (22/22 pass), `npm run
+  build` (pass, 14 routes).
+- `docker compose -f infra/compose/docker-compose.yml config` (valid,
+  including the new `SECRET_KEY` env var and no schema errors).
+- `docker compose -f infra/compose/docker-compose.yml build` — both images
+  rebuilt successfully with the new backend dependencies.
 - `docker compose -f infra/compose/docker-compose.yml up -d` — full stack
-  healthy (db healthy, backend up, frontend up) after the fix.
-- `psql \dx` inside `compose-db-1` — confirms `vector 0.8.6` extension.
-- `alembic current` inside `compose-backend-1` — confirms `0001 (head)`.
-- `curl http://localhost:8000/api/v1/health` — `200 {"status":"ok"}`.
-- `curl http://localhost:8000/api/v1/health/ready` — `200
-  {"status":"ready","checks":{"database":"ok"}}`.
-- `curl -H "Origin: http://localhost:3000" http://localhost:8000/api/v1/health/ready`
-  — `200` with `Access-Control-Allow-Origin: http://localhost:3000`.
-- `curl http://localhost:3000/` — `200`, contains the `BackendStatus`
-  widget's initial markup.
-- Local reproduction of the CI docker-build job's exact `docker build -f
-  infra/docker/<name>.Dockerfile <context>` invocations for both images —
-  both succeed.
+  healthy (db healthy, backend healthy, frontend up); `alembic current`
+  inside the backend container confirms `0002 (head)`; `\dt` inside the db
+  container confirms `users`/`sessions`/`workspaces`/`workspace_members`
+  exist.
+- Live curl-driven flow against the running containers: register → 201
+  with real tokens; `GET /api/v1/users/me` → 200 with the registered
+  email; `POST /api/v1/workspaces` → 201, caller is `OWNER`;
+  `GET /api/v1/workspaces` → lists it; `POST /api/v1/auth/refresh` → 200,
+  rotated tokens; a second, unrelated registered user attempting
+  `GET /api/v1/workspaces/{first_user's_workspace_id}` → **404** (verified
+  cross-workspace isolation against the real database, not just in unit
+  tests).
+- CORS re-verified: `Access-Control-Allow-Origin: http://localhost:3000`
+  present on a cross-origin request to the running backend.
+- Stack shut down cleanly (`docker compose down`) after verification.
 
 ## Exact next recommended action
 
-1. Review this working tree (backend, frontend, infra, `.github/workflows/`,
-   and the doc updates) with the user/maintainer.
-2. If approved: `git add` the reviewed files, commit (following
-   `AGENTS.md` §6's commit conventions), push
-   `issue-1-application-foundation`, and open a PR against `main`
-   referencing GitHub Issue #1 (already filed in
-   `vigneshrao1723-lab/advanced-rag-knowledge-assistant`) so CI actually
-   runs on GitHub Actions for the first time — confirm it's green before
-   merging.
-3. After merge, begin GitHub Issue #2 (Authentication & Workspaces), per
-   `docs/DECISIONS/0003-authentication-session-architecture.md`.
+1. Review this working tree (backend, frontend, migration, CI change, new
+   ADR, and doc updates) with the user/maintainer.
+2. If approved: commit (small logical commits are fine — e.g. backend,
+   frontend, docs — or one commit if the reviewer prefers), push
+   `issue-2-authentication-workspaces`, and open a PR against `main`
+   referencing GitHub Issue #2, so CI (including the new Postgres-backed
+   integration tests) runs on GitHub Actions for the first time; confirm
+   green before merging.
+3. After merge, begin GitHub Issue #3 (Knowledge Ingestion).

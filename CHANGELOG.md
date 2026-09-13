@@ -10,6 +10,51 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
+### 2026-09-13 — Authentication & Workspaces (Issue #2)
+
+- Backend: `users`, `sessions`, `workspaces`, `workspace_members` models +
+  Alembic migration `0002` (verified applied and reversible against the
+  real Postgres container). Argon2id password hashing
+  ([ADR 0004](docs/DECISIONS/0004-password-hashing-argon2id.md)); JWT
+  access tokens + PostgreSQL-backed refresh/session records with rotation
+  and reuse-detection revocation, per
+  [ADR 0003](docs/DECISIONS/0003-authentication-session-architecture.md).
+  Registration, login, logout, refresh, session/device list and revoke
+  (`/api/v1/auth`), current-user profile (`/api/v1/users/me`), and
+  workspace CRUD/membership/role management with a documented
+  OWNER/ADMIN/MEMBER/VIEWER authorization matrix, enforced server-side by
+  a reusable `require_workspace_role` dependency on every workspace-scoped
+  route (`/api/v1/workspaces`). In-process rate limiting on
+  register/login/refresh.
+- Frontend: real `/register` and `/login` forms; `/dashboard` and
+  `/settings` (profile + session/device management) behind auth;
+  `/workspace` with list/create/switch/rename/delete and
+  member/role management, gated by role in the UI and enforced
+  server-side regardless. New `lib/api-client.ts` (Zod-validated,
+  automatic token refresh on 401), `lib/auth-context.tsx`,
+  `lib/workspace-context.tsx`.
+- Tests: backend went from 7 to 69 pytest tests, now including real-database
+  integration tests (via SQLAlchemy's "join an external transaction"
+  pattern) and explicit security tests for cross-workspace isolation/IDOR,
+  auth bypass, refresh-token reuse, and rate limiting. Frontend went from 3
+  to 22 vitest tests.
+- CI: added a real `pgvector/pgvector:pg16` service container and an
+  Alembic-migration step to the backend job so the new integration tests
+  run against a real database in GitHub Actions, not a mock.
+- Fixed two non-obvious bugs during implementation (full write-ups in
+  `SOLVING.md`): a Postgres native-enum double-`CREATE TYPE` in the
+  Alembic migration, and Testing-Library's automatic test cleanup never
+  running (this project's Vitest config doesn't set `globals: true`) —
+  fixed with an explicit `afterEach(cleanup)` in `vitest.setup.ts`.
+- Verified end-to-end against the real Docker Compose stack: both images
+  rebuilt with the new backend dependencies; a full
+  register→get-current-user→create-workspace→list→refresh→
+  cross-workspace-isolation-check flow was exercised via curl against the
+  running containers (a second user's request for the first user's
+  workspace correctly returned 404).
+- No ingestion, retrieval, generation, chat, search, or voice functionality
+  was implemented — out of scope for this issue.
+
 ### 2026-09-11 — Application Foundation: backend/frontend/infra scaffold, Docker fixes, CI workflow
 
 - Backend (`backend/`): FastAPI scaffold with configuration
