@@ -99,21 +99,11 @@ error handling, loud-failure config loading) are also in place — see
 
 ## Rate limiting approach
 
-Rate limiting is a firm requirement (see principle 8 above), but no
-external session/cache store is introduced solely to implement it:
+Rate limiting is a firm requirement (see principle 8 above). It was
+deliberately built in-process first, with no external session/cache store,
+and the measured requirement to go further has since been documented
+rather than anticipated speculatively:
 
-- The initial, single-instance deployment may use an in-process mechanism
-  (e.g., a token-bucket/sliding-window limiter held in application memory)
-  and/or PostgreSQL-backed counters where state must persist across
-  restarts or be shared correctly (e.g., login/brute-force attempt
-  counters).
-- **Redis is not added solely for initial rate limiting** — this would
-  contradict the no-premature-infrastructure principle in
-  [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) and
-  [ADR 0001](DECISIONS/0001-modular-monolith-over-microservices.md).
-- If horizontal scaling later makes in-process/PostgreSQL-backed limiting
-  inadequate, that is revisited through a new ADR backed by measured
-  evidence, not decided in advance.
 - **Implemented (Issue #2):** an in-process fixed-window limiter
   (`backend/app/core/rate_limit.py`) guards `register`, `login`,
   `refresh`, `forgot-password`, and `reset-password`, keyed by client IP —
@@ -122,6 +112,21 @@ external session/cache store is introduced solely to implement it:
   PostgreSQL-backed counters were needed yet. Per-IP limiting does not stop
   a distributed low-rate attempt to guess a reset token, but the token
   space (256 bits) makes that infeasible regardless of request rate.
+- **Designed, not yet implemented:** horizontal scale-out (more than one
+  backend instance behind a load balancer) breaks the in-process limiter's
+  core assumption — a real architectural requirement, not a hypothetical
+  one, per [ADR 0001](DECISIONS/0001-modular-monolith-over-microservices.md)'s
+  "measured requirement" bar. That requirement, and the full design that
+  answers it, is now documented in
+  [ADR 0006](DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md):
+  Redis-backed token-bucket rate limiting plus a deterministic (non-ML),
+  rule-based abuse-detection layer, an operation-aware Redis failure
+  policy, and a key design that never stores raw credentials. **No Redis
+  dependency, Docker service, or application code has been added** — the
+  in-process limiter above remains the only one actually running. Redis's
+  role is strictly limited to ephemeral rate-limit/abuse state; PostgreSQL
+  remains the only durable datastore (ADR 0002) — Redis never becomes a
+  second source of truth for users, sessions, workspaces, or audit logs.
 
 ## Upload & document safety
 
@@ -243,3 +248,6 @@ Done in `AGENTS.md` §7, not deferred to a later "security phase."
 - [`docs/DECISIONS/0005-httponly-cookie-csrf-authentication.md`](DECISIONS/0005-httponly-cookie-csrf-authentication.md)
   — the cookie/CSRF delivery model, and the "different origin ≠ cross-site"
   distinction governing deployment configuration.
+- [`docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md`](DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
+  — the Redis rate-limiting/abuse-protection design referenced above
+  (design only; not yet implemented).

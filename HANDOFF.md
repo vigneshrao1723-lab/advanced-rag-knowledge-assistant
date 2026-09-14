@@ -20,11 +20,12 @@ it, and the working tree is clean. The old feature branch still exists
 `main`.
 
 **Nothing is currently in flight.** The next task — Redis distributed rate
-limiting + a deterministic abuse-detection layer — has **not been
-started**: no Redis dependency, service, code, or ADR exists yet. See
-"Next major task" below for the constraints already recorded for whoever
-picks it up. Do not start it, Playwright, or Issue #3 without an explicit
-go-ahead.
+limiting + a deterministic abuse-detection layer — is now **architecturally
+designed** ([ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)),
+but **implementation has not started**: no Redis dependency, service, or
+application code exists yet, and no tests exist. See "Next major task"
+below for a summary and a pointer to the ADR for full detail. Do not start
+implementing it, Playwright, or Issue #3 without an explicit go-ahead.
 
 Issue #2 covered: registration/login/logout/refresh with PostgreSQL-backed
 sessions, HttpOnly cookie + CSRF browser authentication (superseding the
@@ -121,16 +122,79 @@ documentation/ADRs for all of it.
   reaches `localStorage`/`sessionStorage`/an `Authorization` header;
   `app/forgot-password/page.test.tsx`, `app/reset-password/page.test.tsx`).
 
+## Completed work (Redis/abuse-protection architecture design)
+
+- [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
+  — the full design: what's wrong with the current in-process limiter
+  (verified from code, not assumed — no cross-instance coordination,
+  fixed-window boundary doubling, IP-only keying, no `X-Forwarded-For`
+  handling, and the already-defined-but-never-emitted
+  `AuditEvent.RATE_LIMITED`); a Redis token-bucket algorithm; hierarchical
+  dimensions chosen per-operation (IP/account/session, never applied
+  uniformly); a deterministic rule table for abuse detection (not a
+  numeric score, not ML); `ALLOW`/`THROTTLE`/`STRICT_THROTTLE`/
+  `TEMPORARY_BLOCK` semantics (`REJECT` explicitly left undefined — no
+  operation in this system needs it yet); an operation-aware Redis
+  failure policy; a Redis key namespace that never stores raw
+  credentials/tokens/emails; an observability split (ordinary throttling
+  → logs only, escalations → `audit_logs`); Docker/CI implications; and a
+  full test strategy — all **design only**.
+- **This ADR was then adversarially reviewed for architectural/security
+  flaws (a separate, dedicated task) and corrected before this
+  checkpoint** — read the ADR itself for the full reasoning, but the
+  headline corrections, since they materially change the design from a
+  first read of the summary above:
+  - **Atomicity is per-operation, not per-key.** The first draft ran one
+    independent Lua script per dimension key (e.g., separately for
+    `login`'s IP bucket and account bucket) and treated each key's own
+    atomicity as sufficient for the combined decision. It wasn't — a
+    request could consume one dimension's bucket and then be rejected on
+    another, a real partial-consumption/fairness bug. The corrected
+    design runs **one Lua invocation per operation, over all of that
+    operation's dimension keys together**, all-or-nothing (ADR §8, §10).
+  - **Email keys use a keyed HMAC, not plain SHA-256** — a plain hash of
+    a low-entropy identifier like an email is dictionary/rainbow-table-
+    matchable and isn't a real privacy protection (ADR §14).
+  - **The R3 distinct-IP-per-account signal uses a HyperLogLog, not a
+    plain Redis `SET`** — a `SET` would let an attacker's own botnet
+    inflate Redis memory in direct proportion to the attack the signal
+    exists to detect (ADR §11).
+  - **R2 (many login failures against one account) escalates to
+    `STRICT_THROTTLE`, not a hard `TEMPORARY_BLOCK`** — a hard,
+    account-scoped block triggerable by anyone who merely knows a
+    victim's (non-secret) email is itself a denial-of-service vector
+    against that victim. Only R3 (genuinely distributed source IPs, much
+    harder to cheaply fake against a chosen victim) still triggers a
+    hard block (ADR §11, §18).
+  - **A full trusted-proxy / `X-Forwarded-For` design was added** (ADR
+    §9a) — the first draft only flagged the gap; it's now fully
+    specified: ignore the header unless a configured
+    `TRUSTED_PROXY_CIDRS` trusts the immediate peer, then walk the
+    header from the right (never trust a client-supplied leftmost entry).
+  - **The Redis-failure section now states plainly what security
+    guarantee is lost** in each scenario (single vs. multi-instance,
+    which checks fail open vs. fall back) rather than leaving that
+    implicit (ADR §13).
+  - A full Redis cardinality/memory threat table (every structure: who
+    can create it, its bound, its TTL) was added (ADR §18).
+- **This is still design work only.** No Redis dependency, Docker
+  service, or application code was added; no tests were added or
+  modified; no existing code was changed — the adversarial review only
+  edited the ADR and this documentation.
+
 ## Explicitly NOT done (do not assume otherwise)
 
-- **Redis distributed rate limiting** — not started. No Redis dependency,
+- **Redis distributed rate limiting implementation** — not started. The
+  architecture is designed (ADR 0006, above); no Redis dependency,
   service, or code exists anywhere in this repository.
-- **Deterministic abuse/risk layer** — not started. (If you build this
-  later: it must be deterministic, rule-based logic — never call it "AI"
-  or claim ML/statistical evaluation unless an actual evaluated model
-  backs that claim.)
+- **Deterministic abuse/risk layer implementation** — not started. The
+  rule model is designed (ADR 0006 §11); no code exists. (When you build
+  this: it must remain deterministic, rule-based logic — never call it
+  "AI" or claim ML/statistical evaluation unless an actual evaluated
+  model backs that claim, per the ADR's explicit non-goal.)
 - **Concurrency/race-condition testing for Redis** — not applicable yet;
-  there is no Redis to test.
+  there is no Redis to test. ADR 0006 §17 designs what these tests should
+  cover once implementation exists.
 - **Playwright browser E2E** — not started. No config, no test files, no
   dependency. The live-Docker verification done for this checkpoint
   (curl/Python against running containers, including reading Mailpit's
@@ -140,43 +204,50 @@ documentation/ADRs for all of it.
 - **Issue #3 (document ingestion)** — not started.
 - **Later RAG retrieval/generation features** — not started.
 
-## Next major task: Redis rate limiting + deterministic abuse protection
+## Next major task: implement Redis rate limiting + deterministic abuse protection
 
-This is the next thing to build. Issue #2 is already reviewed, committed,
-pushed, PR'd (#10), and merged into `main` — this task starts clean, not
-combined with it, and has not been started itself.
+**The design is done — [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
+is the canonical source; read it in full before writing any code.** This
+section is a summary and pointer, not a substitute for it. Implementation
+is the next thing to build, has not started, and is a separate unit of
+work from both Issue #2 (merged) and the design task that produced the
+ADR.
 
-Constraints for whoever picks this up:
+Key points from the ADR (see it for the full reasoning and the "Open
+decisions" section listing what's intentionally left for implementation
+time):
 
 - **Evolve `backend/app/core/rate_limit.py`, don't blindly replace it.**
-  The existing `FixedWindowRateLimiter` and its per-endpoint
-  `enforce_*_rate_limit` dependencies are working, tested (in
-  `tests/test_auth.py`, `tests/test_password_reset.py`,
-  `tests/test_rate_limit.py`), and correct for a single-process
-  deployment. Understand why each limit exists and what test currently
-  asserts it before changing the mechanism underneath.
+  The existing `FixedWindowRateLimiter` becomes the documented failure-mode
+  fallback for security-sensitive endpoints (ADR §13), not dead code.
+  Understand why each existing limit exists and what test currently
+  asserts it (`tests/test_auth.py`, `tests/test_password_reset.py`,
+  `tests/test_rate_limit.py`) before changing anything underneath.
 - **PostgreSQL remains the authoritative durable datastore** (ADR 0002).
-  Redis, when introduced, is for ephemeral distributed rate-limiting/
-  abuse state only — not a second source of truth for anything that must
-  survive a restart or be queried historically (that's still Postgres +
-  `audit_logs`).
-- **Redis failure behavior must be operation-aware and security-
-  conscious** — decide deliberately, per operation, whether a Redis
-  outage should fail open (allow the request, degrade to no limiting) or
-  fail closed (reject), rather than picking one global default. Document
-  the choice and why in the ADR this work should produce.
-- **No unbounded attacker queues** — any queuing/backoff mechanism must
-  have a hard bound; don't let a malicious client's requests accumulate
-  server-side memory or Redis keys without expiry.
-- **This needs its own ADR** before or alongside implementation
-  (`docs/DECISIONS/0006-...`), per `CLAUDE.md` §4 — introducing Redis is
-  a new infrastructure dependency, which is exactly the kind of decision
-  that document instructs stopping for.
+  Redis holds only ephemeral rate-limit/abuse state (ADR 0006 §7) — never
+  a second source of truth for anything that must survive a restart or be
+  queried historically (that's still Postgres + `audit_logs`).
+- **Algorithm:** token bucket via a single atomic Lua script **per
+  operation, over all of that operation's dimension keys together** — not
+  one script per key (that was this ADR's own first draft, and was
+  wrong — see the atomicity correction above) and not a naive
+  `GET → calculate → SET` (ADR §8, §10).
+- **Redis failure is operation-aware, not a single global policy**:
+  security-sensitive endpoints fall back to the in-process limiter;
+  `register` fails open; block-checks specifically fail open even within
+  the otherwise-conservative security-sensitive tier (ADR §13 explains
+  why for each case).
+- **No unbounded attacker queues** — every Redis key is TTL-bound; nothing
+  is queued, only allowed/throttled/blocked (ADR §8, §10, §12).
+- **Abuse detection is a deterministic rule table, not a score, not ML**
+  (ADR §11) — implement it that way even if a numeric score looks
+  tempting; the ADR explains why it was rejected.
 - Files/areas to inspect first: `backend/app/core/rate_limit.py` (current
   mechanism), `backend/tests/test_rate_limit.py` and every
-  `enforce_*_rate_limit` call site (`app/api/v1/auth.py`), `docs/SECURITY.md`
-  "Rate limiting approach" (documents the existing no-premature-
-  infrastructure reasoning this decision needs to explicitly revisit),
+  `enforce_*_rate_limit` call site (`app/api/v1/auth.py`), `app/core/audit.py`
+  (the already-defined-but-unused `AuditEvent.RATE_LIMITED` the ADR
+  reuses), `docs/SECURITY.md` "Rate limiting approach" (needs updating
+  once implementation lands — not yet, since nothing is implemented),
   `infra/compose/docker-compose.yml` (where a `redis` service would be
   added, following the same healthcheck-gated pattern already used for
   `mailpit`).
@@ -217,9 +288,11 @@ access are all confirmed working in this environment.
 Issue #2 is merged — there is nothing left to push, review, or merge for
 it.
 
-1. Start the Redis rate-limiting + abuse-detection work per "Next major
-   task" above — write ADR `docs/DECISIONS/0006-...` first (does not
-   exist yet).
+1. Implement Redis rate limiting + deterministic abuse protection per
+   [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
+   (design complete; implementation not started — see "Next major task"
+   above). Resolve the ADR's "Open decisions" (§22) as part of that work,
+   with rationale recorded alongside the code.
 2. Introduce Playwright E2E coverage for auth/password-recovery — not
    started.
 3. Only after the above: begin GitHub Issue #3 (Knowledge Ingestion) —

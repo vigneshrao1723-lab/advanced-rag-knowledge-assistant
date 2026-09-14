@@ -19,12 +19,19 @@ real, current, per-component status.
 2. **PostgreSQL + pgvector is the only database/vector store** for the
    initial implementation. See
    [`docs/DECISIONS/0002-postgresql-pgvector-initial-vector-store.md`](DECISIONS/0002-postgresql-pgvector-initial-vector-store.md).
-3. **No premature infrastructure.** Kubernetes, Kafka, Redis, Celery,
-   Qdrant, and additional databases are explicitly excluded unless a
-   documented, measured requirement justifies them via a new ADR. This
-   includes rate limiting: the initial approach is in-process and/or
-   PostgreSQL-backed, not Redis — see [`docs/SECURITY.md`](SECURITY.md)
-   §"Rate limiting approach".
+3. **No premature infrastructure.** Kubernetes, Kafka, Celery, Qdrant, and
+   additional databases are explicitly excluded unless a documented,
+   measured requirement justifies them via a new ADR. Rate limiting
+   started this way too — in-process only — until horizontal scale-out
+   became a real architectural requirement; that requirement is now
+   documented in
+   [ADR 0006](DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md),
+   which **designs** (but does not yet implement) Redis-backed distributed
+   rate limiting and a deterministic abuse-detection layer, scoped
+   narrowly to ephemeral rate-limit/abuse state — PostgreSQL remains the
+   only durable datastore (ADR 0002). See
+   [`docs/SECURITY.md`](SECURITY.md) §"Rate limiting approach" for current
+   status.
 4. **Provider abstraction** for swappable external capabilities:
    `EmbeddingProvider`, `Reranker`, `LLMProvider`, `SpeechToTextProvider`,
    `TextToSpeechProvider`, `StorageProvider`. No commercial provider is

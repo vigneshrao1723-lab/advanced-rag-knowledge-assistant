@@ -3,7 +3,9 @@
 **Last updated:** 2026-09-14
 **Current phase:** GitHub Issue #2 — Authentication & Workspaces — **merged
 to `main`.** Next planned phase: Redis distributed rate limiting +
-deterministic abuse protection (not started — see "Immediate priorities").
+deterministic abuse protection — **architecture designed
+([ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)),
+implementation not started** (see "Immediate priorities").
 (repository: `vigneshrao1723-lab/advanced-rag-knowledge-assistant`,
 currently checked out on `main`)
 
@@ -54,7 +56,7 @@ limitations." This is the explicitly planned next phase, not yet started.
 | Component | Status | Notes |
 |---|---|---|
 | Documentation architecture (`START_HERE.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `PROJECT_STATE.md`, `HANDOFF.md`, `SOLVING.md`, `CHANGELOG.md`, `docs/*`) | IMPLEMENTED | Kept current with each checkpoint per `CLAUDE.md` §5. |
-| `docs/DECISIONS/` ADR log | IMPLEMENTED | Five ADRs: modular monolith (0001), Postgres/pgvector (0002), authentication/session architecture (0003), Argon2id password hashing (0004), HttpOnly cookie + CSRF authentication (0005 — includes the "different origin ≠ cross-site" deployment guidance). |
+| `docs/DECISIONS/` ADR log | IMPLEMENTED | Six ADRs: modular monolith (0001), Postgres/pgvector (0002), authentication/session architecture (0003), Argon2id password hashing (0004), HttpOnly cookie + CSRF authentication (0005), Redis distributed rate limiting + deterministic abuse protection (0006 — **design only**; see the dedicated row below). |
 | `.gitignore` / `.gitattributes` / `.env.example` | IMPLEMENTED | Placeholders only, no real secrets. Documents `SECRET_KEY` (required), `COOKIE_SAMESITE`/`COOKIE_DOMAIN`/`COOKIE_SECURE`, `FRONTEND_URL`, `EMAIL_PROVIDER`/`SMTP_*`. |
 | GitHub remote & issues | IMPLEMENTED | Remote configured (`origin` → `vigneshrao1723-lab/advanced-rag-knowledge-assistant`). Real, filed GitHub issues `#1`–`#8` exist (confirmed via `gh issue list`): `#1` Application Foundation (merged, PR #9), `#2` Authentication & Workspaces (**merged, PR #10 → `main` commit `ec4225d`**), `#3` Knowledge Ingestion (not started), `#4` Hybrid RAG Pipeline, `#5` Product Experience, `#6` Voice, `#7` Evaluation/Security/Observability, `#8` CI/CD/Deployment/Finalization. Separate from these, `AGENTS.md` §9 documents a finer-grained `#1`–`#43` **internal planning baseline** — the two numbering schemes don't map 1:1. |
 | Backend application (`backend/`) | IMPLEMENTED | Config, structured logging, request-ID middleware, centralized error handling, SQLAlchemy + Alembic, health/readiness (Issue #1) — plus (Issue #2) auth/workspace/password-recovery/audit-logging services, repositories, schemas, API routes, HttpOnly-cookie + CSRF middleware. Verified: `ruff check` clean, `mypy` clean (67 files), `pytest` **119/119 passing** (real Postgres). |
@@ -69,7 +71,7 @@ limitations." This is the explicitly planned next phase, not yet started.
 | Search interface | PLANNED | No code. |
 | Voice (STT/TTS) | PLANNED | Explicitly scoped to come after text RAG works; no code. |
 | Evaluation harness | PLANNED | Metrics and methodology documented in `docs/EVALUATION.md`; **no evaluation has been run, no numbers exist.** |
-| Distributed rate limiting / abuse protection (Redis) | **NOT STARTED** | The current limiter (`backend/app/core/rate_limit.py`) is an in-process fixed-window limiter — correct only for a single backend process. Redis-backed hierarchical rate limiting and a deterministic (non-ML) abuse-detection layer are the next planned major task for this issue — **no code, no dependency, no design doc for this exists yet.** See `HANDOFF.md`. |
+| Distributed rate limiting / abuse protection (Redis) | Design: **DESIGNED**. Implementation: **NOT STARTED** | The current limiter (`backend/app/core/rate_limit.py`) remains an in-process fixed-window limiter, unchanged — correct only for a single backend process. [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md) documents the full architecture (Redis-backed token-bucket rate limiting, a deterministic rule-based abuse layer, hierarchical dimensions, an operation-aware Redis failure policy, key design, and test strategy) — but **no Redis dependency, Docker service, or application code has been added.** The existing limiter is the only one actually running. See `HANDOFF.md` for the implementation task. |
 | Browser E2E (Playwright) | **NOT STARTED** | No Playwright infrastructure, config, or tests exist. Do not assume otherwise from a mention of Mailpit or "E2E" elsewhere — Mailpit is used today only via direct REST-API verification (curl/Python), not through a Playwright-driven browser. |
 | Observability / audit logging | IMPLEMENTED (auth/workspace scope) | Structured logging, request-ID propagation, and a JSON access log (`app/observability/`) from Issue #1, plus (Issue #2) a persistent `audit_logs` table (`app/core/audit.py`, `app/repositories/audit_log_repository.py`) capturing authentication, password-reset, workspace-membership, and authorization-denial events. Document-related audit events will be added when that surface exists (Issue #3). |
 | Testing (unit/integration/E2E/security) | PARTIALLY IMPLEMENTED | Backend: **119 pytest tests** — real-database integration tests, cross-workspace-isolation/IDOR tests, CSRF tests (missing/mismatched/valid token, cross-client, login-CSRF, safe-method exemption), explicit `Set-Cookie` attribute assertions (HttpOnly/Path/SameSite), CORS preflight tests, an explicit "`Authorization: Bearer` alone does not authenticate and does not satisfy CSRF" test, and password-reset security tests (enumeration resistance, single-use/expiry, cross-user isolation, session invalidation). Frontend: **48 vitest tests** — forms, auth state, nav, workspace switching/permission-sensitive UI, password-recovery pages, and explicit regression tests proving no auth token ever reaches `localStorage`/`sessionStorage`/an `Authorization` header. **No E2E browser suite exists** — Playwright has not been introduced (see the dedicated row above); this project's own live-Docker verification (curl/Python against the running containers) is not a substitute for it and is not represented as one. |
@@ -93,12 +95,14 @@ limitations." This is the explicitly planned next phase, not yet started.
 - **Rate limiting is in-process only** (`backend/app/core/rate_limit.py`),
   correct for the current single-`uvicorn`-process deployment but not
   correct once the backend runs as more than one process/instance — each
-  process would enforce its own independent limit. **Redis-backed
-  hierarchical rate limiting plus a deterministic (non-ML) abuse-detection
-  layer is the explicitly planned next major task and has not been
-  started** — no Redis dependency, service, or code exists in this
-  repository yet. See `HANDOFF.md` for what the next agent needs to know
-  before starting it.
+  process would enforce its own independent limit. The replacement
+  architecture — Redis-backed token-bucket rate limiting plus a
+  deterministic (non-ML) rule-based abuse-detection layer — is now
+  **designed** in [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md),
+  but **implementation has not started**: no Redis dependency, service,
+  or application code exists in this repository yet. The in-process
+  limiter above remains the only one actually running. See `HANDOFF.md`
+  for what the next agent needs to know before starting implementation.
 - **No browser-based E2E suite (Playwright) exists.** Do not infer
   otherwise from Mailpit's presence — Mailpit is verified today only via
   its REST API, not through a Playwright-driven real browser.
@@ -127,13 +131,14 @@ Issue #2 is done — PR #10 merged into `main` at commit `ec4225d`, CI green.
 Nothing is pending review, push, or merge for it. The next work, in order:
 
 1. **Redis distributed rate limiting + deterministic (non-ML) abuse
-   protection** — the next planned engineering phase. **Not started**: no
-   Redis dependency, service, code, or design doc exists yet. This must
-   begin with its own ADR (`docs/DECISIONS/0006-...`, not yet created) per
-   `CLAUDE.md` §4, and should evolve the existing in-process limiter
-   (`backend/app/core/rate_limit.py`) rather than replace it outright —
-   see `HANDOFF.md` for the constraints already recorded for whoever picks
-   this up.
+   protection** — the next planned engineering phase. The architecture is
+   now **designed** — [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
+   — but **implementation has not started**: no Redis dependency,
+   service, or application code exists yet. Implementation should evolve
+   the existing in-process limiter (`backend/app/core/rate_limit.py`)
+   rather than replace it outright (the ADR keeps it as the documented
+   failure-mode fallback, not dead code) — see `HANDOFF.md` for the
+   implementation task and `HANDOFF.md`'s open-decisions list.
 2. Introduce Playwright browser E2E coverage for the authentication/
    password-recovery flows — not yet started, no config or dependency
    exists.
