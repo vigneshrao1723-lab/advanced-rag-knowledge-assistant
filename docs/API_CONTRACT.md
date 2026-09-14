@@ -11,16 +11,22 @@ exist. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 ## Conventions (intended)
 
 - REST-style JSON API under `/api/v1/`.
-- Authentication uses short-lived bearer access tokens (15 min default,
+- Authentication uses short-lived access tokens (15 min default,
   `ACCESS_TOKEN_EXPIRE_MINUTES`) backed by server-tracked refresh/session
   records (30 days default, `REFRESH_TOKEN_EXPIRE_DAYS`) — the architecture
   is **not** purely stateless. See
   [`docs/DECISIONS/0003-authentication-session-architecture.md`](DECISIONS/0003-authentication-session-architecture.md)
-  for the full model. **Delivery mechanism (resolved):** both tokens are
-  returned in the JSON response body, not cookies — this keeps the API
-  usable by non-browser clients and avoids `SameSite`/`Secure` cookie
-  complexity for local HTTP dev; revisit via a new ADR if a browser-only
-  requirement emerges. Passwords are hashed with Argon2id — see
+  for the full model. **Delivery mechanism (superseded — see
+  [ADR 0005](DECISIONS/0005-httponly-cookie-csrf-authentication.md)):**
+  both tokens are delivered exclusively via `HttpOnly` cookies, never in a
+  response body or an `Authorization` header — the original response-body
+  design this section once described was replaced before this API had any
+  external consumers. A separate, non-`HttpOnly` `csrf_token` cookie plus
+  an `X-CSRF-Token` header (double-submit pattern) is required on every
+  state-changing request, including `login`/`register` themselves. This
+  API is currently designed for the first-party browser client only; a
+  future non-browser client would need its own token-delivery path, not a
+  weakening of this one. Passwords are hashed with Argon2id — see
   [ADR 0004](DECISIONS/0004-password-hashing-argon2id.md).
 - All endpoints except `/api/v1/auth/*` and `/api/v1/health` require a valid
   session and are scoped to the caller's workspace(s), enforced server-side
@@ -34,7 +40,7 @@ exist. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 
 | Namespace | Purpose |
 |---|---|
-| `/api/v1/auth` | Registration, login, logout, refresh-token rotation, session/device listing and revocation (**implemented**, Issue #2) |
+| `/api/v1/auth` | Registration, login, logout, refresh-token rotation, session/device listing and revocation, password recovery (**implemented**, Issue #2) |
 | `/api/v1/users` | Profile and settings management (**partially implemented** — `GET /me` only, Issue #2) |
 | `/api/v1/workspaces` | Create/rename/delete/switch workspaces, membership, roles (**implemented**, Issue #2) |
 | `/api/v1/workspaces/{workspace_id}/audit-logs` | Query security-relevant audit log entries for a workspace (`ADMIN`/`OWNER` only) |
@@ -50,28 +56,38 @@ exist. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 
 ## Implemented: `/api/v1/auth`, `/api/v1/users`, `/api/v1/workspaces`
 
-All request/response bodies are JSON. All authenticated endpoints require
-`Authorization: Bearer <access_token>`.
+All request/response bodies are JSON. Authentication is **cookie-based**
+(`access_token`/`refresh_token` `HttpOnly` cookies — see
+[ADR 0005](DECISIONS/0005-httponly-cookie-csrf-authentication.md)), not a
+bearer header — the client never sends or receives a token value directly.
+Every state-changing request below also requires a valid CSRF pairing
+(`csrf_token` cookie + matching `X-CSRF-Token` header), obtained via
+`GET /api/v1/auth/csrf`; omitted from the table below since it applies
+uniformly rather than per-endpoint.
 
 ### Auth
 
 | Endpoint | Auth | Body / params | Response |
 |---|---|---|---|
-| `POST /api/v1/auth/register` | none (rate-limited) | `{email, password}` | `201` `TokenResponse` |
-| `POST /api/v1/auth/login` | none (rate-limited) | `{email, password}` | `200` `TokenResponse`, or `401` (generic "incorrect email or password" — same message whether the account exists or not, to resist enumeration) |
-| `POST /api/v1/auth/refresh` | none (rate-limited) | `{refresh_token}` | `200` `TokenResponse` (rotated refresh token), or `401` if invalid/expired/revoked. Reusing an already-rotated-out refresh token revokes that session entirely. |
-| `POST /api/v1/auth/logout` | none | `{refresh_token}` | `204` (always — logout is idempotent/best-effort even for an already-invalid token) |
-| `GET /api/v1/auth/sessions` | bearer | — | `200` `SessionInfo[]` — every non-revoked session for the caller, `is_current` flags the session tied to the presented access token |
-| `DELETE /api/v1/auth/sessions/{session_id}` | bearer | — | `204`, or `404` if the session doesn't exist or belongs to another user (same response either way — never confirms another user's session IDs) |
+| `GET /api/v1/auth/csrf` | none | — | `204` — bootstraps the `csrf_token` cookie if the caller doesn't already have one |
+| `POST /api/v1/auth/register` | none (rate-limited) | `{email, password}` | `201` `AuthResponse`; sets auth cookies |
+| `POST /api/v1/auth/login` | none (rate-limited) | `{email, password}` | `200` `AuthResponse`; sets auth cookies, or `401` (generic "incorrect email or password" — same message whether the account exists or not, to resist enumeration) |
+| `POST /api/v1/auth/refresh` | refresh cookie | — (reads `refresh_token` cookie) | `200` `AuthResponse`; rotates auth cookies, or `401` if the cookie is missing/invalid/expired/revoked. Reusing an already-rotated-out refresh token revokes that session entirely. |
+| `POST /api/v1/auth/logout` | refresh cookie (optional) | — | `204` (always — idempotent/best-effort even with no/an already-invalid cookie); clears auth cookies |
+| `GET /api/v1/auth/sessions` | access cookie | — | `200` `SessionInfo[]` — every non-revoked session for the caller, `is_current` flags the session tied to the presented access token |
+| `DELETE /api/v1/auth/sessions/{session_id}` | access cookie | — | `204`, or `404` if the session doesn't exist or belongs to another user (same response either way — never confirms another user's session IDs) |
+| `POST /api/v1/auth/forgot-password` | none (rate-limited) | `{email}` | `200` `{message}` — always the same generic message/status regardless of whether the email exists |
+| `POST /api/v1/auth/reset-password` | none (rate-limited) | `{token, new_password}` | `204`, or `400` with `{error: {code: "reset_token_invalid" \| "reset_token_expired" \| "reset_token_already_used", message}}`. Success revokes every existing session for the account. |
 
-`TokenResponse`: `{access_token, refresh_token, token_type: "bearer", expires_in (seconds), user: UserRead}`.
+`AuthResponse`: `{user: UserRead}` — no token fields; tokens are cookies
+only.
 `SessionInfo`: `{id, device_label, created_at, last_used_at, expires_at, is_current}`.
 
 ### Users
 
 | Endpoint | Auth | Response |
 |---|---|---|
-| `GET /api/v1/users/me` | bearer | `200` `UserRead` = `{id, email, created_at}` |
+| `GET /api/v1/users/me` | access cookie | `200` `UserRead` = `{id, email, created_at}` |
 
 ### Workspaces
 
@@ -114,10 +130,12 @@ the edges between them; this is the conservative, implemented resolution
 
 ### Rate limiting
 
-`register`, `login`, and `refresh` are rate-limited per client IP
-(in-process, fixed-window — see `docs/SECURITY.md` "Rate limiting
-approach"): `429` once the limit is exceeded. No rate-limit headers are
-emitted yet.
+`register`, `login`, `refresh`, `forgot-password`, and `reset-password`
+are rate-limited per client IP (in-process, fixed-window — see
+`docs/SECURITY.md` "Rate limiting approach"): `429` once the limit is
+exceeded. No rate-limit headers are emitted yet. This remains in-process
+only (correct for the current single-process deployment) — Redis-backed
+distributed rate limiting has not been implemented yet.
 
 ### Error shape
 

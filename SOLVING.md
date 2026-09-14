@@ -105,3 +105,88 @@ a given test's assertions.
 explaining why the explicit `afterEach(cleanup)` is required given this
 project's `globals: false` config, so it isn't mistaken for dead code and
 removed later.
+
+## 2026-09-14 — Password-reset tests silently got no email, but only from the fifth test onward
+
+**Symptom:** Two password-reset tests (`test_password_reset_invalidates_existing_sessions`,
+`test_reset_token_is_single_use`) failed with "no reset link found in
+captured output: ''" — the `forgot-password` call apparently sent no email
+at all — while an earlier, structurally identical test
+(`test_full_password_reset_flow`) passed.
+
+**Root cause:** `app/core/rate_limit.py`'s in-process limiters are
+module-level singletons, shared across the whole test session. The
+`tests/conftest.py` autouse fixture that resets them before every test
+(`_reset_rate_limiters`) was written for Issue #2's original three
+limiters (login/register/refresh) and never updated when
+`forgot_password_rate_limiter`/`reset_password_rate_limiter` were added
+for the password-recovery feature in the same session. Every prior test
+in the file that called `forgot-password` (four of them, several making
+multiple calls) added up against the *never-reset* limiter (limit 5)
+without the developer noticing, because a 429 there fails silently from
+the test's point of view — `capsys` just captures nothing, which looks
+identical to "the code path was never reached" rather than "it was
+reached and then rejected."
+
+**Failed attempts:** None — the empty-output symptom made the actual cause
+(a 429 being returned instead of a real send) non-obvious at first glance;
+the fix was found by tracing which fixture is responsible for isolating
+rate-limiter state between tests and noticing the two new limiters weren't
+in it.
+
+**Fix:** Added `forgot_password_rate_limiter.reset()` and
+`reset_password_rate_limiter.reset()` to `_reset_rate_limiters` in
+`tests/conftest.py`.
+
+**Verification:** All 10 `tests/test_password_reset.py` tests pass, and
+the two dedicated rate-limit tests
+(`test_forgot_password_is_rate_limited`, `test_reset_password_is_rate_limited`)
+still correctly trip a real 429 within their own test.
+
+**Prevention:** Any new rate limiter added to `app/core/rate_limit.py`
+must be added to `tests/conftest.py`'s `_reset_rate_limiters` in the same
+change — there is no automatic discovery of new limiter instances, so this
+is a manual checklist item, not something a future limiter gets "for
+free."
+
+## 2026-09-14 — `frontend/lib/api-client.test.ts` failed with "Body is unusable: Body has already been read"
+
+**Symptom:** Several `api-client.test.ts` tests failed — one with a
+`ZodError` (parsing `undefined` fields), three with
+`TypeError: Body is unusable: Body has already been read` — as soon as a
+test called more than one `api-client` function (e.g. `register` then
+`login`, or `register`/`login`/`getCurrentUser`/`logout` in sequence).
+
+**Root cause:** `vi.fn().mockResolvedValue(jsonResponse(...))` resolves
+every call to the **same** `Response` object instance. A `Response` body
+is a stream that can only be consumed once — the first `await
+response.json()` in the test setup (or the first api-client call) reads
+it; every subsequent call to `.json()` on that same object throws. The
+`ZodError` failures were a second-order symptom of the same root cause:
+a test that reused the shared response across a `login` and a
+`getCurrentUser` call got the *wrong* body shape for `getCurrentUser`
+(the mock was configured for `{user: ...}`, but `getCurrentUser` expects
+a flat user object), because one `mockResolvedValue(...)` call was being
+asked to serve two endpoints with different response shapes.
+
+**Failed attempts:** None — the fix was applied directly once the "body
+already read" message made the single-shared-object cause clear.
+
+**Fix:** Use `mockImplementation(() => Promise.resolve(jsonResponse(...)))`
+instead of `mockResolvedValue(jsonResponse(...))` wherever a test calls
+more than one `api-client` function — `mockImplementation` re-invokes the
+factory function on every call, producing a fresh `Response` each time.
+Where different endpoints in the same test need different response
+shapes, branch on the request URL inside the implementation
+(`fetchMock.mockImplementation((url) => url.includes("/users/me") ? ... : ...)`).
+
+**Verification:** All previously-failing tests in
+`frontend/lib/api-client.test.ts` pass; the full suite (30 tests at the
+time) passes with no regressions.
+
+**Prevention:** Default to `mockImplementation` (not `mockResolvedValue`)
+for any fetch mock in this codebase that a test might call more than
+once per test body — `mockResolvedValue` is only safe for a genuinely
+single-call test. This is now the pattern used throughout
+`api-client.test.ts`; follow it for new tests in the same file rather
+than reintroducing `mockResolvedValue` for a multi-call test.

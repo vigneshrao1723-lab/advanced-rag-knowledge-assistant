@@ -21,6 +21,19 @@ services:
       timeout: 5s
       retries: 10
 
+  # Dev-only SMTP capture (docs/ARCHITECTURE.md "Provider abstractions" —
+  # EmailProvider): password-reset emails land here instead of a real
+  # inbox. Web UI + REST API at http://localhost:8025 (Playwright reads
+  # the reset email via the API — see docs/DEPLOYMENT.md). Never used in
+  # production — a real deployment points EMAIL_PROVIDER at a real
+  # SMTP host/relay instead.
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI + REST API
+
   backend:
     build:
       context: ../../backend
@@ -35,10 +48,16 @@ services:
       # (e.g. `openssl rand -hex 32`) via a `.env` file for anything beyond
       # a throwaway local stack; never commit a real value.
       SECRET_KEY: ${SECRET_KEY:-local-dev-only-secret-do-not-use-in-production}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
     ports:
       - "8000:8000"
     depends_on:
       db:
+        condition: service_healthy
+      mailpit:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]

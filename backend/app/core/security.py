@@ -122,3 +122,14 @@ def parse_refresh_token(raw_token: str) -> tuple[uuid.UUID, str] | None:
     except ValueError:
         return None
     return session_id, secret
+
+
+def generate_password_reset_token() -> str:
+    """A high-entropy, single-use, expiring token — the raw value is
+    emailed to the user and never persisted; only its hash is stored
+    (`hash_password_reset_token`), same pattern as refresh tokens."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_password_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

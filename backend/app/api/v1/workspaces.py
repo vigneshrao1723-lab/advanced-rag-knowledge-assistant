@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.dependencies import WorkspaceContext, get_current_user, require_workspace_role
+from app.core.rate_limit import client_ip
 from app.models.user import User
 from app.models.workspace_member import WorkspaceRole
 from app.schemas.workspace import (
@@ -33,9 +34,14 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 @router.post("", response_model=WorkspaceRead, status_code=status.HTTP_201_CREATED)
 def create_workspace(
-    body: WorkspaceCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    request: Request,
+    body: WorkspaceCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> WorkspaceRead:
-    return workspace_service.create_workspace(db, owner_id=user.id, name=body.name)
+    return workspace_service.create_workspace(
+        db, owner_id=user.id, name=body.name, ip_address=client_ip(request)
+    )
 
 
 @router.get("", response_model=list[WorkspaceRead])
@@ -66,10 +72,13 @@ def update_workspace(
 
 @router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_workspace(
+    request: Request,
     ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.OWNER)),
     db: Session = Depends(get_db),
 ) -> None:
-    workspace_service.delete_workspace(db, workspace=ctx.workspace)
+    workspace_service.delete_workspace(
+        db, workspace=ctx.workspace, deleted_by_user_id=ctx.user.id, ip_address=client_ip(request)
+    )
 
 
 @router.get("/{workspace_id}/members", response_model=list[MemberRead])
@@ -84,17 +93,25 @@ def list_members(
     "/{workspace_id}/members", response_model=MemberRead, status_code=status.HTTP_201_CREATED
 )
 def add_member(
+    request: Request,
     body: MemberAdd,
     ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.ADMIN)),
     db: Session = Depends(get_db),
 ) -> MemberRead:
     return workspace_service.add_member(
-        db, workspace_id=ctx.workspace.id, acting_role=ctx.role, email=body.email, role=body.role
+        db,
+        workspace_id=ctx.workspace.id,
+        acting_role=ctx.role,
+        acting_user_id=ctx.user.id,
+        email=body.email,
+        role=body.role,
+        ip_address=client_ip(request),
     )
 
 
 @router.patch("/{workspace_id}/members/{user_id}", response_model=MemberRead)
 def update_member_role(
+    request: Request,
     user_id: uuid.UUID,
     body: MemberRoleUpdate,
     ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.ADMIN)),
@@ -104,13 +121,16 @@ def update_member_role(
         db,
         workspace_id=ctx.workspace.id,
         acting_role=ctx.role,
+        acting_user_id=ctx.user.id,
         target_user_id=user_id,
         new_role=body.role,
+        ip_address=client_ip(request),
     )
 
 
 @router.delete("/{workspace_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_member(
+    request: Request,
     user_id: uuid.UUID,
     ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.VIEWER)),
     db: Session = Depends(get_db),
@@ -121,4 +141,5 @@ def remove_member(
         acting_role=ctx.role,
         acting_user_id=ctx.user.id,
         target_user_id=user_id,
+        ip_address=client_ip(request),
     )

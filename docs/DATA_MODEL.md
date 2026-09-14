@@ -1,11 +1,12 @@
 # Data Model
 
 **Status:** PARTIALLY IMPLEMENTED — `users`, `workspaces`,
-`workspace_members`, and `sessions` exist as real tables (migration `0002`,
-GitHub Issue #2 — Authentication & Workspaces); every other entity below
-remains PROPOSED. This document records the intended core entities so
-future implementation stays consistent; entities not marked implemented
-below are not evidence that they exist. See
+`workspace_members`, `sessions` (migration `0002`), and
+`password_reset_tokens`/`audit_logs` (migration `0003`) exist as real
+tables (GitHub Issue #2 — Authentication & Workspaces); every other
+entity below remains PROPOSED. This document records the intended core
+entities so future implementation stays consistent; entities not marked
+implemented below are not evidence that they exist. See
 [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 
 ## Core entities
@@ -16,6 +17,7 @@ below are not evidence that they exist. See
 | `workspaces` | Isolation boundary for a user or team's data | IMPLEMENTED |
 | `workspace_members` | Membership + role (`OWNER`/`ADMIN`/`MEMBER`/`VIEWER`) linking users to workspaces | IMPLEMENTED |
 | `sessions` | Server-tracked login/device session backing refresh-token issuance, listing, and revocation (see [ADR 0003](DECISIONS/0003-authentication-session-architecture.md)) | IMPLEMENTED |
+| `password_reset_tokens` | Hashed, expiring, single-use password-reset tokens (raw value never persisted — see [ADR 0005](DECISIONS/0005-httponly-cookie-csrf-authentication.md) and `docs/SECURITY.md`) | IMPLEMENTED |
 | `documents` | Uploaded source files and their processing status | PROPOSED |
 | `document_chunks` | Chunked, embedded units of a document, used for retrieval | PROPOSED |
 | `collections` | Logical grouping of documents within a workspace | PROPOSED |
@@ -26,7 +28,7 @@ below are not evidence that they exist. See
 | `retrieval_events` | Record of a retrieval operation (query, method, results, scores) for observability/evaluation | PROPOSED |
 | `evaluation_runs` | A configured evaluation experiment (embedding model, chunking strategy, retrieval method, etc.) | PROPOSED |
 | `evaluation_results` | Computed metrics for an `evaluation_run` | PROPOSED |
-| `audit_logs` | Security-relevant action log (see [`docs/SECURITY.md`](SECURITY.md)) | PROPOSED |
+| `audit_logs` | Security-relevant action log (see [`docs/SECURITY.md`](SECURITY.md)) | IMPLEMENTED (auth/workspace event types; document-related events land with Issue #3) |
 
 ## Potential entities (subject to architectural validation)
 
@@ -46,6 +48,7 @@ before being added to the core list above:
 ```
 users ──< workspace_members >── workspaces
 users ──< sessions
+users ──< password_reset_tokens
 workspaces ──< documents
 workspaces ──< collections ──< collection_documents >── documents
 documents ──< document_chunks

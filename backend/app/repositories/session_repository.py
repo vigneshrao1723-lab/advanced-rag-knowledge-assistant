@@ -52,6 +52,14 @@ def revoke(db: DbSession, session: Session, *, when: datetime) -> None:
     db.flush()
 
 
+def revoke_all_for_user(db: DbSession, user_id: uuid.UUID, *, when: datetime) -> None:
+    """Used after a successful password reset: the user must re-authenticate
+    everywhere, on every device."""
+    for session in list_for_user(db, user_id):
+        session.revoked_at = when
+    db.flush()
+
+
 def rotate(
     db: DbSession,
     session: Session,

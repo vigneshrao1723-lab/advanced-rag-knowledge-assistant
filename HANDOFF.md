@@ -8,135 +8,204 @@ in-flight task — overwrite it as work progresses, don't append a history
 
 ## Current task
 
-Implement GitHub Issue #2 — Authentication & Workspaces, on branch
+GitHub Issue #2 — Authentication & Workspaces, on branch
 `issue-2-authentication-workspaces`. Issue #1 (Application Foundation) is
-already merged to `main` (PR #9). Full scope: registration, login, logout,
-JWT access tokens + PostgreSQL-backed sessions with refresh rotation and
-reuse-detection revocation (per ADR 0003), session/device management,
-workspace CRUD/membership/four-role authorization, server-side workspace
-isolation, and a minimal frontend vertical slice
-(`/register`, `/login`, `/dashboard`, `/settings`, `/workspace`).
+already merged to `main` (PR #9).
 
-## Completed work
+**Issue #2 is now at a clean, complete authentication + password-recovery
+checkpoint, just committed.** This checkpoint covers: registration/login/
+logout/refresh with PostgreSQL-backed sessions, HttpOnly cookie + CSRF
+browser authentication (superseding the original bearer-token-in-body
+design), workspace CRUD/membership/RBAC, password recovery (backend and
+frontend), audit logging, and the security documentation/ADRs for all of
+it. It does **not** yet cover Redis-backed rate limiting, a deterministic
+abuse-detection layer, or Playwright E2E — those are explicitly the next
+work, not done. Do not start Issue #3 yet.
 
-- **Backend**: `users`, `sessions`, `workspaces`, `workspace_members`
-  SQLAlchemy models + Alembic migration `0002` (applied and verified
-  reversible against the real Postgres container).
-- **Security primitives** (`app/core/security.py`): Argon2id password
-  hashing (new [ADR 0004](docs/DECISIONS/0004-password-hashing-argon2id.md)),
-  JWT access tokens (15 min default) carrying `sub`+`sid` claims, opaque
-  `<session_id>.<secret>` refresh tokens (only a SHA-256 hash of the secret
-  is ever persisted).
-- **Auth service/API** (`app/services/auth_service.py`,
-  `app/api/v1/auth.py`): register, login (generic error message either way,
-  resists enumeration), refresh (rotation; reuse of a rotated-out token
-  revokes the session), logout, session list/revoke. Rate-limited
-  (`app/core/rate_limit.py`, in-process fixed-window) on
-  register/login/refresh.
-- **Workspace service/API** (`app/services/workspace_service.py`,
-  `app/api/v1/workspaces.py`): CRUD, membership, role changes, with the
-  OWNER/ADMIN/MEMBER/VIEWER matrix documented in
-  `docs/API_CONTRACT.md`. Every workspace-scoped route resolves
-  `workspace_id` through `app/core/dependencies.py`'s
-  `require_workspace_role`, which 404s for both nonexistent workspaces and
-  ones the caller isn't a member of (never 403 — avoids confirming
-  existence to non-members).
-- **Backend tests**: 69 pytest tests total — unit (password hashing,
-  JWT encode/decode, refresh-token parsing, rate limiter) and integration
-  (`tests/test_auth.py`, `tests/test_workspaces.py`) against a **real**
-  Postgres via SQLAlchemy's "join an external transaction" pattern
-  (`tests/conftest.py` — each test rolls back cleanly even though app code
-  calls `session.commit()`). Explicit security tests: cross-workspace
-  IDOR attempts (404 for a non-member on every workspace endpoint),
-  auth-bypass (missing/garbage/expired/wrong-signature tokens, revoked
-  sessions), refresh-token reuse detection, and rate-limit triggering.
-- **CI** (`.github/workflows/ci.yml`): added a `pgvector/pgvector:pg16`
-  service container and an Alembic-migration step to the backend job, so
-  the new integration tests actually run in CI against a real database.
-- **Frontend**: `lib/api-client.ts` (Zod-validated API boundary, automatic
-  401→refresh→retry-once), `lib/auth-context.tsx`, `lib/workspace-context.tsx`,
-  `components/protected-route.tsx`. Real `/register`, `/login` forms;
-  `/dashboard` and `/settings` (profile + session/device list with revoke)
-  behind auth; `/workspace` (list/create/switch/rename/delete +
-  member list/add/role-change/remove, all gated in the UI by role and
-  enforced server-side regardless). Nav shows current user, a workspace
-  selector, and logout when authenticated.
-- **Frontend tests**: 22 vitest tests (up from 3) — register/login form
-  validation and error handling, Nav auth-state/workspace-selector/logout,
-  workspace-page permission-sensitive rendering (OWNER vs VIEWER),
-  auth-storage round-trip.
-- **Fixed two non-obvious bugs** (full write-ups in `SOLVING.md`):
-  (1) a Postgres native-enum double-`CREATE TYPE` in the Alembic migration;
-  (2) Testing-Library's automatic cleanup never running because
-  `vitest.config.mts` doesn't set `globals: true` — fixed by an explicit
-  `afterEach(cleanup)` in `vitest.setup.ts`.
-- **New ADR**: [`docs/DECISIONS/0004-password-hashing-argon2id.md`](docs/DECISIONS/0004-password-hashing-argon2id.md).
-- Verified end-to-end against the real Docker Compose stack: both images
-  rebuilt with the new backend dependencies (`argon2-cffi`, `pyjwt`), full
-  stack starts healthy, migrations apply, and a live
-  register→get-current-user→create-workspace→list→refresh→
-  cross-workspace-isolation-check flow was exercised via curl against the
-  running containers (see "Tests run" below for exact commands/results).
-- Updated `docs/API_CONTRACT.md` (concrete auth/workspace schemas +
-  authorization matrix, previously deferred), `docs/SECURITY.md` (marks
-  auth/authorization/rate-limiting/relevant security tests as
-  implemented), `docs/DATA_MODEL.md` and `docs/ARCHITECTURE.md` (new
-  tables/modules marked implemented), `README.md`, `PROJECT_STATE.md`.
+## Completed work (this checkpoint)
 
-## Remaining work
+- **Cookie + CSRF authentication migration** (superseding the original
+  design where tokens were returned in the JSON response body for the
+  frontend to hold and send as `Authorization: Bearer`): access and
+  refresh tokens are now delivered exclusively via `HttpOnly` cookies
+  (`access_token` on `Path=/`; `refresh_token` narrowly scoped to
+  `Path=/api/v1/auth`), never in a response body, never read by
+  JavaScript. A double-submit `csrf_token` cookie (deliberately **not**
+  `HttpOnly`) + `X-CSRF-Token` header protects every state-changing
+  request, including login/register (login-CSRF defense). Cookie
+  attributes (`COOKIE_SAMESITE`/`COOKIE_DOMAIN`/`COOKIE_SECURE`) and CORS
+  (`CORS_ALLOWED_ORIGINS`, credentialed) are deployment-aware — see
+  [ADR 0005](docs/DECISIONS/0005-httponly-cookie-csrf-authentication.md)
+  for the full model, including the "different origin ≠ cross-site"
+  distinction that governs `COOKIE_SAMESITE` (a subdomain split, or
+  `localhost:3000` ↔ `localhost:8000`, is same-site despite being a
+  different origin — don't set `SameSite=None` for those; it's an
+  unforced weakening).
+  - Backend: `app/core/cookies.py`, `app/core/csrf.py`,
+    `app/core/dependencies.py` (`get_current_token_claims` reads the
+    cookie, not a header), `app/main.py` (middleware ordering: CSRF →
+    access-log → request-ID → CORS, added in that order so CORS ends up
+    outermost and its headers land on CSRF/auth rejections too),
+    `app/api/v1/auth.py`, `app/schemas/auth.py` (`AuthResponse = {user}`
+    only, no token fields).
+  - Frontend: `lib/api-client.ts` fully rewritten (`credentials:
+    "include"` on every request, CSRF header attached on state-changing
+    requests, `Authorization`/bearer logic and `localStorage`/
+    `sessionStorage` token storage entirely removed —
+    `lib/auth-storage.ts` deleted), `lib/csrf.ts` (new — reads the
+    non-HttpOnly CSRF cookie), `lib/auth-context.tsx` rewritten (auth
+    state derived from `getCurrentUser()` on mount, not from storage).
+- **Password recovery** — backend and frontend, both complete:
+  - Backend: `POST /api/v1/auth/forgot-password` and
+    `POST /api/v1/auth/reset-password`
+    (`app/services/password_reset_service.py`). Reset tokens are
+    `secrets.token_urlsafe(32)` (256 bits), SHA-256-hashed at rest, never
+    logged raw, single-use (`used_at`), expiring
+    (`PASSWORD_RESET_TOKEN_EXPIRE_MINUTES`). `forgot-password` always
+    returns the same generic response/status regardless of whether the
+    email exists, with a dummy Argon2 verification on the not-found path
+    for timing equalization. A successful reset revokes every existing
+    session for that user (`session_repository.revoke_all_for_user`) and
+    reuses the existing Argon2id hashing. Email delivery via the
+    `EmailProvider` abstraction (`app/services/email_provider.py`) —
+    `console` (stdout, dev/test fallback) or `smtp` (local dev points it
+    at Mailpit). **`ENVIRONMENT=production` + `EMAIL_PROVIDER=console`
+    now fails at config-load time** (`app/core/config.py`'s
+    `_validate_email_provider_for_production`) — this was a genuine
+    defect found during audit: stdout is typically captured by log
+    aggregation in real deployments, which would have leaked raw reset
+    tokens into logs if `EMAIL_PROVIDER` were ever left unset in
+    production.
+  - Frontend: `app/forgot-password/page.tsx` (email input, generic
+    success message, no existence leakage) and
+    `app/reset-password/page.tsx` (reads `token` from the URL via
+    `useSearchParams` inside a `Suspense` boundary — the page is
+    statically prerendered, so the token is only resolved client-side
+    after hydration, not server-rendered; this is correct Next.js
+    behavior, not a bug, but it means a plain `curl` of the page shows
+    the `Suspense` fallback, not the form — don't mistake that for a
+    broken page). New password + confirm-password fields with
+    client-side match validation (`lib/schemas.ts`'s
+    `ResetPasswordFormSchema`), distinct UX for invalid/expired/
+    already-used tokens (surfaces the backend's exact message), and a
+    "Forgot password?" link added to `/login`.
+- **Audit logging**: `app/core/audit.py` (`AuditEvent` string constants,
+  not a DB enum, for extensibility) and
+  `app/repositories/audit_log_repository.py`. Records registration,
+  login success/failure, logout, session revocation, refresh-token reuse
+  detection, password-reset request/success, workspace
+  create/delete/membership changes, and authorization denials. Writes
+  commit immediately/independently of the surrounding request's
+  transaction. `user_id`/`workspace_id` use `ON DELETE SET NULL`.
+- **Docs**: [ADR 0005](docs/DECISIONS/0005-httponly-cookie-csrf-authentication.md)
+  (new — the cookie/CSRF model and the origin-vs-site distinction);
+  `docs/SECURITY.md` corrected (previously stale: described "bearer
+  access tokens" and listed audit logging as "not implemented" — both
+  fixed to match the current implementation).
+- **Tests**: backend went from 95 to **119** pytest tests this checkpoint
+  (new: `tests/test_cookie_security.py`, `tests/test_csrf.py` additions,
+  `tests/test_password_reset.py` additions, `tests/test_config.py`
+  additions for the production email-provider guard). Frontend went from
+  30 to **48** vitest tests (new: `lib/api-client.test.ts` and
+  `lib/auth-context.test.tsx` regression tests proving no token ever
+  reaches `localStorage`/`sessionStorage`/an `Authorization` header;
+  `app/forgot-password/page.test.tsx`, `app/reset-password/page.test.tsx`).
 
-- Nothing for Issue #2's own scope is outstanding against its Definition of
-  Done (see below) — remaining items are deliberately out of scope for
-  this issue: email verification, password reset, full profile editing,
-  audit logging of auth events (Issue #7), browser-based E2E (Playwright).
-- Everything above is uncommitted in the working tree on
-  `issue-2-authentication-workspaces` — see `git status`.
-- The CI workflow's new Postgres-service block has not yet run on real
-  GitHub Actions (no push yet) — its constituent commands (including
-  `alembic upgrade head`) were verified locally instead.
+## Explicitly NOT done (do not assume otherwise)
+
+- **Redis distributed rate limiting** — not started. No Redis dependency,
+  service, or code exists anywhere in this repository.
+- **Deterministic abuse/risk layer** — not started. (If you build this
+  later: it must be deterministic, rule-based logic — never call it "AI"
+  or claim ML/statistical evaluation unless an actual evaluated model
+  backs that claim.)
+- **Concurrency/race-condition testing for Redis** — not applicable yet;
+  there is no Redis to test.
+- **Playwright browser E2E** — not started. No config, no test files, no
+  dependency. The live-Docker verification done for this checkpoint
+  (curl/Python against running containers, including reading Mailpit's
+  REST API directly) is real integration verification but is **not** a
+  substitute for actual browser automation — say so explicitly if asked,
+  don't imply Playwright coverage exists.
+- **Issue #3 (document ingestion)** — not started.
+- **Later RAG retrieval/generation features** — not started.
+
+## Next major task: Redis rate limiting + deterministic abuse protection
+
+This is the next thing to build, **after** this checkpoint is reviewed,
+committed, and (per the maintainer's call) pushed/PR'd — not before, and
+not combined with it.
+
+Constraints for whoever picks this up:
+
+- **Evolve `backend/app/core/rate_limit.py`, don't blindly replace it.**
+  The existing `FixedWindowRateLimiter` and its per-endpoint
+  `enforce_*_rate_limit` dependencies are working, tested (in
+  `tests/test_auth.py`, `tests/test_password_reset.py`,
+  `tests/test_rate_limit.py`), and correct for a single-process
+  deployment. Understand why each limit exists and what test currently
+  asserts it before changing the mechanism underneath.
+- **PostgreSQL remains the authoritative durable datastore** (ADR 0002).
+  Redis, when introduced, is for ephemeral distributed rate-limiting/
+  abuse state only — not a second source of truth for anything that must
+  survive a restart or be queried historically (that's still Postgres +
+  `audit_logs`).
+- **Redis failure behavior must be operation-aware and security-
+  conscious** — decide deliberately, per operation, whether a Redis
+  outage should fail open (allow the request, degrade to no limiting) or
+  fail closed (reject), rather than picking one global default. Document
+  the choice and why in the ADR this work should produce.
+- **No unbounded attacker queues** — any queuing/backoff mechanism must
+  have a hard bound; don't let a malicious client's requests accumulate
+  server-side memory or Redis keys without expiry.
+- **This needs its own ADR** before or alongside implementation
+  (`docs/DECISIONS/0006-...`), per `CLAUDE.md` §4 — introducing Redis is
+  a new infrastructure dependency, which is exactly the kind of decision
+  that document instructs stopping for.
+- Files/areas to inspect first: `backend/app/core/rate_limit.py` (current
+  mechanism), `backend/tests/test_rate_limit.py` and every
+  `enforce_*_rate_limit` call site (`app/api/v1/auth.py`), `docs/SECURITY.md`
+  "Rate limiting approach" (documents the existing no-premature-
+  infrastructure reasoning this decision needs to explicitly revisit),
+  `infra/compose/docker-compose.yml` (where a `redis` service would be
+  added, following the same healthcheck-gated pattern already used for
+  `mailpit`).
 
 ## Blockers
 
-None. Docker Compose, the local Postgres container, and `gh` CLI access
-are all confirmed working in this environment.
+None. Docker Compose, the local Postgres container, Mailpit, and `gh` CLI
+access are all confirmed working in this environment.
 
-## Tests run
+## Tests run (this checkpoint)
 
-- Backend: `uv run ruff check .` (pass), `uv run mypy .` (pass, 54 files),
-  `uv run pytest -v` (69/69 pass, against real Postgres on
-  `localhost:5432`, credentials `raguser`/`ragpass`/`ragdb`).
-- Frontend: `npm run lint` (pass), `npm run typecheck` (pass — verified
-  from a clean `.next`-free state), `npm run test` (22/22 pass), `npm run
-  build` (pass, 14 routes).
-- `docker compose -f infra/compose/docker-compose.yml config` (valid,
-  including the new `SECRET_KEY` env var and no schema errors).
-- `docker compose -f infra/compose/docker-compose.yml build` — both images
-  rebuilt successfully with the new backend dependencies.
-- `docker compose -f infra/compose/docker-compose.yml up -d` — full stack
-  healthy (db healthy, backend healthy, frontend up); `alembic current`
-  inside the backend container confirms `0002 (head)`; `\dt` inside the db
-  container confirms `users`/`sessions`/`workspaces`/`workspace_members`
-  exist.
-- Live curl-driven flow against the running containers: register → 201
-  with real tokens; `GET /api/v1/users/me` → 200 with the registered
-  email; `POST /api/v1/workspaces` → 201, caller is `OWNER`;
-  `GET /api/v1/workspaces` → lists it; `POST /api/v1/auth/refresh` → 200,
-  rotated tokens; a second, unrelated registered user attempting
-  `GET /api/v1/workspaces/{first_user's_workspace_id}` → **404** (verified
-  cross-workspace isolation against the real database, not just in unit
-  tests).
-- CORS re-verified: `Access-Control-Allow-Origin: http://localhost:3000`
-  present on a cross-origin request to the running backend.
-- Stack shut down cleanly (`docker compose down`) after verification.
+- Backend: `uv run ruff check .` (pass), `uv run mypy .` (pass, 67 files),
+  `uv run pytest -v` (**119/119 pass**, against real Postgres).
+- Frontend: `npm run lint` (pass), `npm run typecheck` (pass), `npm run
+  test` (**48/48 pass**), `npm run build` (pass — `/forgot-password` and
+  `/reset-password` both build as static pages).
+- Docker: rebuilt backend + frontend images; full stack (db, mailpit,
+  backend, frontend) started healthy.
+- Live end-to-end password-recovery flow against the running containers:
+  registered a test user → cleared Mailpit → called `forgot-password` →
+  Mailpit received exactly 1 email to the correct address with a correct
+  `http://localhost:3000/reset-password?token=...` link → extracted the
+  real token from Mailpit's REST API → confirmed 0 occurrences of that
+  raw token anywhere in backend container logs → reset without CSRF → 403
+  → reset with correct CSRF → 204 → old password → 401 → new password →
+  200 → the refresh token captured *before* the reset → 401 on replay
+  (session invalidated). Also re-verified general cookie/CSRF/CORS
+  behavior (login/register cookie attributes, CORS preflight
+  allow/deny-by-origin, CORS headers present on CSRF/auth rejections)
+  still intact after the frontend changes.
+- Stack shut down cleanly after each verification pass.
 
 ## Exact next recommended action
 
-1. Review this working tree (backend, frontend, migration, CI change, new
-   ADR, and doc updates) with the user/maintainer.
-2. If approved: commit (small logical commits are fine — e.g. backend,
-   frontend, docs — or one commit if the reviewer prefers), push
-   `issue-2-authentication-workspaces`, and open a PR against `main`
-   referencing GitHub Issue #2, so CI (including the new Postgres-backed
-   integration tests) runs on GitHub Actions for the first time; confirm
-   green before merging.
-3. After merge, begin GitHub Issue #3 (Knowledge Ingestion).
+1. If not already done: push `issue-2-authentication-workspaces` and open
+   a PR against `main` referencing GitHub Issue #2; confirm CI is green
+   (this is the first CI run covering the cookie/CSRF/password-recovery
+   work).
+2. Start the Redis rate-limiting + abuse-detection work per "Next major
+   task" above — write the ADR first.
+3. Introduce Playwright E2E coverage for auth/password-recovery.
+4. Only after the above: begin GitHub Issue #3 (Knowledge Ingestion).

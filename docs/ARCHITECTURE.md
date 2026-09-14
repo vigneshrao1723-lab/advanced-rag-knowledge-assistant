@@ -31,11 +31,14 @@ real, current, per-component status.
    selected yet; this repository contains no such decision.
 5. **Text RAG before voice.** Voice is a mode within chat, added after the
    text pipeline is proven, not a parallel system.
-6. **Authentication is not purely stateless.** Short-lived bearer access
-   tokens are backed by server-tracked refresh/session records (in
+6. **Authentication is not purely stateless.** Short-lived, bearer-style
+   access tokens are backed by server-tracked refresh/session records (in
    PostgreSQL, no separate session store) enabling per-device session
    listing and revocation. See
    [`docs/DECISIONS/0003-authentication-session-architecture.md`](DECISIONS/0003-authentication-session-architecture.md).
+   Delivery to the browser is via `HttpOnly` cookies with CSRF protection,
+   not an `Authorization` header — see
+   [`docs/DECISIONS/0005-httponly-cookie-csrf-authentication.md`](DECISIONS/0005-httponly-cookie-csrf-authentication.md).
 
 ## System flow
 

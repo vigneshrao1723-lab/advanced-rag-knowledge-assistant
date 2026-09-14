@@ -46,6 +46,8 @@ class FixedWindowRateLimiter:
 login_rate_limiter = FixedWindowRateLimiter(limit=5, window_seconds=60)
 register_rate_limiter = FixedWindowRateLimiter(limit=5, window_seconds=60)
 refresh_rate_limiter = FixedWindowRateLimiter(limit=20, window_seconds=60)
+forgot_password_rate_limiter = FixedWindowRateLimiter(limit=5, window_seconds=60)
+reset_password_rate_limiter = FixedWindowRateLimiter(limit=10, window_seconds=60)
 
 
 def client_ip(request: Request) -> str:
@@ -64,3 +66,11 @@ def enforce_register_rate_limit(request: Request) -> None:
 
 def enforce_refresh_rate_limit(request: Request) -> None:
     refresh_rate_limiter.check(client_ip(request))
+
+
+def enforce_forgot_password_rate_limit(request: Request) -> None:
+    forgot_password_rate_limiter.check(client_ip(request))
+
+
+def enforce_reset_password_rate_limit(request: Request) -> None:
+    reset_password_rate_limiter.check(client_ip(request))

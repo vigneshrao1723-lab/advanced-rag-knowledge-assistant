@@ -13,14 +13,12 @@ export const UserSchema = z.object({
 });
 export type User = z.infer<typeof UserSchema>;
 
-export const TokenResponseSchema = z.object({
-  access_token: z.string(),
-  refresh_token: z.string(),
-  token_type: z.string(),
-  expires_in: z.number(),
+// Access/refresh tokens are delivered as HttpOnly cookies, never in the
+// JSON body (ADR 0005) — the client only ever receives the user object.
+export const AuthResponseSchema = z.object({
   user: UserSchema,
 });
-export type TokenResponse = z.infer<typeof TokenResponseSchema>;
+export type AuthResponse = z.infer<typeof AuthResponseSchema>;
 
 export const SessionInfoSchema = z.object({
   id: z.string(),
@@ -71,3 +69,30 @@ export const LoginFormSchema = z.object({
   password: z.string().min(1, "Password is required."),
 });
 export type LoginForm = z.infer<typeof LoginFormSchema>;
+
+export const ForgotPasswordFormSchema = z.object({
+  email: z.string().email("Enter a valid email address."),
+});
+export type ForgotPasswordForm = z.infer<typeof ForgotPasswordFormSchema>;
+
+export const MessageResponseSchema = z.object({
+  message: z.string(),
+});
+export type MessageResponse = z.infer<typeof MessageResponseSchema>;
+
+// Mirrors the backend's reset-password validation (Field(min_length=8,
+// max_length=256) in `backend/app/schemas/auth.py`) so the form fails
+// fast client-side with the same bound the server enforces. The
+// confirmation field exists only to catch typos before submitting — the
+// backend has no notion of a "confirm password" value, so it never leaves
+// this schema.
+export const ResetPasswordFormSchema = z
+  .object({
+    newPassword: z.string().min(8, "Password must be at least 8 characters."),
+    confirmPassword: z.string().min(1, "Please confirm your new password."),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: "Passwords do not match.",
+    path: ["confirmPassword"],
+  });
+export type ResetPasswordForm = z.infer<typeof ResetPasswordFormSchema>;

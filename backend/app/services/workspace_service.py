@@ -27,6 +27,8 @@ import uuid
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session as DbSession
 
+from app.core.audit import AuditEvent
+from app.core.audit import record as record_audit_event
 from app.models.user import User
 from app.models.workspace import Workspace
 from app.models.workspace_member import WorkspaceMember, WorkspaceRole
@@ -46,10 +48,19 @@ def _to_workspace_read(workspace: Workspace, *, my_role: WorkspaceRole) -> Works
     )
 
 
-def create_workspace(db: DbSession, *, owner_id: uuid.UUID, name: str) -> WorkspaceRead:
+def create_workspace(
+    db: DbSession, *, owner_id: uuid.UUID, name: str, ip_address: str | None = None
+) -> WorkspaceRead:
     workspace = workspace_repository.create(db, name=name)
     workspace_member_repository.add_member(
         db, workspace_id=workspace.id, user_id=owner_id, role=WorkspaceRole.OWNER
+    )
+    record_audit_event(
+        db,
+        event_type=AuditEvent.WORKSPACE_CREATED,
+        user_id=owner_id,
+        workspace_id=workspace.id,
+        ip_address=ip_address,
     )
     db.commit()
     db.refresh(workspace)
@@ -81,7 +92,25 @@ def update_workspace(
     return _to_workspace_read(workspace, my_role=my_role)
 
 
-def delete_workspace(db: DbSession, *, workspace: Workspace) -> None:
+def delete_workspace(
+    db: DbSession,
+    *,
+    workspace: Workspace,
+    deleted_by_user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
+) -> None:
+    # Audit event recorded (and committed) *before* the delete — the audit
+    # repository commits immediately, and this row's `workspace_id` FK must
+    # still be valid at that point. `ON DELETE SET NULL` then nulls it out
+    # when the workspace is actually deleted next, which is the intended,
+    # documented behavior (the audit trail outlives the workspace).
+    record_audit_event(
+        db,
+        event_type=AuditEvent.WORKSPACE_DELETED,
+        user_id=deleted_by_user_id,
+        workspace_id=workspace.id,
+        ip_address=ip_address,
+    )
     workspace_repository.delete(db, workspace)
     db.commit()
 
@@ -102,8 +131,10 @@ def add_member(
     *,
     workspace_id: uuid.UUID,
     acting_role: WorkspaceRole,
+    acting_user_id: uuid.UUID | None = None,
     email: str,
     role: WorkspaceRole,
+    ip_address: str | None = None,
 ) -> MemberRead:
     _check_role_assignable(acting_role, role)
 
@@ -124,6 +155,14 @@ def add_member(
     member = workspace_member_repository.add_member(
         db, workspace_id=workspace_id, user_id=target_user.id, role=role
     )
+    record_audit_event(
+        db,
+        event_type=AuditEvent.WORKSPACE_MEMBER_ADDED,
+        user_id=acting_user_id,
+        workspace_id=workspace_id,
+        ip_address=ip_address,
+        metadata={"target_user_id": str(target_user.id), "role": role.value},
+    )
     db.commit()
     return _to_member_read(target_user, member)
 
@@ -133,8 +172,10 @@ def update_member_role(
     *,
     workspace_id: uuid.UUID,
     acting_role: WorkspaceRole,
+    acting_user_id: uuid.UUID | None = None,
     target_user_id: uuid.UUID,
     new_role: WorkspaceRole,
+    ip_address: str | None = None,
 ) -> MemberRead:
     member = workspace_member_repository.get_membership(
         db, workspace_id=workspace_id, user_id=target_user_id
@@ -148,7 +189,20 @@ def update_member_role(
     if member.role == WorkspaceRole.OWNER and new_role != WorkspaceRole.OWNER:
         _guard_last_owner(db, workspace_id)
 
+    previous_role = member.role
     workspace_member_repository.update_role(db, member, role=new_role)
+    record_audit_event(
+        db,
+        event_type=AuditEvent.WORKSPACE_MEMBER_ROLE_CHANGED,
+        user_id=acting_user_id,
+        workspace_id=workspace_id,
+        ip_address=ip_address,
+        metadata={
+            "target_user_id": str(target_user_id),
+            "previous_role": previous_role.value,
+            "new_role": new_role.value,
+        },
+    )
     db.commit()
 
     target_user = user_repository.get_by_id(db, target_user_id)
@@ -163,6 +217,7 @@ def remove_member(
     acting_role: WorkspaceRole,
     acting_user_id: uuid.UUID,
     target_user_id: uuid.UUID,
+    ip_address: str | None = None,
 ) -> None:
     member = workspace_member_repository.get_membership(
         db, workspace_id=workspace_id, user_id=target_user_id
@@ -177,6 +232,14 @@ def remove_member(
     if member.role == WorkspaceRole.OWNER:
         _guard_last_owner(db, workspace_id)
 
+    record_audit_event(
+        db,
+        event_type=AuditEvent.WORKSPACE_MEMBER_REMOVED,
+        user_id=acting_user_id,
+        workspace_id=workspace_id,
+        ip_address=ip_address,
+        metadata={"target_user_id": str(target_user_id), "self_leave": is_self_leave},
+    )
     workspace_member_repository.remove_member(db, member)
     db.commit()
 

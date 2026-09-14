@@ -22,6 +22,8 @@ from datetime import UTC, datetime, timedelta
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session as DbSession
 
+from app.core.audit import AuditEvent
+from app.core.audit import record as record_audit_event
 from app.core.config import get_settings
 from app.core.security import (
     create_access_token,
@@ -33,7 +35,7 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.repositories import session_repository, user_repository
-from app.schemas.auth import SessionRead, TokenResponse
+from app.schemas.auth import IssuedTokens, SessionRead
 from app.schemas.user import UserRead
 
 logger = logging.getLogger("app.auth")
@@ -42,8 +44,13 @@ _GENERIC_LOGIN_ERROR = "Incorrect email or password."
 
 
 def register(
-    db: DbSession, *, email: str, password: str, device_label: str | None
-) -> TokenResponse:
+    db: DbSession,
+    *,
+    email: str,
+    password: str,
+    device_label: str | None,
+    ip_address: str | None = None,
+) -> IssuedTokens:
     if user_repository.get_by_email(db, email) is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -52,24 +59,45 @@ def register(
 
     user = user_repository.create(db, email=email, password_hash=hash_password(password))
     tokens = _issue_tokens(db, user, device_label=device_label)
+    record_audit_event(
+        db, event_type=AuditEvent.USER_REGISTERED, user_id=user.id, ip_address=ip_address
+    )
     db.commit()
     logger.info("user_registered", extra={"user_id": str(user.id)})
     return tokens
 
 
-def login(db: DbSession, *, email: str, password: str, device_label: str | None) -> TokenResponse:
+def login(
+    db: DbSession,
+    *,
+    email: str,
+    password: str,
+    device_label: str | None,
+    ip_address: str | None = None,
+) -> IssuedTokens:
     user = user_repository.get_by_email(db, email)
     if user is None or not verify_password(password, user.password_hash):
         logger.info("login_failed")
+        record_audit_event(
+            db,
+            event_type=AuditEvent.LOGIN_FAILED,
+            user_id=user.id if user is not None else None,
+            ip_address=ip_address,
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_GENERIC_LOGIN_ERROR)
 
     tokens = _issue_tokens(db, user, device_label=device_label)
+    record_audit_event(
+        db, event_type=AuditEvent.LOGIN_SUCCEEDED, user_id=user.id, ip_address=ip_address
+    )
     db.commit()
     logger.info("login_succeeded", extra={"user_id": str(user.id)})
     return tokens
 
 
-def refresh(db: DbSession, *, raw_refresh_token: str) -> TokenResponse:
+def refresh(
+    db: DbSession, *, raw_refresh_token: str, ip_address: str | None = None
+) -> IssuedTokens:
     parsed = parse_refresh_token(raw_refresh_token)
     if parsed is None:
         raise HTTPException(
@@ -88,6 +116,12 @@ def refresh(db: DbSession, *, raw_refresh_token: str) -> TokenResponse:
         # compromised and revoke it immediately (ADR 0003's open item,
         # resolved here as "revoke just the one session").
         session_repository.revoke(db, session, when=datetime.now(UTC))
+        record_audit_event(
+            db,
+            event_type=AuditEvent.REFRESH_TOKEN_REUSE_DETECTED,
+            user_id=session.user_id,
+            ip_address=ip_address,
+        )
         db.commit()
         logger.info("refresh_token_reuse_detected", extra={"session_id": str(session_id)})
         raise HTTPException(
@@ -114,15 +148,16 @@ def refresh(db: DbSession, *, raw_refresh_token: str) -> TokenResponse:
     db.commit()
     logger.info("refresh_succeeded", extra={"user_id": str(user.id), "session_id": str(session.id)})
 
-    return TokenResponse(
+    return IssuedTokens(
         access_token=access_token,
         refresh_token=new_refresh.encode(),
-        expires_in=int((expires_at - now).total_seconds()),
+        access_expires_in=int((expires_at - now).total_seconds()),
+        refresh_expires_in=int(timedelta(days=settings.refresh_token_expire_days).total_seconds()),
         user=UserRead.model_validate(user),
     )
 
 
-def logout(db: DbSession, *, raw_refresh_token: str) -> None:
+def logout(db: DbSession, *, raw_refresh_token: str, ip_address: str | None = None) -> None:
     parsed = parse_refresh_token(raw_refresh_token)
     if parsed is None:
         return
@@ -133,6 +168,9 @@ def logout(db: DbSession, *, raw_refresh_token: str) -> None:
         return
 
     session_repository.revoke(db, session, when=datetime.now(UTC))
+    record_audit_event(
+        db, event_type=AuditEvent.LOGOUT, user_id=session.user_id, ip_address=ip_address
+    )
     db.commit()
     logger.info("logout_succeeded", extra={"session_id": str(session_id)})
 
@@ -154,7 +192,9 @@ def list_sessions(
     ]
 
 
-def revoke_session(db: DbSession, *, user_id: uuid.UUID, session_id: uuid.UUID) -> None:
+def revoke_session(
+    db: DbSession, *, user_id: uuid.UUID, session_id: uuid.UUID, ip_address: str | None = None
+) -> None:
     session = session_repository.get_by_id(db, session_id)
     if session is None or session.user_id != user_id:
         # Same 404 whether it doesn't exist or belongs to someone else —
@@ -162,10 +202,13 @@ def revoke_session(db: DbSession, *, user_id: uuid.UUID, session_id: uuid.UUID) 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
 
     session_repository.revoke(db, session, when=datetime.now(UTC))
+    record_audit_event(
+        db, event_type=AuditEvent.SESSION_REVOKED, user_id=user_id, ip_address=ip_address
+    )
     db.commit()
 
 
-def _issue_tokens(db: DbSession, user: User, *, device_label: str | None) -> TokenResponse:
+def _issue_tokens(db: DbSession, user: User, *, device_label: str | None) -> IssuedTokens:
     settings = get_settings()
     now = datetime.now(UTC)
     new_refresh = generate_refresh_token()
@@ -180,10 +223,11 @@ def _issue_tokens(db: DbSession, user: User, *, device_label: str | None) -> Tok
     )
     access_token, expires_at = create_access_token(user.id, new_refresh.session_id)
 
-    return TokenResponse(
+    return IssuedTokens(
         access_token=access_token,
         refresh_token=new_refresh.encode(),
-        expires_in=int((expires_at - now).total_seconds()),
+        access_expires_in=int((expires_at - now).total_seconds()),
+        refresh_expires_in=int(timedelta(days=settings.refresh_token_expire_days).total_seconds()),
         user=UserRead.model_validate(user),
     )
 

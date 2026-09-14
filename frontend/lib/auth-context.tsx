@@ -4,8 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from "react";
 
 import * as api from "@/lib/api-client";
-import { clearAuth, loadAuth, saveAuth } from "@/lib/auth-storage";
-import type { TokenResponse, User } from "@/lib/schemas";
+import type { User } from "@/lib/schemas";
 
 interface AuthContextValue {
   user: User | null;
@@ -18,49 +17,44 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function applyTokens(tokens: TokenResponse): User {
-  saveAuth({
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    user: tokens.user,
-  });
-  return tokens.user;
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Reading localStorage must be deferred to after mount (it isn't
-    // available during SSR) — this is the standard client-only
-    // initialization pattern, not a data race the lint rule is guarding
-    // against.
-    const stored = loadAuth();
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setUser(stored?.user ?? null);
-    setIsLoading(false);
+    // Auth state lives entirely in HttpOnly cookies (ADR 0005) — there is
+    // nothing for JavaScript to read on mount, by design. Instead, ask the
+    // backend who (if anyone) the current cookies authenticate as. This
+    // call also bootstraps the CSRF cookie as a side effect (the backend
+    // sets one on any response that doesn't already have one), so it runs
+    // before any page — including /login and /register — could need one.
+    (async () => {
+      try {
+        const currentUser = await api.getCurrentUser();
+        setUser(currentUser);
+      } catch {
+        setUser(null);
+      } finally {
+        setIsLoading(false);
+      }
+    })();
   }, []);
 
   const register = useCallback(async (email: string, password: string) => {
-    const tokens = await api.register(email, password);
-    setUser(applyTokens(tokens));
+    const { user: registeredUser } = await api.register(email, password);
+    setUser(registeredUser);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const tokens = await api.login(email, password);
-    setUser(applyTokens(tokens));
+    const { user: loggedInUser } = await api.login(email, password);
+    setUser(loggedInUser);
   }, []);
 
   const logout = useCallback(async () => {
-    const stored = loadAuth();
-    if (stored) {
-      await api.logout(stored.refreshToken).catch(() => {
-        // Logging out is best-effort client-side regardless of network
-        // outcome — the local session always ends immediately.
-      });
-    }
-    clearAuth();
+    await api.logout().catch(() => {
+      // Logging out is best-effort regardless of network outcome — the
+      // client-side session always ends immediately either way.
+    });
     setUser(null);
   }, []);
 

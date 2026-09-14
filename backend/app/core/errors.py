@@ -45,10 +45,26 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def http_exception_handler(
         request: Request, exc: StarletteHTTPException
     ) -> JSONResponse:
-        detail = exc.detail if isinstance(exc.detail, str) else "Request failed."
+        # `detail` is normally a plain string (the common case, unchanged
+        # below). A route that needs the client to distinguish several
+        # error conditions of the same HTTP status (e.g. an expired vs.
+        # already-used vs. invalid password-reset token) may instead pass
+        # `detail={"code": "...", "message": "..."}` — still routed through
+        # the same shared response shape.
+        if (
+            isinstance(exc.detail, dict)
+            and isinstance(exc.detail.get("code"), str)
+            and isinstance(exc.detail.get("message"), str)
+        ):
+            code, message = exc.detail["code"], exc.detail["message"]
+        elif isinstance(exc.detail, str):
+            code, message = "http_error", exc.detail
+        else:
+            code, message = "http_error", "Request failed."
+
         return JSONResponse(
             status_code=exc.status_code,
-            content=_error_body("http_error", detail),
+            content=_error_body(code, message),
             headers=getattr(exc, "headers", None),
         )
 

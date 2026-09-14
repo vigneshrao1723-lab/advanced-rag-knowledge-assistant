@@ -25,19 +25,23 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=_PASSWORD_MAX_LENGTH)
 
 
-class RefreshRequest(BaseModel):
-    refresh_token: str = Field(min_length=1)
+class IssuedTokens(BaseModel):
+    """Internal transport between `auth_service` and the API layer — never
+    returned directly to a client. Access/refresh tokens are delivered as
+    HttpOnly cookies (`app/core/cookies.py`), not in a JSON body (ADR 0005).
+    """
 
-
-class LogoutRequest(BaseModel):
-    refresh_token: str = Field(min_length=1)
-
-
-class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
-    token_type: str = "bearer"
-    expires_in: int
+    access_expires_in: int
+    refresh_expires_in: int
+    user: UserRead
+
+
+class AuthResponse(BaseModel):
+    """What a client actually receives from register/login/refresh — the
+    tokens themselves are in cookies the client never reads directly."""
+
     user: UserRead
 
 
@@ -48,3 +52,16 @@ class SessionRead(BaseModel):
     last_used_at: datetime
     expires_at: datetime
     is_current: bool
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=1)
+    new_password: str = Field(min_length=_PASSWORD_MIN_LENGTH, max_length=_PASSWORD_MAX_LENGTH)
+
+
+class MessageResponse(BaseModel):
+    message: str

@@ -4,33 +4,42 @@ Per docs/API_CONTRACT.md, `/api/v1/auth` is one of the two namespaces
 (alongside `/api/v1/health`) that never requires a session to reach it —
 except the session-listing/revocation endpoints, which obviously require an
 authenticated caller.
+
+Tokens are delivered as HttpOnly cookies (`app/core/cookies.py`), never in
+a JSON response body — see ADR 0005. `refresh`/`logout` read the refresh
+token from its cookie, not a request body.
 """
 
 from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
+from app.core.cookies import REFRESH_TOKEN_COOKIE, clear_auth_cookies, set_auth_cookies
 from app.core.db import get_db
 from app.core.dependencies import get_current_token_claims, get_current_user
 from app.core.rate_limit import (
+    client_ip,
+    enforce_forgot_password_rate_limit,
     enforce_login_rate_limit,
     enforce_refresh_rate_limit,
     enforce_register_rate_limit,
+    enforce_reset_password_rate_limit,
 )
 from app.core.security import AccessTokenClaims
 from app.models.user import User
 from app.schemas.auth import (
+    AuthResponse,
+    ForgotPasswordRequest,
     LoginRequest,
-    LogoutRequest,
-    RefreshRequest,
+    MessageResponse,
     RegisterRequest,
+    ResetPasswordRequest,
     SessionRead,
-    TokenResponse,
 )
-from app.services import auth_service
+from app.services import auth_service, password_reset_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -44,43 +53,132 @@ def _device_label(request: Request) -> str | None:
     return user_agent[:_DEVICE_LABEL_MAX_LENGTH]
 
 
+@router.get("/csrf", status_code=status.HTTP_204_NO_CONTENT)
+def get_csrf_cookie() -> None:
+    """Frontend calls this before rendering login/register so a CSRF
+    cookie exists to protect those very requests (CSRFMiddleware sets it
+    on any response that doesn't already have one — this endpoint just
+    makes that bootstrap step explicit and discoverable)."""
+    return None
+
+
 @router.post(
     "/register",
-    response_model=TokenResponse,
+    response_model=AuthResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(enforce_register_rate_limit)],
 )
 def register(
-    request: Request, body: RegisterRequest, db: Session = Depends(get_db)
-) -> TokenResponse:
-    return auth_service.register(
-        db, email=body.email, password=body.password, device_label=_device_label(request)
+    request: Request, response: Response, body: RegisterRequest, db: Session = Depends(get_db)
+) -> AuthResponse:
+    tokens = auth_service.register(
+        db,
+        email=body.email,
+        password=body.password,
+        device_label=_device_label(request),
+        ip_address=client_ip(request),
     )
+    set_auth_cookies(
+        response,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        access_max_age_seconds=tokens.access_expires_in,
+        refresh_max_age_seconds=tokens.refresh_expires_in,
+    )
+    return AuthResponse(user=tokens.user)
 
 
 @router.post(
     "/login",
-    response_model=TokenResponse,
+    response_model=AuthResponse,
     dependencies=[Depends(enforce_login_rate_limit)],
 )
-def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
-    return auth_service.login(
-        db, email=body.email, password=body.password, device_label=_device_label(request)
+def login(
+    request: Request, response: Response, body: LoginRequest, db: Session = Depends(get_db)
+) -> AuthResponse:
+    tokens = auth_service.login(
+        db,
+        email=body.email,
+        password=body.password,
+        device_label=_device_label(request),
+        ip_address=client_ip(request),
     )
+    set_auth_cookies(
+        response,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        access_max_age_seconds=tokens.access_expires_in,
+        refresh_max_age_seconds=tokens.refresh_expires_in,
+    )
+    return AuthResponse(user=tokens.user)
 
 
 @router.post(
     "/refresh",
-    response_model=TokenResponse,
+    response_model=AuthResponse,
     dependencies=[Depends(enforce_refresh_rate_limit)],
 )
-def refresh(body: RefreshRequest, db: Session = Depends(get_db)) -> TokenResponse:
-    return auth_service.refresh(db, raw_refresh_token=body.refresh_token)
+def refresh(request: Request, response: Response, db: Session = Depends(get_db)) -> AuthResponse:
+    raw_refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
+    if raw_refresh_token is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated.")
+
+    tokens = auth_service.refresh(
+        db, raw_refresh_token=raw_refresh_token, ip_address=client_ip(request)
+    )
+    set_auth_cookies(
+        response,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        access_max_age_seconds=tokens.access_expires_in,
+        refresh_max_age_seconds=tokens.refresh_expires_in,
+    )
+    return AuthResponse(user=tokens.user)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(body: LogoutRequest, db: Session = Depends(get_db)) -> None:
-    auth_service.logout(db, raw_refresh_token=body.refresh_token)
+def logout(request: Request, response: Response, db: Session = Depends(get_db)) -> None:
+    raw_refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
+    if raw_refresh_token is not None:
+        auth_service.logout(db, raw_refresh_token=raw_refresh_token, ip_address=client_ip(request))
+    clear_auth_cookies(response)
+
+
+_GENERIC_FORGOT_PASSWORD_MESSAGE = (
+    "If an account with that email exists, password reset instructions have been sent."
+)
+
+
+@router.post(
+    "/forgot-password",
+    response_model=MessageResponse,
+    dependencies=[Depends(enforce_forgot_password_rate_limit)],
+)
+def forgot_password(
+    request: Request, body: ForgotPasswordRequest, db: Session = Depends(get_db)
+) -> MessageResponse:
+    password_reset_service.request_password_reset(
+        db, email=body.email, ip_address=client_ip(request)
+    )
+    # Always the same response, same status code, regardless of whether
+    # the email exists — see password_reset_service's module docstring.
+    return MessageResponse(message=_GENERIC_FORGOT_PASSWORD_MESSAGE)
+
+
+@router.post(
+    "/reset-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(enforce_reset_password_rate_limit)],
+)
+def reset_password(
+    request: Request, body: ResetPasswordRequest, db: Session = Depends(get_db)
+) -> None:
+    password_reset_service.reset_password(
+        db,
+        raw_token=body.token,
+        new_password=body.new_password,
+        ip_address=client_ip(request),
+    )
 
 
 @router.get("/sessions", response_model=list[SessionRead])
@@ -94,8 +192,11 @@ def list_sessions(
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_session(
+    request: Request,
     session_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    auth_service.revoke_session(db, user_id=user.id, session_id=session_id)
+    auth_service.revoke_session(
+        db, user_id=user.id, session_id=session_id, ip_address=client_ip(request)
+    )
