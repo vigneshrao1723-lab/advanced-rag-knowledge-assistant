@@ -100,9 +100,12 @@ error handling, loud-failure config loading) are also in place — see
 ## Rate limiting approach
 
 Rate limiting is a firm requirement (see principle 8 above). It was
-deliberately built in-process first, with no external session/cache store,
-and the measured requirement to go further has since been documented
-rather than anticipated speculatively:
+deliberately built in-process first, with no external session/cache store.
+Going further is justified by architectural certainty, not measured
+production evidence — this project has no production deployment, so there
+is no telemetry or incident to point to (see [ADR 0006](DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
+§1's honest framing). That distinction, and the resulting design, is
+documented below rather than anticipated speculatively:
 
 - **Implemented (Issue #2):** an in-process fixed-window limiter
   (`backend/app/core/rate_limit.py`) guards `register`, `login`,
@@ -114,10 +117,14 @@ rather than anticipated speculatively:
   space (256 bits) makes that infeasible regardless of request rate.
 - **Designed, not yet implemented:** horizontal scale-out (more than one
   backend instance behind a load balancer) breaks the in-process limiter's
-  core assumption — a real architectural requirement, not a hypothetical
-  one, per [ADR 0001](DECISIONS/0001-modular-monolith-over-microservices.md)'s
-  "measured requirement" bar. That requirement, and the full design that
-  answers it, is now documented in
+  core assumption — a verified, deterministic architectural fact, not a
+  hypothetical one, but *not* itself the "measured requirement" evidence
+  bar [ADR 0001](DECISIONS/0001-modular-monolith-over-microservices.md)
+  sets for adopting new infrastructure in *production* (no such measurement
+  exists yet — see ADR 0006 §1). This ADR treats that architectural
+  certainty as sufficient to justify a *design*, a lower bar than
+  production adoption. That distinction, and the full design, is now
+  documented in
   [ADR 0006](DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md):
   Redis-backed token-bucket rate limiting plus a deterministic (non-ML),
   rule-based abuse-detection layer, an operation-aware Redis failure

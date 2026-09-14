@@ -190,3 +190,62 @@ once per test body — `mockResolvedValue` is only safe for a genuinely
 single-call test. This is now the pattern used throughout
 `api-client.test.ts`; follow it for new tests in the same file rather
 than reintroducing `mockResolvedValue` for a multi-call test.
+
+## 2026-09-14 — Per-key Redis atomicity was insufficient for a multi-dimensional rate-limit decision (design-time, ADR 0006)
+
+**Symptom (found during adversarial architecture review, before any code
+was written):** the first draft of
+[ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
+designed `login`/`refresh`/`forgot-password`'s rate limiting as one
+independent, atomic Redis Lua script *per dimension key* (e.g., one
+script invocation for the IP bucket, a separate one for the account
+bucket), reasoning that "each key's own script is atomic" was sufficient
+for the combined allow/deny decision.
+
+**Root cause:** each individual bucket's Lua script *was* correctly
+atomic in isolation — but the *compound* decision spanning multiple
+buckets was not. A worked scenario exposed it: two requests for the same
+account from different IPs, with the account bucket down to its last
+token. Request A consumes an IP token, then the account's last token.
+Request B consumes a *different* IP's token, then finds the account
+bucket empty and gets rejected — but its IP token was already spent on a
+request that was never going to succeed. Each bucket was atomic
+individually, but the compound decision wasn't atomic, so a rejection on
+one dimension didn't prevent (or undo) consumption already committed on
+another.
+
+**Failed attempts:** None in the sense of a discarded code fix (this was
+caught at the design stage, before implementation) — but the design
+itself had shipped in ADR 0006's first draft and been reviewed once
+already without this being caught, until a dedicated adversarial review
+pass specifically asked "is one atomic operation per key sufficient to
+guarantee a combined hierarchical limit?" and required working through a
+concrete concurrent scenario rather than accepting "each piece is atomic"
+as proof of the whole.
+
+**Resolution:** redesigned as one multi-key Lua transaction *per
+operation* (Redis's `EVAL script numkeys key1 key2 ... arg...` natively
+supports multiple keys in one atomic invocation): read and refill every
+dimension's bucket first, check all of them, and only write to *any* of
+them if *all* of them pass. A rejected request writes to nothing —
+check-before-write, never write-then-rollback.
+
+**Verification:** worked through explicitly via the concurrent scenario
+above (re-run against the corrected design to confirm the flaw no longer
+exists) and captured as a named future regression test in ADR 0006 §17
+("the multi-key compound decision never partially consumes one dimension
+when another dimension rejects the request"). No automated test exists
+yet — Redis has not been implemented (design-only ADR) — so this is
+verified by design reasoning now and must be verified by that specific
+test once implementation begins.
+
+**Prevention/lesson:** **atomic components do not necessarily produce an
+atomic workflow.** Whenever a single logical decision depends on more
+than one independently-atomic piece of state, the atomicity of each
+piece says nothing about the atomicity of the decision that spans them —
+that requires its own explicit design (here, one transaction covering
+every piece the decision depends on), not an inference from "the parts
+are safe." Applies beyond Redis/Lua: the same question is worth asking
+any time a change introduces multiple independently-locked or
+independently-transactional resources that one business decision reads
+or writes together.

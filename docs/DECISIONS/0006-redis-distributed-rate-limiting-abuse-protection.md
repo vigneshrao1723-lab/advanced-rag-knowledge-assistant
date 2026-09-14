@@ -183,6 +183,21 @@ enforce_login_rate_limit(request)
 
 ## 7. Redis responsibilities (and explicit non-responsibilities)
 
+**Deployment boundary, stated explicitly: this design targets a single
+Redis instance (or a primary-replica pair for availability), not a Redis
+Cluster.** Nothing in this ADR requires, assumes, or has been evaluated
+against a sharded/clustered Redis deployment. This matters concretely for
+§10's multi-key atomicity: `EVAL` across multiple keys is unconditionally
+safe on a single (or primary-replica, non-sharded) Redis, because there
+is no key-slot partitioning to worry about — every key lives on the one
+node the script runs against. §10 separately documents what would change
+*if* a cluster were introduced later (hash-tagging keys so they land on
+the same slot), but that is future-facing, explicitly not a claim that
+this design is cluster-compatible today, and not a decision this ADR
+makes now. If Redis Cluster is ever adopted, it needs its own
+implementation-time verification (and likely its own ADR addendum), not
+an assumption carried over silently from this document.
+
 Redis holds **only**:
 
 - Rate-limit bucket state (§8): current token count / window position per
@@ -207,8 +222,13 @@ Redis does **not** hold, and this design must not grow to hold:
 
 ## 8. Rate-limiting algorithm
 
-**Chosen: token bucket, evaluated atomically per key via a single Redis
-Lua script (`EVAL`).**
+**Chosen: token bucket, evaluated atomically per *operation* (over every
+dimension key that operation has — one key for a single-dimension
+operation, several keys together for a multi-dimension one) via a single
+Redis Lua script (`EVAL`) invocation.** (Corrected from an earlier
+per-*key* framing during adversarial review — see the worked race in
+§10 for exactly why per-key atomicity alone is insufficient for a
+multi-dimension operation.)
 
 Rationale:
 
@@ -384,6 +404,23 @@ holds regardless of how many backend instances exist and regardless of
 how many *other* operations' checks are happening concurrently against
 *different* keys.
 
+**This is check-before-write, not write-then-rollback — the distinction
+matters and is deliberate.** §8's algorithm never writes a dimension's
+bucket and then reverts it if a later dimension fails; it evaluates
+*every* dimension's refilled token count first (a pure read/compute pass
+against values already fetched into the script, mutating nothing in
+Redis), and only after every dimension has been confirmed to pass does
+it issue the writes, for every dimension, together, in the same script
+invocation. There is no intermediate state a rollback would ever need to
+undo, and no window in which a partial write is visible to any other
+caller — Redis's single-threaded Lua execution (below) means nothing
+outside the script can observe the buckets between the check phase and
+the write phase because there is no externally-observable gap between
+them at all. Rollback is a strategy for undoing a write that already
+happened and was already visible; this design instead never performs a
+write until it is already known to be correct, which is a stronger and
+simpler guarantee than rollback would provide.
+
 **Why per-key atomicity alone is not the same claim, and the race it
 misses (found in adversarial review of this ADR's first draft):** the
 first draft ran one independent Lua script per dimension key and reasoned
@@ -438,15 +475,18 @@ pass) and rejected without writing either key.
   instances checking the same operation/identity concurrently is exactly
   equivalent to one instance checking it N times in some order — the
   property that was missing entirely from the in-process design (§5).
-- **Redis Cluster note (not applicable today, flagged for the future):**
-  a single Lua script touching multiple keys requires all of those keys
-  to hash to the same cluster slot if Redis is ever run as a cluster
-  (not planned — see §16, a single-node Redis has no slot concept). If
-  that ever changes, each operation's keys should share a hash tag (e.g.
-  `rl:{login}:ip:...` and `rl:{login}:acct:...`, both tagged `{login}`)
-  so Redis routes them to the same slot. Recorded here so it isn't
-  rediscovered as a production incident; not a decision this ADR needs
-  to make now.
+- **Redis Cluster note (not applicable today — §7 states the deployment
+  boundary explicitly; this note only exists so the constraint isn't
+  rediscovered as a production incident if that boundary is ever
+  revisited):** a single Lua script touching multiple keys requires all
+  of those keys to hash to the same cluster slot on a sharded/clustered
+  Redis — a non-issue on the single-instance (or primary-replica)
+  deployment this ADR targets, since every key lives on the one node the
+  script runs against regardless. If Redis Cluster is ever adopted later,
+  each operation's keys should share a hash tag (e.g. `rl:{login}:ip:...`
+  and `rl:{login}:acct:...`, both tagged `{login}`) so Redis routes them
+  to the same slot — not a decision this ADR makes now, and not a claim
+  that this design has been evaluated against a cluster.
 - **TTL behavior:** each bucket key gets `EXPIRE` set (inside the same
   Lua script, so it's part of the same atomic operation) to a value
   comfortably longer than the time to fully refill from empty (e.g.,
@@ -701,6 +741,25 @@ actually share Tier A's fallback instead is a reasonable alternative;
 this ADR takes the more permissive position because unauthenticated
 signup abuse is a lower-severity outcome than authentication brute force,
 but this should be revisited once real abuse data exists.
+
+**The application's own `/api/v1/health/ready` endpoint must not be made
+to depend on Redis connectivity — a deliberate, explicit design
+decision, not an oversight to catch later.** That endpoint currently
+verifies real database connectivity (Issue #1) because the application
+genuinely cannot serve correct responses without PostgreSQL. Redis is
+architecturally different by design (§7): this entire failure policy
+exists so the application keeps serving traffic, with degraded but
+present rate limiting, when Redis is unavailable. If `/api/v1/health/ready`
+were also wired to check Redis, an orchestrator (or a Docker/Compose
+healthcheck, or a load balancer) would pull an otherwise-healthy instance
+out of rotation, or restart it, for exactly the condition this failure
+policy is designed to tolerate gracefully — turning a handled, monitored
+degradation into an unnecessary outage. Readiness reflecting Redis health
+would contradict the entire point of Tier A/Tier B (above). Docker
+Compose's `depends_on: redis: condition: service_healthy` (§16) is a
+separate, container-startup-ordering concern for local dev/CI determinism
+only — it must not be conflated with, or used to justify, making the
+application's own runtime readiness check depend on Redis.
 
 **Mechanics common to both tiers:**
 
@@ -1203,6 +1262,16 @@ without evidence.
   not the implementation; see the accompanying documentation-reconciliation
   changes made alongside this ADR, which mark the *design* as complete
   and the *implementation* as still not started).
+- `docs/API_CONTRACT.md` §"Rate limiting" does not need a design-time
+  update: it already states the limiter is in-process only and that
+  Redis-backed distributed rate limiting has not been implemented, which
+  remains accurate. The externally-visible contract this design produces
+  (still a `429` with the shared error shape on any rejection, regardless
+  of which internal state — `THROTTLE`/`STRICT_THROTTLE`/
+  `TEMPORARY_BLOCK` — produced it, per §12/§18) does not change, so no
+  new endpoint documentation is needed until implementation adds
+  something client-visible (e.g., a `Retry-After` header, §12) that
+  isn't already documented.
 - `infra/compose/docker-compose.yml` and `.github/workflows/ci.yml` gain
   a `redis` service when implementation begins (§16) — not yet.
 - `.env.example` and `app/core/config.py` gain `REDIS_URL` (§16),
@@ -1216,8 +1285,19 @@ without evidence.
 
 ## Implementation status
 
-**Design only. Nothing described in this ADR has been implemented.**
-Specifically, as of this ADR's acceptance:
+**Four distinct maturity states apply to everything in this ADR, and
+they are not interchangeable — conflating them is exactly the kind of
+overclaim this document works to avoid:**
+
+| State | Meaning | Status for this ADR |
+|---|---|---|
+| **Designed** | Written down, reasoned about, reviewed (including adversarially) | **Yes** — this document |
+| **Implemented** | Code exists that does what's designed | **No** |
+| **Tested** | Automated tests (unit/integration/security/regression, §17) verify the implementation | **No** — cannot exist before implementation |
+| **Production-validated** | Actually run against real production traffic and shown to behave as designed | **No** — no production deployment of this project exists at all (§1) |
+
+Nothing in this ADR should be read as claiming any state to the right of
+"Designed." Specifically, as of this ADR's acceptance:
 
 - No Redis dependency has been added to `backend/pyproject.toml`.
 - No `redis` service exists in `infra/compose/docker-compose.yml`.
