@@ -1,27 +1,35 @@
 # PROJECT_STATE.md
 
 **Last updated:** 2026-09-14
-**Current phase:** GitHub Issue #2 — Authentication & Workspaces
-(repository: `vigneshrao1723-lab/advanced-rag-knowledge-assistant`, branch
-`issue-2-authentication-workspaces`)
+**Current phase:** GitHub Issue #2 — Authentication & Workspaces — **merged
+to `main`.** Next planned phase: Redis distributed rate limiting +
+deterministic abuse protection (not started — see "Immediate priorities").
+(repository: `vigneshrao1723-lab/advanced-rag-knowledge-assistant`,
+currently checked out on `main`)
 
 This is the authoritative, living snapshot of the project's real state. If
 this file ever disagrees with the actual repository contents, the repository
 wins — fix this file.
 
-**Committed baseline vs. current branch state:** the documentation/project-
-memory system (`START_HERE.md`, `AGENTS.md`, etc.), `docs/DECISIONS/0001`–
-`0003`, and the entire Issue #1 Application Foundation are committed and
-merged to `main` (PR #9). The commit that introduces this update to
-`PROJECT_STATE.md`/`HANDOFF.md`/`CHANGELOG.md` also introduces **all** of
-Issue #2's Authentication & Workspaces work — including the HttpOnly
-cookie + CSRF authentication migration, password recovery (backend and
-frontend), audit logging, and `docs/DECISIONS/0004`–`0005` — as one
-checkpoint commit on branch `issue-2-authentication-workspaces`. That
-branch has **not yet been pushed or opened as a PR** — see "Immediate
-priorities" below. Statuses like `IMPLEMENTED` describe content that
-exists on disk and has been verified to run/pass now; see `CHANGELOG.md`
-for the exact commit history.
+**Committed and merged baseline:** the documentation/project-memory system
+(`START_HERE.md`, `AGENTS.md`, etc.), `docs/DECISIONS/0001`–`0003`, and the
+entire Issue #1 Application Foundation are merged to `main` (PR #9). Issue
+#2 — Authentication & Workspaces, including the HttpOnly cookie + CSRF
+authentication migration, password recovery (backend and frontend), audit
+logging, and `docs/DECISIONS/0004`–`0005` — was implemented on branch
+`issue-2-authentication-workspaces` (checkpoint commit `864d783`), opened
+as **PR #10**, verified green on GitHub Actions CI (3/3 checks: backend
+lint/typecheck/tests, frontend lint/typecheck/tests/build, Docker build
+check), and **merged into `main` as commit `ec4225d`** — a squash/rebase
+merge, so `ec4225d` has a single parent rather than being a two-parent
+merge commit, but its tree content was verified byte-identical to the
+approved `864d783` (`git diff 864d783 ec4225d` is empty). `main` is
+currently at `ec4225d`, `origin/main` matches it, and the working tree is
+clean. The old feature branch (`issue-2-authentication-workspaces`) still
+exists locally and on `origin` (not deleted) but has no content not
+already in `main`. Statuses like `IMPLEMENTED` describe content that
+exists on disk and has been verified to run/pass; see `CHANGELOG.md` for
+the exact commit history.
 
 ## Status legend
 
@@ -32,14 +40,14 @@ for the exact commit history.
 
 The Application Foundation (Issue #1, merged) provides the FastAPI backend
 skeleton, Next.js frontend, PostgreSQL + pgvector, Docker Compose, and CI.
-Authentication & Workspaces (Issue #2, this phase) adds the first real
+Authentication & Workspaces (Issue #2, **merged**) adds the first real
 feature vertical slice on top of it: registration/login/logout/refresh/
 session management, HttpOnly-cookie + CSRF browser authentication,
 password recovery, workspace CRUD/membership/roles, and audit logging —
 enforced server-side end to end. Ingestion, retrieval, generation, chat,
 search, and voice still do not exist. Redis and any distributed
 rate-limiting/abuse-detection layer also do not exist yet — see "Known
-limitations."
+limitations." This is the explicitly planned next phase, not yet started.
 
 ## Component status
 
@@ -48,7 +56,7 @@ limitations."
 | Documentation architecture (`START_HERE.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `PROJECT_STATE.md`, `HANDOFF.md`, `SOLVING.md`, `CHANGELOG.md`, `docs/*`) | IMPLEMENTED | Kept current with each checkpoint per `CLAUDE.md` §5. |
 | `docs/DECISIONS/` ADR log | IMPLEMENTED | Five ADRs: modular monolith (0001), Postgres/pgvector (0002), authentication/session architecture (0003), Argon2id password hashing (0004), HttpOnly cookie + CSRF authentication (0005 — includes the "different origin ≠ cross-site" deployment guidance). |
 | `.gitignore` / `.gitattributes` / `.env.example` | IMPLEMENTED | Placeholders only, no real secrets. Documents `SECRET_KEY` (required), `COOKIE_SAMESITE`/`COOKIE_DOMAIN`/`COOKIE_SECURE`, `FRONTEND_URL`, `EMAIL_PROVIDER`/`SMTP_*`. |
-| GitHub remote & issues | IMPLEMENTED | Remote configured (`origin` → `vigneshrao1723-lab/advanced-rag-knowledge-assistant`). Real, filed GitHub issues `#1`–`#8` exist (confirmed via `gh issue list`): `#1` Application Foundation (merged), `#2` Authentication & Workspaces (this phase — this checkpoint, not yet pushed), `#3` Knowledge Ingestion, `#4` Hybrid RAG Pipeline, `#5` Product Experience, `#6` Voice, `#7` Evaluation/Security/Observability, `#8` CI/CD/Deployment/Finalization. Separate from these, `AGENTS.md` §9 documents a finer-grained `#1`–`#43` **internal planning baseline** — the two numbering schemes don't map 1:1. |
+| GitHub remote & issues | IMPLEMENTED | Remote configured (`origin` → `vigneshrao1723-lab/advanced-rag-knowledge-assistant`). Real, filed GitHub issues `#1`–`#8` exist (confirmed via `gh issue list`): `#1` Application Foundation (merged, PR #9), `#2` Authentication & Workspaces (**merged, PR #10 → `main` commit `ec4225d`**), `#3` Knowledge Ingestion (not started), `#4` Hybrid RAG Pipeline, `#5` Product Experience, `#6` Voice, `#7` Evaluation/Security/Observability, `#8` CI/CD/Deployment/Finalization. Separate from these, `AGENTS.md` §9 documents a finer-grained `#1`–`#43` **internal planning baseline** — the two numbering schemes don't map 1:1. |
 | Backend application (`backend/`) | IMPLEMENTED | Config, structured logging, request-ID middleware, centralized error handling, SQLAlchemy + Alembic, health/readiness (Issue #1) — plus (Issue #2) auth/workspace/password-recovery/audit-logging services, repositories, schemas, API routes, HttpOnly-cookie + CSRF middleware. Verified: `ruff check` clean, `mypy` clean (67 files), `pytest` **119/119 passing** (real Postgres). |
 | Frontend application (`frontend/`) | IMPLEMENTED | Next.js 16 + TypeScript, Tailwind v4, shadcn/ui. `chat/collections/documents/evaluations/search` remain stub routes (later issues); `login/register/forgot-password/reset-password/dashboard/settings/workspace` are real, backed by `lib/auth-context.tsx` + `lib/workspace-context.tsx` + `lib/api-client.ts`. Authentication is cookie-only — see the "Authentication" row. Verified: `eslint` clean, `tsc --noEmit` clean, `vitest` **48/48 passing**, `next build` succeeds. |
 | Database schema / migrations | IMPLEMENTED (for this issue's scope) | `0001` enables `pgvector` (Issue #1); `0002` adds `users`, `sessions`, `workspaces`, `workspace_members`; `0003` adds `password_reset_tokens` and `audit_logs` (Issue #2) — all verified applied and reversible against the real container. Remaining `docs/DATA_MODEL.md` entities (`documents`, `document_chunks`, `collections`, etc.) land with the features that need them. |
@@ -65,7 +73,7 @@ limitations."
 | Browser E2E (Playwright) | **NOT STARTED** | No Playwright infrastructure, config, or tests exist. Do not assume otherwise from a mention of Mailpit or "E2E" elsewhere — Mailpit is used today only via direct REST-API verification (curl/Python), not through a Playwright-driven browser. |
 | Observability / audit logging | IMPLEMENTED (auth/workspace scope) | Structured logging, request-ID propagation, and a JSON access log (`app/observability/`) from Issue #1, plus (Issue #2) a persistent `audit_logs` table (`app/core/audit.py`, `app/repositories/audit_log_repository.py`) capturing authentication, password-reset, workspace-membership, and authorization-denial events. Document-related audit events will be added when that surface exists (Issue #3). |
 | Testing (unit/integration/E2E/security) | PARTIALLY IMPLEMENTED | Backend: **119 pytest tests** — real-database integration tests, cross-workspace-isolation/IDOR tests, CSRF tests (missing/mismatched/valid token, cross-client, login-CSRF, safe-method exemption), explicit `Set-Cookie` attribute assertions (HttpOnly/Path/SameSite), CORS preflight tests, an explicit "`Authorization: Bearer` alone does not authenticate and does not satisfy CSRF" test, and password-reset security tests (enumeration resistance, single-use/expiry, cross-user isolation, session invalidation). Frontend: **48 vitest tests** — forms, auth state, nav, workspace switching/permission-sensitive UI, password-recovery pages, and explicit regression tests proving no auth token ever reaches `localStorage`/`sessionStorage`/an `Authorization` header. **No E2E browser suite exists** — Playwright has not been introduced (see the dedicated row above); this project's own live-Docker verification (curl/Python against the running containers) is not a substitute for it and is not represented as one. |
-| CI/CD (`.github/workflows/`) | IMPLEMENTED (Issue #1 baseline; not yet re-verified on GitHub Actions for Issue #2's cookie/CSRF/password-recovery additions) | `.github/workflows/ci.yml` provisions a real `pgvector/pgvector:pg16` service container and runs Alembic migrations before lint/typecheck/pytest. Has not run on GitHub Actions for this checkpoint's changes yet (branch not pushed) — verified locally instead. |
+| CI/CD (`.github/workflows/`) | IMPLEMENTED | `.github/workflows/ci.yml` provisions a real `pgvector/pgvector:pg16` service container and runs Alembic migrations before lint/typecheck/pytest. Ran on GitHub Actions for PR #10 (Issue #2's cookie/CSRF/password-recovery work) — **3/3 checks passed** (backend lint/typecheck/tests, frontend lint/typecheck/tests/build, Docker build check) — before merge. |
 | Docker / deployment (`infra/`) | IMPLEMENTED | `infra/docker/backend.Dockerfile`, `infra/docker/frontend.Dockerfile`, `infra/compose/docker-compose.yml` — now also runs a `mailpit` service (local dev SMTP capture, REST API on `:8025`) with `backend` depending on it being healthy. Verified: both images rebuilt, full stack (db/mailpit/backend/frontend) starts healthy, and a live register→forgot-password→Mailpit-email→reset-password→session-invalidation flow was exercised against the running containers (see `HANDOFF.md` for exact results). |
 | Skills system (`.agents/skills/`) | PARTIALLY IMPLEMENTED | Roster and process documented (`.agents/skills/README.md`); individual skill procedures not yet written. |
 
@@ -115,20 +123,22 @@ limitations."
 
 ## Immediate priorities
 
-1. Review and commit this checkpoint (backend + frontend + docs/ADR +
-   this documentation update) on `issue-2-authentication-workspaces` — see
-   `HANDOFF.md` for the exact state this represents.
-2. Push the branch and open a PR against `main` referencing GitHub Issue
-   #2, so CI (including the Postgres-backed integration tests) runs on
-   GitHub Actions for the first time with all of this checkpoint's
-   changes; confirm it's green before merging.
-3. **Before Issue #3:** implement Redis-backed distributed rate limiting
-   and a deterministic abuse-detection layer, evolving the existing
-   in-process limiter rather than replacing it outright — see
-   `HANDOFF.md` "Next major task" for the specific constraints.
-4. Introduce Playwright browser E2E coverage for the authentication/
-   password-recovery flows — not yet started.
-5. After the above, begin GitHub Issue #3 (Knowledge Ingestion).
+Issue #2 is done — PR #10 merged into `main` at commit `ec4225d`, CI green.
+Nothing is pending review, push, or merge for it. The next work, in order:
+
+1. **Redis distributed rate limiting + deterministic (non-ML) abuse
+   protection** — the next planned engineering phase. **Not started**: no
+   Redis dependency, service, code, or design doc exists yet. This must
+   begin with its own ADR (`docs/DECISIONS/0006-...`, not yet created) per
+   `CLAUDE.md` §4, and should evolve the existing in-process limiter
+   (`backend/app/core/rate_limit.py`) rather than replace it outright —
+   see `HANDOFF.md` for the constraints already recorded for whoever picks
+   this up.
+2. Introduce Playwright browser E2E coverage for the authentication/
+   password-recovery flows — not yet started, no config or dependency
+   exists.
+3. After the above, begin GitHub Issue #3 (Knowledge Ingestion) — not
+   started.
 
 ## How to keep this file honest
 

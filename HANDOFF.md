@@ -8,21 +8,31 @@ in-flight task — overwrite it as work progresses, don't append a history
 
 ## Current task
 
-GitHub Issue #2 — Authentication & Workspaces, on branch
-`issue-2-authentication-workspaces`. Issue #1 (Application Foundation) is
-already merged to `main` (PR #9).
+**GitHub Issue #2 — Authentication & Workspaces is complete and merged.**
+Issue #1 (Application Foundation) is merged to `main` (PR #9). Issue #2
+was implemented on branch `issue-2-authentication-workspaces` (checkpoint
+commit `864d783`), opened as **PR #10**, verified green on GitHub Actions
+(3/3 checks), and **merged into `main` as commit `ec4225d`** — a
+squash/rebase merge (single parent), with its tree content verified
+byte-identical to `864d783`. `main` is at `ec4225d`, `origin/main` matches
+it, and the working tree is clean. The old feature branch still exists
+(locally and on `origin`, not deleted) but has no content not already in
+`main`.
 
-**Issue #2 is now at a clean, complete authentication + password-recovery
-checkpoint, just committed.** This checkpoint covers: registration/login/
-logout/refresh with PostgreSQL-backed sessions, HttpOnly cookie + CSRF
-browser authentication (superseding the original bearer-token-in-body
-design), workspace CRUD/membership/RBAC, password recovery (backend and
-frontend), audit logging, and the security documentation/ADRs for all of
-it. It does **not** yet cover Redis-backed rate limiting, a deterministic
-abuse-detection layer, or Playwright E2E — those are explicitly the next
-work, not done. Do not start Issue #3 yet.
+**Nothing is currently in flight.** The next task — Redis distributed rate
+limiting + a deterministic abuse-detection layer — has **not been
+started**: no Redis dependency, service, code, or ADR exists yet. See
+"Next major task" below for the constraints already recorded for whoever
+picks it up. Do not start it, Playwright, or Issue #3 without an explicit
+go-ahead.
 
-## Completed work (this checkpoint)
+Issue #2 covered: registration/login/logout/refresh with PostgreSQL-backed
+sessions, HttpOnly cookie + CSRF browser authentication (superseding the
+original bearer-token-in-body design), workspace CRUD/membership/RBAC,
+password recovery (backend and frontend), audit logging, and the security
+documentation/ADRs for all of it.
+
+## Completed work (Issue #2, merged in PR #10)
 
 - **Cookie + CSRF authentication migration** (superseding the original
   design where tokens were returned in the JSON response body for the
@@ -132,9 +142,9 @@ work, not done. Do not start Issue #3 yet.
 
 ## Next major task: Redis rate limiting + deterministic abuse protection
 
-This is the next thing to build, **after** this checkpoint is reviewed,
-committed, and (per the maintainer's call) pushed/PR'd — not before, and
-not combined with it.
+This is the next thing to build. Issue #2 is already reviewed, committed,
+pushed, PR'd (#10), and merged into `main` — this task starts clean, not
+combined with it, and has not been started itself.
 
 Constraints for whoever picks this up:
 
@@ -176,8 +186,11 @@ Constraints for whoever picks this up:
 None. Docker Compose, the local Postgres container, Mailpit, and `gh` CLI
 access are all confirmed working in this environment.
 
-## Tests run (this checkpoint)
+## Tests run (Issue #2, verified locally and confirmed again by CI on PR #10)
 
+- GitHub Actions on PR #10: **3/3 checks passed** (backend
+  lint/typecheck/tests; frontend lint/typecheck/tests/build; Docker build
+  check) — confirmed before merge.
 - Backend: `uv run ruff check .` (pass), `uv run mypy .` (pass, 67 files),
   `uv run pytest -v` (**119/119 pass**, against real Postgres).
 - Frontend: `npm run lint` (pass), `npm run typecheck` (pass), `npm run
@@ -201,11 +214,13 @@ access are all confirmed working in this environment.
 
 ## Exact next recommended action
 
-1. If not already done: push `issue-2-authentication-workspaces` and open
-   a PR against `main` referencing GitHub Issue #2; confirm CI is green
-   (this is the first CI run covering the cookie/CSRF/password-recovery
-   work).
-2. Start the Redis rate-limiting + abuse-detection work per "Next major
-   task" above — write the ADR first.
-3. Introduce Playwright E2E coverage for auth/password-recovery.
-4. Only after the above: begin GitHub Issue #3 (Knowledge Ingestion).
+Issue #2 is merged — there is nothing left to push, review, or merge for
+it.
+
+1. Start the Redis rate-limiting + abuse-detection work per "Next major
+   task" above — write ADR `docs/DECISIONS/0006-...` first (does not
+   exist yet).
+2. Introduce Playwright E2E coverage for auth/password-recovery — not
+   started.
+3. Only after the above: begin GitHub Issue #3 (Knowledge Ingestion) —
+   not started.

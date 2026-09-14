@@ -103,12 +103,13 @@ with invented history of either kind.
 
 ## [Unreleased — committed]
 
-### 2026-09-14 — `feat: complete secure cookie auth and password recovery`
+### 2026-09-14 — `feat: complete secure cookie auth and password recovery` (864d783)
 
-*(Issue #2 checkpoint — commit hash not known at the time this entry was
-written, since the changelog file recording it is itself part of the
-commit; see `git log` on `issue-2-authentication-workspaces` for the
-hash. Not yet pushed or merged.)*
+*(GitHub Issue #2 checkpoint. Opened as PR #10, verified green on GitHub
+Actions CI (3/3 checks), and merged into `main` as commit `ec4225d` — a
+squash/rebase merge, so `ec4225d` has a single parent rather than being a
+two-parent merge commit, but its tree content is byte-identical to
+`864d783`. `main` and `origin/main` are both at `ec4225d`.)*
 
 Migrates browser authentication from bearer tokens in the response body to
 HttpOnly cookies with CSRF protection, and adds a complete password
