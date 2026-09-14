@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 import { AppShell } from "@/components/layout/shell";
+import { AuthProvider } from "@/lib/auth-context";
+import { WorkspaceProvider } from "@/lib/workspace-context";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,7 +30,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <AppShell>{children}</AppShell>
+        <AuthProvider>
+          <WorkspaceProvider>
+            <AppShell>{children}</AppShell>
+          </WorkspaceProvider>
+        </AuthProvider>
       </body>
     </html>
   );

@@ -1,10 +1,11 @@
 # Advanced RAG Knowledge Intelligence Assistant
 
-> **Status: Application Foundation (GitHub Issue #1) implemented.** A runnable
-> skeleton exists — FastAPI backend, Next.js frontend, PostgreSQL + pgvector,
-> Docker Compose for local dev, and a CI workflow — with no product
-> functionality (auth, ingestion, retrieval, generation, voice) yet; that is
-> real, tracked future work under Issues #2–#8. See
+> **Status: Application Foundation (Issue #1) and Authentication &
+> Workspaces (Issue #2) implemented.** A FastAPI backend, Next.js frontend,
+> PostgreSQL + pgvector, Docker Compose, and CI exist, and users can now
+> register, log in, manage sessions/devices, and create/manage workspaces
+> with role-based membership — with no ingestion, retrieval, generation, or
+> voice yet; that is real, tracked future work under Issues #3–#8. See
 > [`PROJECT_STATE.md`](PROJECT_STATE.md) for the authoritative, up-to-date
 > snapshot of what is implemented vs. planned.
 
@@ -63,8 +64,8 @@ Redis, Celery, Qdrant, multi-database setups) and why — is documented in
 | Repository scaffold (`.gitignore`, `.env.example`, remote) | IMPLEMENTED |
 | Backend application (Issue #1 — foundation only, no feature logic) | IMPLEMENTED |
 | Frontend application (Issue #1 — shell + stub routes only) | IMPLEMENTED |
-| Database schema | PLANNED — Alembic/pgvector plumbing exists (Issue #1); no entity tables yet |
-| Authentication / workspaces | PLANNED — Issue #2 |
+| Database schema | PARTIALLY IMPLEMENTED — `users`/`sessions`/`workspaces`/`workspace_members` exist (Issue #2); document/RAG entities don't yet |
+| Authentication / workspaces | IMPLEMENTED — Issue #2 |
 | Ingestion / retrieval / generation pipeline | PLANNED — Issues #3–#4 |
 | Voice (STT/TTS) | PLANNED — Issue #6 |
 | Evaluation harness | PLANNED — Issue #7 |
@@ -79,11 +80,12 @@ current status of every component.
 ## Getting started (for contributors and AI agents)
 
 Read [`START_HERE.md`](START_HERE.md) first — it defines the mandatory reading
-order and repository rules. A runnable Application Foundation exists (see
+order and repository rules. A runnable stack exists (see
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the local Docker Compose
-setup), but it has no product functionality yet — there is nothing to
-demo as a user-facing feature. Real end-user setup/run instructions will
-replace this section as product functionality (Issues #2–#8) lands.
+setup): you can register, log in, and create/manage workspaces, but there
+is no knowledge-base functionality (upload, chat, search) yet. Full
+end-user setup/run instructions will replace this section as the remaining
+product functionality (Issues #3–#8) lands.
 
 ## Documentation map
 
@@ -103,10 +105,11 @@ replace this section as product functionality (Issues #2–#8) lands.
 
 ## Roadmap
 
-Real GitHub issues `#1`–`#8` track the work (`#1` Application Foundation —
-implemented; `#2` Authentication & Workspaces; `#3` Knowledge Ingestion; `#4`
-Hybrid RAG Pipeline; `#5` Product Experience; `#6` Voice; `#7` Evaluation,
-Security & Observability; `#8` CI/CD, Deployment & Finalization). See
+Real GitHub issues `#1`–`#8` track the work (`#1` Application Foundation and
+`#2` Authentication & Workspaces — implemented; `#3` Knowledge Ingestion;
+`#4` Hybrid RAG Pipeline; `#5` Product Experience; `#6` Voice; `#7`
+Evaluation, Security & Observability; `#8` CI/CD, Deployment &
+Finalization). See
 [`PROJECT_STATE.md`](PROJECT_STATE.md#immediate-priorities) for current
 status and the exact next step.
 

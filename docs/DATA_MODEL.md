@@ -1,32 +1,34 @@
 # Data Model
 
-**Status:** PROPOSED — no entity schema (the tables listed below) exists
-yet. Alembic migration plumbing does exist (GitHub Issue #1 — Application
-Foundation): a real migration chain runs against PostgreSQL and enables the
-`pgvector` extension, but it creates no application tables. This document
-records the intended core entities so future implementation stays
-consistent; it is not evidence that any of them are implemented. See
+**Status:** PARTIALLY IMPLEMENTED — `users`, `workspaces`,
+`workspace_members`, `sessions` (migration `0002`), and
+`password_reset_tokens`/`audit_logs` (migration `0003`) exist as real
+tables (GitHub Issue #2 — Authentication & Workspaces); every other
+entity below remains PROPOSED. This document records the intended core
+entities so future implementation stays consistent; entities not marked
+implemented below are not evidence that they exist. See
 [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 
-## Core entities (proposed)
+## Core entities
 
-| Entity | Purpose |
-|---|---|
-| `users` | Account identity and credentials |
-| `workspaces` | Isolation boundary for a user or team's data |
-| `workspace_members` | Membership + role (`OWNER`/`ADMIN`/`MEMBER`/`VIEWER`) linking users to workspaces |
-| `sessions` | Server-tracked login/device session backing refresh-token issuance, listing, and revocation (see [ADR 0003](DECISIONS/0003-authentication-session-architecture.md)) |
-| `documents` | Uploaded source files and their processing status |
-| `document_chunks` | Chunked, embedded units of a document, used for retrieval |
-| `collections` | Logical grouping of documents within a workspace |
-| `collection_documents` | Many-to-many link between collections and documents |
-| `conversations` | A chat session within a workspace |
-| `messages` | Individual messages within a conversation (user + assistant) |
-| `citations` | Links between a generated answer/message and the evidence (chunks) it cites |
-| `retrieval_events` | Record of a retrieval operation (query, method, results, scores) for observability/evaluation |
-| `evaluation_runs` | A configured evaluation experiment (embedding model, chunking strategy, retrieval method, etc.) |
-| `evaluation_results` | Computed metrics for an `evaluation_run` |
-| `audit_logs` | Security-relevant action log (see [`docs/SECURITY.md`](SECURITY.md)) |
+| Entity | Purpose | Status |
+|---|---|---|
+| `users` | Account identity and credentials | IMPLEMENTED |
+| `workspaces` | Isolation boundary for a user or team's data | IMPLEMENTED |
+| `workspace_members` | Membership + role (`OWNER`/`ADMIN`/`MEMBER`/`VIEWER`) linking users to workspaces | IMPLEMENTED |
+| `sessions` | Server-tracked login/device session backing refresh-token issuance, listing, and revocation (see [ADR 0003](DECISIONS/0003-authentication-session-architecture.md)) | IMPLEMENTED |
+| `password_reset_tokens` | Hashed, expiring, single-use password-reset tokens (raw value never persisted — see [ADR 0005](DECISIONS/0005-httponly-cookie-csrf-authentication.md) and `docs/SECURITY.md`) | IMPLEMENTED |
+| `documents` | Uploaded source files and their processing status | PROPOSED |
+| `document_chunks` | Chunked, embedded units of a document, used for retrieval | PROPOSED |
+| `collections` | Logical grouping of documents within a workspace | PROPOSED |
+| `collection_documents` | Many-to-many link between collections and documents | PROPOSED |
+| `conversations` | A chat session within a workspace | PROPOSED |
+| `messages` | Individual messages within a conversation (user + assistant) | PROPOSED |
+| `citations` | Links between a generated answer/message and the evidence (chunks) it cites | PROPOSED |
+| `retrieval_events` | Record of a retrieval operation (query, method, results, scores) for observability/evaluation | PROPOSED |
+| `evaluation_runs` | A configured evaluation experiment (embedding model, chunking strategy, retrieval method, etc.) | PROPOSED |
+| `evaluation_results` | Computed metrics for an `evaluation_run` | PROPOSED |
+| `audit_logs` | Security-relevant action log (see [`docs/SECURITY.md`](SECURITY.md)) | IMPLEMENTED (auth/workspace event types; document-related events land with Issue #3) |
 
 ## Potential entities (subject to architectural validation)
 
@@ -46,6 +48,7 @@ before being added to the core list above:
 ```
 users ──< workspace_members >── workspaces
 users ──< sessions
+users ──< password_reset_tokens
 workspaces ──< documents
 workspaces ──< collections ──< collection_documents >── documents
 documents ──< document_chunks

@@ -103,6 +103,68 @@ with invented history of either kind.
 
 ## [Unreleased — committed]
 
+### 2026-09-14 — `feat: complete secure cookie auth and password recovery`
+
+*(Issue #2 checkpoint — commit hash not known at the time this entry was
+written, since the changelog file recording it is itself part of the
+commit; see `git log` on `issue-2-authentication-workspaces` for the
+hash. Not yet pushed or merged.)*
+
+Migrates browser authentication from bearer tokens in the response body to
+HttpOnly cookies with CSRF protection, and adds a complete password
+recovery vertical slice, on top of the registration/login/workspace work
+already in this branch:
+
+- **Cookie + CSRF authentication** (supersedes the original
+  response-body-token design): access/refresh tokens delivered exclusively
+  via `HttpOnly` cookies (`access_token` on `Path=/`, `refresh_token`
+  scoped to `Path=/api/v1/auth`) — never in a response body, never read by
+  frontend JavaScript, no `localStorage`/`sessionStorage` token storage
+  anywhere (`frontend/lib/auth-storage.ts` removed). Double-submit CSRF
+  cookie (`csrf_token`, deliberately non-`HttpOnly`) + `X-CSRF-Token`
+  header on every state-changing request, including login/register.
+  Deployment-aware cookie/CORS configuration
+  (`COOKIE_SAMESITE`/`COOKIE_DOMAIN`/`COOKIE_SECURE`/
+  `CORS_ALLOWED_ORIGINS`), documented in new
+  [ADR 0005](docs/DECISIONS/0005-httponly-cookie-csrf-authentication.md)
+  including the "different origin ≠ cross-site" distinction that governs
+  `COOKIE_SAMESITE`.
+- **Password recovery** (backend + frontend): `/forgot-password` and
+  `/reset-password` — cryptographically random, SHA-256-hashed-at-rest,
+  single-use, expiring reset tokens; enumeration-resistant
+  (identical response/timing regardless of whether the email exists); a
+  successful reset revokes every existing session for the account. Email
+  delivery via a new vendor-neutral `EmailProvider` abstraction (`console`
+  dev fallback or `smtp`, verified locally against Mailpit).
+  `ENVIRONMENT=production` with `EMAIL_PROVIDER=console` now fails at
+  config-load time — a genuine defect found during a dedicated security
+  audit of this feature (stdout is typically captured by log aggregation
+  in real deployments, which would otherwise leak raw reset tokens into
+  production logs).
+- **Audit logging**: new `audit_logs` table and `AuditEvent` recording for
+  authentication events, password-reset events, workspace membership
+  changes, and authorization denials.
+- **Docs**: `docs/SECURITY.md` corrected to match the current
+  implementation (previously described bearer tokens and listed audit
+  logging as not implemented).
+- **Tests**: backend 95 → 119 pytest tests; frontend 30 → 48 vitest tests,
+  including explicit regression tests proving no auth token ever reaches
+  `localStorage`/`sessionStorage`/an `Authorization` header.
+- **Verified end-to-end** against the real Docker Compose stack (now
+  including a `mailpit` service): register → forgot-password → Mailpit
+  received the email with a correct reset link → reset-password (CSRF
+  matrix: missing rejected, valid accepted) → old password rejected, new
+  password accepted → the pre-reset refresh token invalidated → zero
+  occurrences of the raw reset token in backend logs.
+- Two non-obvious problems solved during this checkpoint are written up in
+  `SOLVING.md`: a rate-limiter test-isolation gap that made password-reset
+  tests silently receive no email, and a Vitest fetch-mock `Response`
+  object being reused across multiple calls in one test (causing "Body
+  already read" errors).
+- Does **not** include Redis-backed rate limiting, a deterministic
+  abuse-detection layer, or Playwright E2E — all explicitly deferred; see
+  `HANDOFF.md`.
+
 ### 2026-09-11 — `chore: configure Git line endings` (a059965)
 
 - Added `.gitattributes` (`* text=auto eol=lf`).

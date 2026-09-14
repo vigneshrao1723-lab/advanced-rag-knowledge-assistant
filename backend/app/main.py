@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_v1_router
 from app.core.config import get_settings
+from app.core.csrf import CSRFMiddleware
 from app.core.errors import register_exception_handlers
 from app.observability.access_log import AccessLogMiddleware
 from app.observability.logging import configure_logging
@@ -28,7 +29,13 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
 
-    # Order matters: request ID must be assigned before anything logs.
+    # Order matters (Starlette wraps middleware in reverse add-order, so
+    # the first one added ends up innermost, closest to the routes):
+    # CSRF innermost (so AccessLog/RequestID wrap and can log/annotate its
+    # rejections), then AccessLog, then RequestID (request ID must be
+    # assigned before anything logs), then CORS outermost (so its headers
+    # land on every response, including CSRF/auth rejections).
+    app.add_middleware(CSRFMiddleware)
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(

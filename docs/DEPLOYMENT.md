@@ -2,10 +2,11 @@
 
 **Status:** PARTIALLY IMPLEMENTED — local Docker Compose development and a
 CI workflow exist and have been verified to work (`infra/`,
-`.github/workflows/ci.yml`); a real hosting/production deployment target has
-not been decided. As of this writing `infra/` and `.github/workflows/` exist
-in the working tree but are not yet committed — see `PROJECT_STATE.md` and
-`git status`.
+`.github/workflows/ci.yml`, committed on `main` since Issue #1); a real
+hosting/production deployment target has not been decided. Issue #2 adds a
+required `SECRET_KEY` and a Postgres service container in CI for
+integration tests — see below — currently in the working tree, not yet
+committed; see `PROJECT_STATE.md` and `git status`.
 
 ## Principles
 
@@ -33,24 +34,34 @@ in the working tree but are not yet committed — see `PROJECT_STATE.md` and
     `NEXT_PUBLIC_API_URL` as a build arg, since Next.js inlines
     `NEXT_PUBLIC_*` variables at build time), port `3000`.
 - Run locally with: `docker compose -f infra/compose/docker-compose.yml up --build`
+- The backend requires `SECRET_KEY` (signs/verifies access tokens, Issue
+  #2) — `docker-compose.yml` supplies a local-dev-only placeholder default;
+  override via a `.env` file with a real generated value
+  (`openssl rand -hex 32`) for anything beyond a throwaway local stack.
 - Verified (see `HANDOFF.md` for the full verification log): both images
   build; the stack starts; the pgvector extension is enabled in the running
-  database; Alembic applies against the real container; the backend's
-  liveness/readiness endpoints respond correctly with a real DB round-trip;
-  the frontend serves and can reach the backend across origins (CORS).
+  database; Alembic applies migrations `0001`+`0002` against the real
+  container; the backend's liveness/readiness endpoints respond correctly
+  with a real DB round-trip; the frontend serves and can reach the backend
+  across origins (CORS); a full register→login→create-workspace→
+  cross-workspace-isolation flow was exercised against the running
+  containers via curl.
 
 ## CI/CD (implemented)
 
 - `.github/workflows/ci.yml` runs on pull requests and pushes to `main`:
-  - `backend` job: `ruff check`, `mypy`, `pytest` (via `uv`).
+  - `backend` job: provisions a real `pgvector/pgvector:pg16` service
+    container (Issue #2 — the auth/workspace integration and security
+    tests need a real database, not a mock), runs Alembic migrations, then
+    `ruff check`, `mypy`, `pytest` (via `uv`).
   - `frontend` job: `eslint`, `tsc --noEmit`, `vitest`, `next build` (via
     `npm ci`).
   - `docker-build` job (after both pass): builds the backend and frontend
     images, and validates `docker compose config`.
 - CI is a required gate in the workflow defined in `AGENTS.md` §6
   (... → Commit → Pull request → CI → Review → Merge) — no PR merges with
-  failing CI. The workflow itself has not yet run on GitHub Actions, since
-  nothing in this phase is committed/pushed yet; its constituent commands
+  failing CI. The Issue #2 changes to this workflow have not yet run on
+  GitHub Actions, since they aren't pushed yet; their constituent commands
   were verified locally instead (see `HANDOFF.md`).
 
 ## CORS configuration (implemented)
