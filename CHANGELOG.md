@@ -10,6 +10,54 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
+### 2026-09-14 — Redis rate limiting: implementation slice 1 (foundation + token-bucket engine)
+
+*(Branch `issue-redis-rate-limiting`, not yet committed/pushed — see
+`HANDOFF.md` for exact state.)*
+
+Implements the parts of [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
+that don't require touching any endpoint, per this slice's explicit
+scope — no authentication endpoint's behavior changes yet:
+
+- Added the `redis` Python dependency (`backend/pyproject.toml`,
+  `backend/uv.lock`).
+- New Redis settings in `backend/app/core/config.py`: `REDIS_URL`
+  (optional), explicit socket/connect timeouts (default 50ms, ADR §13),
+  `TRUSTED_PROXY_CIDRS` (default empty, ADR §9a).
+- New `backend/app/core/redis_client.py`: connection abstraction, an
+  exception-free `is_redis_available()` check, `RedisUnavailableError`.
+- New `backend/app/core/redis_keys.py`: centralized rate-limit key
+  construction and an HMAC-SHA256 email identifier (ADR §14).
+- New `backend/app/core/ip_resolution.py`: trusted-proxy-aware client IP
+  resolution (ADR §9a) — not yet called from any endpoint.
+- Extended `backend/app/core/rate_limit.py` with `RedisTokenBucketLimiter`
+  / `DimensionSpec` / `TokenBucketResult` — the ADR §8/§10 multi-key
+  atomic Lua token-bucket engine (one `EVAL` per operation, over every
+  dimension key that operation has, all-or-nothing). The existing
+  `FixedWindowRateLimiter` and every `enforce_*_rate_limit` function are
+  unchanged; nothing calls the new engine yet.
+- Added a pinned, healthcheck-gated `redis:7.4-alpine` service to
+  `infra/compose/docker-compose.yml` and `.github/workflows/ci.yml` (ADR
+  §16 — local dev/CI only); `.env.example` documents the new variables.
+- 51 new backend tests (170 total, up from 119), including real-Redis
+  integration tests that directly regression-test the multi-key
+  atomicity property ADR 0006 §17 names (sequential and concurrent).
+  `ruff`/`mypy` clean; full suite passes against real Postgres + real
+  Redis. Verified live against the running Docker Compose stack:
+  `/api/v1/health/ready` stays `200 ready` with Redis stopped (ADR §13),
+  and a real `register` call still succeeds unchanged.
+- Documented a non-obvious Redis/Lua gotcha in `SOLVING.md`: Lua scripts
+  silently truncate a returned float to an integer over RESP2, so the
+  token-bucket script's retry-after value is computed and returned in
+  integer milliseconds, not fractional seconds.
+- Does **not** update `PROJECT_STATE.md`, `HANDOFF.md`, `docs/SECURITY.md`,
+  or ADR 0006's "Implementation status" — this commit is scoped to code
+  and this changelog entry only, per an explicit Git-separation task
+  (Slice 2's endpoint wiring remains uncommitted; the narrative docs
+  describe the combined Slice 1+2 working-tree state and are intentionally
+  left out of this commit rather than rewritten to describe Slice 1 in
+  isolation).
+
 ### 2026-09-11 — Application Foundation: backend/frontend/infra scaffold, Docker fixes, CI workflow
 
 - Backend (`backend/`): FastAPI scaffold with configuration

@@ -249,3 +249,58 @@ are safe." Applies beyond Redis/Lua: the same question is worth asking
 any time a change introduces multiple independently-locked or
 independently-transactional resources that one business decision reads
 or writes together.
+
+## 2026-09-14 — Redis Lua scripts silently truncate fractional numbers to integers on return (Redis rate-limiting implementation, slice 1)
+
+**Symptom (caught during implementation, before it could become a test
+failure):** the ADR 0006 §8 token-bucket Lua script needs to return a
+"how long until this dimension has enough tokens" value alongside the
+allow/deny flag, computed in Lua as `(cost - current_tokens) /
+refill_rate` — a fractional number of seconds for any sub-one-second
+wait, which is the common case for this project's actual rate limits
+(e.g. `login` at 5/60s means a typical retry wait is a few seconds at
+most, frequently under 1).
+
+**Root cause:** Redis's Lua-to-RESP2 reply conversion for a table
+returned from `EVAL`/`EVALSHA` converts each Lua number to a Redis
+*integer* reply — not a float, no rounding, just truncation toward zero
+(this is documented Redis/Lua-scripting behavior, not a bug in this
+project's script). A script that computed and `return`ed `{allowed,
+wait_seconds}` with `wait_seconds` as a fractional value like `0.4` would
+have silently come back to Python as `0` on every call where the true
+wait was under one second — which, given this project's actual
+configured limits, would have been *most* rejections. Nothing about this
+fails loudly: the script runs, returns a result, and the bug is a wrong
+number, not an exception — exactly the kind of defect a design-only
+review can't catch and only shows up once real inputs are pushed through
+the real script.
+
+**Fix:** the script (`app/core/rate_limit.py`'s `_TOKEN_BUCKET_LUA`)
+computes and returns `retry_after_ms` as `math.ceil(wait_seconds * 1000)`
+— an integer number of *milliseconds* — instead of a fractional number of
+seconds. The Python wrapper (`RedisTokenBucketLimiter.check_all()`)
+divides back down to `retry_after_seconds` on the Python side, where
+float division is exact. Milliseconds give enough headroom that the
+Lua-side integer truncation only loses sub-millisecond precision, which
+this design has no use for anyway.
+
+**Verification:** `tests/test_redis_rate_limiter.py::test_request_beyond_capacity_is_rejected`
+asserts `result.retry_after_seconds > 0` for a rejection with a
+sub-one-second true wait time (`refill_rate=0.001` tokens/sec against a
+capacity already at zero) — this test would have failed (or worse,
+silently asserted `0 > 0` → correctly failed rather than silently passed,
+but only because the assertion happens to be a strict `>`) had the script
+returned raw fractional seconds instead of integer milliseconds. Also
+directly inspected via `redis-cli` against a real Redis instance while
+implementing, to confirm the raw integer reply, before writing the
+Python-side conversion.
+
+**Prevention/lesson:** **a value born as a Lua `number` inside a script
+does not stay a JSON-like general number once it crosses the Lua→RESP
+boundary in a `return`.** Any Redis Lua script that needs to hand back a
+fractional value must pre-scale it into an integer unit (milliseconds,
+basis points, fixed-point cents — whatever the domain supports) *inside
+the script*, and unscale on the client side; there is no Lua-script
+return path that preserves a float as a float to a RESP2 client. Worth
+checking any time a new Lua script in this codebase returns a computed
+number, not just a stored one.

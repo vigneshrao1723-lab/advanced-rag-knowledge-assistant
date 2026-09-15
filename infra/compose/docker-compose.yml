@@ -34,6 +34,23 @@ services:
       - "1025:1025" # SMTP
       - "8025:8025" # Web UI + REST API
 
+  # ADR 0006 §16 — local dev/CI only, as designed. Not yet consumed by any
+  # request path (the Redis-backed rate limiter is implemented but not
+  # wired into any endpoint this slice — see docs/DECISIONS/0006). Present
+  # here so the engine's own tests (backend/tests/test_redis_*.py) have a
+  # real Redis to run against locally, matching the "no mock substitute
+  # for the real datastore" precedent ADR 0002 established for Postgres.
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build:
       context: ../../backend
@@ -52,12 +69,20 @@ services:
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
       SMTP_HOST: ${SMTP_HOST:-mailpit}
       SMTP_PORT: ${SMTP_PORT:-1025}
+      # ADR 0006 §7/§16 — ephemeral rate-limit/abuse state only, never a
+      # second source of truth. Optional: the backend starts and serves
+      # traffic normally even if this is unset or Redis is unreachable
+      # (ADR 0006 §13) — this dependency is a container-startup-ordering
+      # convenience for local dev only, not a runtime requirement.
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
       mailpit:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]

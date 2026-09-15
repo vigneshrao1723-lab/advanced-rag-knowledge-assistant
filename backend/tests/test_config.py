@@ -146,3 +146,75 @@ def test_cookie_domain_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
 
     assert settings.cookie_domain == ".example.com"
+
+
+def test_redis_url_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redis is optional infrastructure at this point (ADR 0006) — an
+    unset REDIS_URL must not fail config loading the way a missing
+    DATABASE_URL/SECRET_KEY does."""
+    _base_env(monkeypatch)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.redis_url is None
+
+
+def test_redis_url_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.redis_url == "redis://localhost:6379/0"
+
+
+def test_redis_timeouts_default_to_short_explicit_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR 0006 §13: timeouts on the order of tens of milliseconds, not
+    left to redis-py's own (much longer) defaults."""
+    _base_env(monkeypatch)
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.redis_socket_timeout_seconds == 0.05
+    assert settings.redis_socket_connect_timeout_seconds == 0.05
+
+
+def test_redis_socket_timeout_must_be_positive(monkeypatch: pytest.MonkeyPatch) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv("REDIS_SOCKET_TIMEOUT_SECONDS", "0")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_redis_socket_connect_timeout_must_be_positive(monkeypatch: pytest.MonkeyPatch) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv("REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS", "-1")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_trusted_proxy_cidrs_defaults_to_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR 0006 §9a: the safe default is to trust no proxy at all."""
+    _base_env(monkeypatch)
+    monkeypatch.delenv("TRUSTED_PROXY_CIDRS", raising=False)
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.trusted_proxy_cidrs == ""
+    assert settings.trusted_proxy_cidrs_list == []
+
+
+def test_trusted_proxy_cidrs_list_parses_comma_separated_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv("TRUSTED_PROXY_CIDRS", "127.0.0.1/32, 10.0.0.0/8 ,::1/128")
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.trusted_proxy_cidrs_list == ["127.0.0.1/32", "10.0.0.0/8", "::1/128"]

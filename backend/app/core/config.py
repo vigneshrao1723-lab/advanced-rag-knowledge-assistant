@@ -120,6 +120,37 @@ class Settings(BaseSettings):
     smtp_from_email: str = "noreply@example.com"
     smtp_use_tls: bool = False
 
+    # Redis (ADR 0006) — optional: no code path attempts a Redis connection
+    # yet in this slice (see app/core/redis_client.py's module docstring).
+    # No hardcoded connection target: deployment-aware, like `database_url`.
+    redis_url: str | None = None
+    # Short, explicit timeouts (ADR 0006 §13: "on the order of tens of
+    # milliseconds") so a degraded-but-not-down Redis cannot make a
+    # request hang; a timeout is handled identically to a connection
+    # failure by the caller (app/core/redis_client.py).
+    redis_socket_timeout_seconds: float = 0.05
+    redis_socket_connect_timeout_seconds: float = 0.05
+
+    @model_validator(mode="after")
+    def _validate_redis_timeouts(self) -> "Settings":
+        if self.redis_socket_timeout_seconds <= 0:
+            raise ValueError("redis_socket_timeout_seconds must be > 0.")
+        if self.redis_socket_connect_timeout_seconds <= 0:
+            raise ValueError("redis_socket_connect_timeout_seconds must be > 0.")
+        return self
+
+    # Trusted-proxy IP resolution (ADR 0006 §9a). Empty by default — the
+    # safe, secure-by-default choice: `X-Forwarded-For`/`Forwarded` are
+    # ignored unconditionally and the resolved client IP is always the
+    # direct TCP peer, exactly matching today's `client_ip()` behavior,
+    # until an operator explicitly configures the CIDR ranges of their own
+    # reverse proxy/load balancer. Comma-separated CIDR ranges (IPv4/IPv6).
+    trusted_proxy_cidrs: str = ""
+
+    @property
+    def trusted_proxy_cidrs_list(self) -> list[str]:
+        return [cidr.strip() for cidr in self.trusted_proxy_cidrs.split(",") if cidr.strip()]
+
     # Reserved for future issues — not consumed by any code path yet.
     llm_api_key: str | None = None
     embedding_api_key: str | None = None
