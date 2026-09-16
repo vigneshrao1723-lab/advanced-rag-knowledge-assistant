@@ -8,30 +8,40 @@ in-flight task — overwrite it as work progresses, don't append a history
 
 ## Current task
 
-**GitHub Issue #2 — Authentication & Workspaces is complete and merged.**
-Issue #1 (Application Foundation) is merged to `main` (PR #9). Issue #2
-was implemented on branch `issue-2-authentication-workspaces` (checkpoint
-commit `864d783`), opened as **PR #10**, verified green on GitHub Actions
-(3/3 checks), and **merged into `main` as commit `ec4225d`** — a
-squash/rebase merge (single parent), with its tree content verified
-byte-identical to `864d783`. `main` is at `ec4225d`, `origin/main` matches
-it, and the working tree is clean. The old feature branch still exists
-(locally and on `origin`, not deleted) but has no content not already in
-`main`.
+**Redis distributed rate limiting — Slice 1 is committed locally; Slice 2
+exists only as uncommitted working-tree changes on top of it, both on
+branch `issue-redis-rate-limiting`.** Issue #1 and Issue #2 are merged to
+`main` (Issue #2 merged as `ec4225d`; `main`/`origin/main` have since
+advanced further, to `7e439d2`, via the ADR 0006 design-finalization
+commits, committed directly to `main` in an earlier session — that is
+`main`'s current tip, not `ec4225d`). ADR 0006's design was adversarially
+reviewed and finalized as part of that same `7e439d2` commit (pushed).
 
-**Nothing is currently in flight.** The next task — Redis distributed rate
-limiting + a deterministic abuse-detection layer — is now **architecturally
-designed** ([ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)),
-but **implementation has not started**: no Redis dependency, service, or
-application code exists yet, and no tests exist. See "Next major task"
-below for a summary and a pointer to the ADR for full detail. Do not start
-implementing it, Playwright, or Issue #3 without an explicit go-ahead.
+- **Slice 1 (Redis foundation + token-bucket engine): IMPLEMENTED and
+  COMMITTED** as commit `b1f1b00` on `issue-redis-rate-limiting`, on top
+  of `7e439d2`. **Not yet pushed. No PR open.** Independently validated
+  in isolation before the commit: 170/170 tests pass (119 baseline + 51
+  new), `ruff`/`mypy` clean. This is the current committed checkpoint —
+  the next action is to review, push, and open a PR for it.
+- **Slice 2 (wiring that engine into every `enforce_*_rate_limit`
+  dependency): IMPLEMENTED but UNCOMMITTED** — real code sitting in the
+  working tree on top of the Slice 1 commit, not part of any commit, not
+  pushed, no PR. Every authentication endpoint's *actually committed*
+  rate-limiting behavior is still the pre-existing in-process limiter,
+  unchanged — Slice 2's Redis-first behavior is real and tested (see
+  below) but **not active in the committed codebase** until it is itself
+  reviewed and committed.
+- The deterministic abuse-detection layer (ADR 0006 §11), Playwright, and
+  Issue #3 are all still not started, in either committed or uncommitted
+  form — **do not start any of them next.** The next action is Slice 1
+  push/PR review; abuse detection is two steps away (after Slice 1
+  merges, then after Slice 2 is reviewed and committed). See "Exact next
+  recommended action" below for the full order.
 
-Issue #2 covered: registration/login/logout/refresh with PostgreSQL-backed
-sessions, HttpOnly cookie + CSRF browser authentication (superseding the
-original bearer-token-in-body design), workspace CRUD/membership/RBAC,
-password recovery (backend and frontend), audit logging, and the security
-documentation/ADRs for all of it.
+Issue #2 (merged) covered: registration/login/logout/refresh with
+PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
+workspace CRUD/membership/RBAC, password recovery (backend and frontend),
+audit logging, and the security documentation/ADRs for all of it.
 
 ## Completed work (Issue #2, merged in PR #10)
 
@@ -182,118 +192,247 @@ documentation/ADRs for all of it.
   modified; no existing code was changed — the adversarial review only
   edited the ADR and this documentation.
 
+## Completed work (Redis implementation slice 1 — foundation + token-bucket engine)
+
+Branch `issue-redis-rate-limiting`, **committed as `b1f1b00`, not yet
+pushed.** Implemented the pieces of
+ADR 0006 that don't require touching any endpoint, per that slice's
+explicit scope (superseded by slice 2 below, which wires all of this in):
+
+- **`redis` dependency** (`redis>=8.1.0` resolved, pinned in
+  `backend/pyproject.toml`/`backend/uv.lock` via `uv add redis`, matching
+  the project's existing lower-bound-only convention).
+- **Settings** (`app/core/config.py`): `redis_url` (optional — `None`
+  means the engine is simply unavailable, not a config error),
+  `redis_socket_timeout_seconds`/`redis_socket_connect_timeout_seconds`
+  (default `0.05`, validated `> 0`), `trusted_proxy_cidrs` (default `""`,
+  ADR §9a) + `trusted_proxy_cidrs_list` property.
+- **`app/core/redis_client.py`** (new): `build_redis_client()` (explicit
+  URL + timeouts, never hardcoded), `get_redis_client()` (settings-backed,
+  cached, returns `None` if unconfigured), `is_redis_available()` (never
+  raises — catches `redis.RedisError`), `RedisUnavailableError`.
+- **`app/core/redis_keys.py`** (new): `rate_limit_key(operation,
+  dimension, value)` (ADR §14's `rl:{operation}:{dimension}:{value}`
+  namespace) and `hash_account_identifier(email, key=...)`
+  (HMAC-SHA256, ADR §14's corrected email-identifier design — never a
+  plain hash).
+- **`app/core/ip_resolution.py`** (new): `resolve_ip()` (pure function)
+  and `resolve_client_ip()` (`Request` wrapper) implementing ADR §9a's
+  trusted-proxy walk. **Not called from any endpoint yet** — see scope
+  boundary above.
+- **`app/core/rate_limit.py`** (extended, not replaced): `DimensionSpec`,
+  `TokenBucketResult`, `RedisTokenBucketLimiter` — the ADR §8/§10 Lua
+  token-bucket engine. One `EVAL` per operation, over every dimension key
+  that operation has; reads/refills/checks all dimensions before writing
+  any; writes nothing on rejection. `FixedWindowRateLimiter` and every
+  `enforce_*_rate_limit` function are **byte-for-byte unchanged**.
+- **`infra/compose/docker-compose.yml`** / **`.github/workflows/ci.yml`**:
+  a pinned `redis:7.4-alpine` service, healthcheck-gated (`redis-cli
+  ping`), matching the existing `mailpit`/`db` pattern. `backend`'s
+  `depends_on: redis: condition: service_healthy` is container-startup
+  ordering only (ADR §13 explicitly sanctions this — distinct from
+  runtime readiness). `.env.example` documents the new variables.
+- **A genuinely hard problem, documented in `SOLVING.md`**: Redis's
+  Lua→RESP2 reply conversion silently truncates a returned float to an
+  integer — the token-bucket script computes/returns `retry_after_ms` as
+  an integer instead of fractional seconds specifically to survive this,
+  with the unscaling done on the Python side.
+
+## Completed work (Redis implementation slice 2 — wire the engine into every endpoint)
+
+Branch `issue-redis-rate-limiting`, **uncommitted working-tree changes**,
+on top of the Slice 1 commit (`b1f1b00`). **Not part of any commit — do
+not treat this as active in the committed codebase:**
+
+- **`app/core/rate_limit.py`'s `enforce_*_rate_limit` functions rewritten**
+  to attempt the Redis engine first, per ADR §9's exact per-operation
+  dimensions, falling back to `FixedWindowRateLimiter` per ADR §13:
+  - `register`: IP only. Tier B.
+  - `login`: IP + account (email extracted from the JSON body via a new
+    `_extract_email_from_json_body()` helper — a best-effort peek that
+    never blocks normal Pydantic validation, since `Request.json()`
+    caches the raw bytes). Tier A.
+  - `refresh`: IP + session ID (parsed from the refresh-token cookie via
+    the existing `parse_refresh_token()` in `app/core/security.py` — no
+    database round-trip, per ADR §7's hot-path requirement). Tier A.
+  - `forgot-password`: IP + account (same email-extraction approach as
+    `login`). Tier A.
+  - `reset-password`: IP only, per ADR §9's reasoning (the token's own
+    256-bit entropy is the real defense). Tier A.
+  - A shared `_check_or_fallback()` helper implements the tier logic once,
+    used by all five functions.
+  - `get_redis_client` is now injected via `Depends()` (not called as a
+    plain function) specifically so tests can override it with
+    `app.dependency_overrides` — this is what makes the Tier A/B tests
+    below possible without needing to actually kill a real Redis.
+- **A deliberate refinement of ADR §13's Tier B, resolving its own
+  explicitly-left-open sub-decision** (full writeup: `SOLVING.md`'s
+  2026-09-14 "ADR 0006 §13's Tier B..." entry; also recorded in ADR
+  0006's "Implementation status" and §22): `get_redis_client()` returning
+  `None` (Redis never configured — today's default everywhere) always
+  falls back to `FixedWindowRateLimiter`, for every operation including
+  `register`. Only a `RedisUnavailableError` from an *already-configured*
+  client triggers Tier B's literal fail-open. Implementing the ADR's
+  literal wording without this distinction would have made `register`
+  unprotected by default in every environment that hasn't explicitly set
+  `REDIS_URL` — i.e. every environment today.
+- **`FixedWindowRateLimiter` gained `.limit`/`.window_seconds`
+  properties** so the Redis dimensions' capacity/refill-rate are derived
+  live from the same objects, never a second hardcoded copy of the same
+  numbers (ADR §8 "Continuity with today's numbers").
+- **New setting**: `rate_limit_hash_key` (`app/core/config.py`) —
+  resolves ADR §14/§22's open "HMAC key location" decision by reusing
+  `secret_key` unless explicitly overridden, avoiding a new required
+  secret for a threat model that doesn't need key separation from JWT
+  signing to be effective.
+- **`backend/tests/conftest.py` fixed**: `_reset_rate_limiters` now also
+  clears `rl:*` Redis keys between tests (via `SCAN`+`DELETE`), not just
+  the in-process limiters — see `SOLVING.md`'s first 2026-09-14 entry for
+  why this was necessary (52 previously-passing tests failed the moment
+  the Redis path went live in tests, until this fix).
+- **New test file `tests/test_rate_limit_wiring.py`** (5 tests, HTTP-level
+  through real endpoints): a successful login creates the exact
+  `rl:login:ip:*`/`rl:login:acct:*` keys ADR §14 specifies; Tier A
+  fallback and Tier B fail-open, both via `app.dependency_overrides`
+  pointing `get_redis_client` at an unreachable client; the
+  "unconfigured vs. unreachable" distinction (`None` override still
+  rate-limits `register`); a spoofed `X-Forwarded-For` does not let an
+  attacker escape the IP bucket with `TRUSTED_PROXY_CIDRS` unset.
+- **Live-verified against the real Docker Compose stack** (not just
+  tests): a live login created real `rl:login:ip:*`/`rl:login:acct:*`
+  keys (inspected directly via `redis-cli --scan`); `/api/v1/health/ready`
+  stayed `200 ready` with Redis stopped; `register` failed open (7/7
+  succeeded past the base limit of 5) only while Redis was actually down,
+  and `login` still hit `429` at exactly the fallback limiter's threshold
+  during that same outage (Tier A); stopping and restarting Redis
+  mid-session, `register` went from failing open back to enforcing its
+  limit at exactly 5 with no process restart.
+
 ## Explicitly NOT done (do not assume otherwise)
 
-- **Redis distributed rate limiting implementation** — not started. The
-  architecture is designed (ADR 0006, above); no Redis dependency,
-  service, or code exists anywhere in this repository.
-- **Deterministic abuse/risk layer implementation** — not started. The
-  rule model is designed (ADR 0006 §11); no code exists. (When you build
-  this: it must remain deterministic, rule-based logic — never call it
-  "AI" or claim ML/statistical evaluation unless an actual evaluated
-  model backs that claim, per the ADR's explicit non-goal.)
-- **Concurrency/race-condition testing for Redis** — not applicable yet;
-  there is no Redis to test. ADR 0006 §17 designs what these tests should
-  cover once implementation exists.
+- **Deterministic abuse/risk layer** (ADR 0006 §11/§12) — not started. No
+  `AbuseDecisionEngine`, no rule table, no `abuse:*` Redis keys, no
+  `STRICT_THROTTLE`/`TEMPORARY_BLOCK` escalation is reachable yet. (When
+  you build this: it must remain deterministic, rule-based logic — never
+  call it "AI" or claim ML/statistical evaluation unless an actual
+  evaluated model backs that claim, per the ADR's explicit non-goal.)
+- **`AuditEvent.RATE_LIMITED` is still never emitted** — the observability
+  split (ADR §15) is designed but not implemented; no audit-logging code
+  was added in either slice.
+- **`client_ip()` (unconditional, no trusted-proxy handling) is still
+  used elsewhere** — `app/api/v1/auth.py`'s audit/session IP recording
+  and `app/core/dependencies.py`'s authorization-denial audit events
+  still call `client_ip()`, not `resolve_client_ip()`. Only the
+  rate-limit dimensions switched to the trusted-proxy-aware resolver;
+  changing what IP audit logs/sessions record is a separate decision,
+  deliberately out of scope here.
+- **No multi-instance/concurrent-HTTP-load test exists** — the wiring is
+  verified correct sequentially (tests) and against a single running
+  backend instance (Docker). The distributed-coordination property this
+  whole ADR exists for (§2.1) has not been exercised with more than one
+  backend process under real concurrent load, since no such deployment
+  exists.
 - **Playwright browser E2E** — not started. No config, no test files, no
-  dependency. The live-Docker verification done for this checkpoint
-  (curl/Python against running containers, including reading Mailpit's
-  REST API directly) is real integration verification but is **not** a
-  substitute for actual browser automation — say so explicitly if asked,
-  don't imply Playwright coverage exists.
+  dependency.
 - **Issue #3 (document ingestion)** — not started.
 - **Later RAG retrieval/generation features** — not started.
+- **Slice 1 is committed locally (`b1f1b00`) but not pushed, with no
+  open PR. Slice 2 remains fully uncommitted, working-tree-only, not
+  pushed, no open PR.**
 
-## Next major task: implement Redis rate limiting + deterministic abuse protection
+## Later task: the deterministic abuse-detection layer (ADR 0006 §11/§12)
 
-**The design is done — [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
-is the canonical source; read it in full before writing any code.** This
-section is a summary and pointer, not a substitute for it. Implementation
-is the next thing to build, has not started, and is a separate unit of
-work from both Issue #2 (merged) and the design task that produced the
-ADR.
+**Not the next action — do not start this yet.** Two steps come first:
+(1) Slice 1 (`b1f1b00`) is reviewed, pushed, and merged; (2) Slice 2's
+uncommitted endpoint wiring is itself reviewed and committed on top of
+that. Only after both of those is this the last major piece of ADR 0006
+that doesn't exist yet. Recorded here so the plan is visible, not as a
+go-ahead. When it is time: **read [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
+§11/§12 in full before writing any code.**
 
-Key points from the ADR (see it for the full reasoning and the "Open
-decisions" section listing what's intentionally left for implementation
-time):
+- **Rule table (§11)**: R1–R5, deterministic `if`-level checks against
+  counters — not a numeric score, not ML. Needs its own signal-recording
+  primitives (login-failure counters per IP/account, the HyperLogLog
+  distinct-IP-per-account signal, reset-token-failure counters), all
+  TTL-bound (§18's cardinality analysis).
+- **Decision states (§12)**: `STRICT_THROTTLE` (a second, stricter token
+  bucket activated for an escalation window) and `TEMPORARY_BLOCK`
+  (checked first, before the ordinary bucket, per §6's flow diagram —
+  this needs its own read-only "is this dimension currently blocked?"
+  check wired in ahead of the `RedisTokenBucketLimiter.check_all()` calls
+  slice 2 just added).
+- **R2's severity is `STRICT_THROTTLE`, not `TEMPORARY_BLOCK`** — this
+  was the account-lockout-as-DoS-vector correction from the design
+  review; don't regress it.
+- **Audit emission (§15)**: this is also where `AuditEvent.RATE_LIMITED`
+  finally gets emitted (for `STRICT_THROTTLE`) alongside a new constant
+  for `TEMPORARY_BLOCK`.
+- **§11/§22's open numeric thresholds** (`N`, `M`, `W` per rule) need
+  actual values chosen and documented with rationale — this repository
+  has no incident history to derive them from; start conservative.
+- Files likely touched: a new `app/core/abuse_detection.py` (or similar —
+  not decided here), `app/core/audit.py` (new constant),
+  `app/core/rate_limit.py`'s `enforce_*` functions (the block-check needs
+  to run before `_check_or_fallback()`, per §6's flow).
 
-- **Evolve `backend/app/core/rate_limit.py`, don't blindly replace it.**
-  The existing `FixedWindowRateLimiter` becomes the documented failure-mode
-  fallback for security-sensitive endpoints (ADR §13), not dead code.
-  Understand why each existing limit exists and what test currently
-  asserts it (`tests/test_auth.py`, `tests/test_password_reset.py`,
-  `tests/test_rate_limit.py`) before changing anything underneath.
-- **PostgreSQL remains the authoritative durable datastore** (ADR 0002).
-  Redis holds only ephemeral rate-limit/abuse state (ADR 0006 §7) — never
-  a second source of truth for anything that must survive a restart or be
-  queried historically (that's still Postgres + `audit_logs`).
-- **Algorithm:** token bucket via a single atomic Lua script **per
-  operation, over all of that operation's dimension keys together** — not
-  one script per key (that was this ADR's own first draft, and was
-  wrong — see the atomicity correction above) and not a naive
-  `GET → calculate → SET` (ADR §8, §10).
-- **Redis failure is operation-aware, not a single global policy**:
-  security-sensitive endpoints fall back to the in-process limiter;
-  `register` fails open; block-checks specifically fail open even within
-  the otherwise-conservative security-sensitive tier (ADR §13 explains
-  why for each case).
-- **No unbounded attacker queues** — every Redis key is TTL-bound; nothing
-  is queued, only allowed/throttled/blocked (ADR §8, §10, §12).
-- **Abuse detection is a deterministic rule table, not a score, not ML**
-  (ADR §11) — implement it that way even if a numeric score looks
-  tempting; the ADR explains why it was rejected.
-- Files/areas to inspect first: `backend/app/core/rate_limit.py` (current
-  mechanism), `backend/tests/test_rate_limit.py` and every
-  `enforce_*_rate_limit` call site (`app/api/v1/auth.py`), `app/core/audit.py`
-  (the already-defined-but-unused `AuditEvent.RATE_LIMITED` the ADR
-  reuses), `docs/SECURITY.md` "Rate limiting approach" (needs updating
-  once implementation lands — not yet, since nothing is implemented),
-  `infra/compose/docker-compose.yml` (where a `redis` service would be
-  added, following the same healthcheck-gated pattern already used for
-  `mailpit`).
+After that: Playwright E2E, then GitHub Issue #3 — neither started.
 
 ## Blockers
 
-None. Docker Compose, the local Postgres container, Mailpit, and `gh` CLI
-access are all confirmed working in this environment.
+None. Docker Compose, the local Postgres container, Mailpit, a local
+Redis, and `gh` CLI access are all confirmed working in this environment.
 
-## Tests run (Issue #2, verified locally and confirmed again by CI on PR #10)
+## Tests run (Redis implementation slices 1–2)
 
-- GitHub Actions on PR #10: **3/3 checks passed** (backend
-  lint/typecheck/tests; frontend lint/typecheck/tests/build; Docker build
-  check) — confirmed before merge.
-- Backend: `uv run ruff check .` (pass), `uv run mypy .` (pass, 67 files),
-  `uv run pytest -v` (**119/119 pass**, against real Postgres).
-- Frontend: `npm run lint` (pass), `npm run typecheck` (pass), `npm run
-  test` (**48/48 pass**), `npm run build` (pass — `/forgot-password` and
-  `/reset-password` both build as static pages).
-- Docker: rebuilt backend + frontend images; full stack (db, mailpit,
-  backend, frontend) started healthy.
-- Live end-to-end password-recovery flow against the running containers:
-  registered a test user → cleared Mailpit → called `forgot-password` →
-  Mailpit received exactly 1 email to the correct address with a correct
-  `http://localhost:3000/reset-password?token=...` link → extracted the
-  real token from Mailpit's REST API → confirmed 0 occurrences of that
-  raw token anywhere in backend container logs → reset without CSRF → 403
-  → reset with correct CSRF → 204 → old password → 401 → new password →
-  200 → the refresh token captured *before* the reset → 401 on replay
-  (session invalidated). Also re-verified general cookie/CSRF/CORS
-  behavior (login/register cookie attributes, CORS preflight
-  allow/deny-by-origin, CORS headers present on CSRF/auth rejections)
-  still intact after the frontend changes.
-- Stack shut down cleanly after each verification pass.
+- Baseline (before slice 1, per that slice's explicit instruction):
+  `uv run ruff check .` (pass), `uv run mypy .` (pass, 67 files),
+  `uv run pytest -v` (**119/119 pass**, real Postgres).
+- **Slice 1 (committed, `b1f1b00`): 170/170 pass** (119 existing + 51
+  new), `mypy` clean (74 files). Independently re-validated in an
+  isolated worktree built from the staged tree alone, immediately before
+  the commit — not just claimed.
+- Slice 2 (uncommitted working tree, on top of the Slice 1 commit):
+  `uv run ruff check .` (pass), `uv run mypy .` (pass, **75 files**),
+  `uv run pytest -v` (**175/175 pass** — 170 from Slice 1 + 5 new
+  HTTP-level wiring tests, against real Postgres **and** real Redis).
+  Re-ran the full suite 3 times to check for flakiness now that most auth
+  tests exercise the real Redis path — none observed. **This 175/175
+  figure describes the working tree, not the committed codebase** — the
+  committed state (`b1f1b00`) is 170/170.
+- New tests this slice (5, `test_rate_limit_wiring.py`): real-Redis key
+  creation via a live `login` call (and HMAC-hash verification against
+  independently-computed expected values); Tier A fallback for `login`
+  via an unreachable-client dependency override; Tier B fail-open for
+  `register` via the same technique; the "unconfigured (`None`) vs.
+  unreachable" distinction for `register`; spoofed `X-Forwarded-For`
+  ignored by default.
+- Docker: full stack (`db`, `mailpit`, `redis`, `backend`) rebuilt and
+  started, all four healthy. Live-verified (see "Completed work" above
+  for the exact sequence): real key creation inspected via
+  `redis-cli --scan`, login capped at capacity 5 across a real session,
+  `/api/v1/health/ready` independent of Redis, Tier A/B behavior during
+  a real stop/restart of the `redis` container, self-healing on
+  recovery — all observed directly against running containers, not
+  inferred from code.
+- Frontend: untouched across both slices — not re-run (no frontend file
+  changed).
 
 ## Exact next recommended action
 
-Issue #2 is merged — there is nothing left to push, review, or merge for
-it.
+Slice 1 and Slice 2 are being reviewed/landed as two separate units of
+work (an explicit Git-separation decision, not the original one-PR plan
+`AGENTS.md` §6 would default to) — follow this order, one step at a time:
 
-1. Implement Redis rate limiting + deterministic abuse protection per
-   [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
-   (design complete; implementation not started — see "Next major task"
-   above). Resolve the ADR's "Open decisions" (§22) as part of that work,
-   with rationale recorded alongside the code.
-2. Introduce Playwright E2E coverage for auth/password-recovery — not
-   started.
-3. Only after the above: begin GitHub Issue #3 (Knowledge Ingestion) —
-   not started.
+1. **Review, then push, `issue-redis-rate-limiting` and open a PR for
+   Slice 1 alone** (commit `b1f1b00` — foundation + token-bucket engine,
+   not wired into any endpoint). This is the immediate next action.
+2. **After Slice 1 is reviewed and merged:** review Slice 2's uncommitted
+   working-tree changes (the endpoint wiring) on their own merits, then
+   commit and push them (a separate commit/PR).
+3. **Only after Slice 2 is committed and merged:** implement the
+   deterministic abuse-detection layer (ADR §11/§12) — see "Later task"
+   above. **Do not start this before Slice 1 and Slice 2 have both
+   landed.**
+4. **Then:** Playwright browser E2E for the authentication/
+   password-recovery flows — not started.
+5. **Then:** begin GitHub Issue #3 (Knowledge Ingestion) — not started.

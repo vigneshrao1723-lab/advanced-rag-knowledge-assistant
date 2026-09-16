@@ -1,7 +1,12 @@
 # 0006. Redis-backed distributed rate limiting + deterministic abuse protection
 
-**Status:** Accepted (design only — implementation not started; see
-"Implementation status" at the end of this document)
+**Status:** Accepted (design approved; implementation in progress —
+Slice 1 (Redis engine + supporting infrastructure) is implemented and
+**committed** (`b1f1b00`, not yet pushed/merged); Slice 2 (wiring that
+engine into every `enforce_*_rate_limit` dependency) is implemented but
+**uncommitted, working-tree-only**; the deterministic abuse layer §11/§12
+is not started in either form; see "Implementation status" at the end of
+this document and `HANDOFF.md`)
 **Date:** 2026-09-14
 
 ## 1. Context
@@ -48,9 +53,13 @@ Implementation and actual production use of this design should still be
 weighed against real evidence as it accumulates (see "Implementation
 status").
 
-This document is a **design ADR**. Per the task that produced it, no Redis
-code, dependency, or Docker service has been added — see "Implementation
-status."
+This document is a **design ADR** — it records and justifies the
+architecture, not the fact of its implementation. Per the task that
+produced it, this document itself added no Redis code, dependency, or
+Docker service; implementation is tracked separately, one reviewed slice
+at a time, in `HANDOFF.md` — see "Implementation status" for exactly
+which parts of this design exist in the repository as of the most recent
+slice.
 
 ## 2. Problem
 
@@ -111,9 +120,12 @@ deliberate. This ADR addresses both by design, once Redis is justified.
   deterministic rule evaluated against counters — see §11 for why, and
   the extension point that keeps a future model possible without
   retrofitting.
-- **Not** implementing anything in this phase. No Redis dependency,
-  Docker service, or application code is added by this ADR — see
-  "Implementation status."
+- **Not** implementing anything as part of *this document*. This ADR
+  itself adds no Redis dependency, Docker service, or application code —
+  those were added, once design review was complete, by a separate,
+  reviewed implementation task (tracked in `HANDOFF.md`, currently at
+  "slice 1" — see "Implementation status" for exactly what exists and
+  what doesn't).
 - **Not** rate-limiting every current or future endpoint uniformly. This
   design covers the five endpoints the current limiter already protects
   (`register`, `login`, `refresh`, `forgot-password`, `reset-password`);
@@ -1217,21 +1229,16 @@ task's explicit concern):
 
 - Exact numeric thresholds for every abuse rule (§11: `N`, `M`, `W` per
   rule) and for the strict-throttle bucket's capacity/refill relative to
-  the base bucket (§12).
-- Exact Redis client timeout value (§13) and TTL safety-factor (§10).
-- Whether `register` shares Tier A's fallback instead of failing open
-  (§13's noted alternative).
-- Pinned Redis image version and exact `docker-compose.yml` service
-  definition (§16).
-- **HMAC key location** (§14): a new, dedicated setting (e.g.
-  `RATE_LIMIT_HASH_KEY`) versus reusing `SECRET_KEY` — both are
-  cryptographically sound; this is a key-separation/secret-count
-  trade-off to make at implementation time.
+  the base bucket (§12) — blocked on the abuse layer itself, a later
+  slice.
 - **Trusted-proxy configuration values** (§9a): the actual
   `TRUSTED_PROXY_CIDRS` for any real deployment are unknowable until a
-  hosting target is chosen — not invented here. Whether the hop-walk
-  additionally needs a configured maximum-hop bound (defense against a
-  pathologically long forged header) is also left for implementation.
+  hosting target is chosen — not invented here (the *mechanism* is
+  implemented and wired in — slice 2 — but every real deployment must
+  still set its own value; local dev/CI correctly run with it unset).
+  Whether the hop-walk additionally needs a configured maximum-hop bound
+  (defense against a pathologically long forged header) is also still
+  left for implementation.
 
 **Resolved during adversarial review** (recorded here, not as open items,
 specifically so a reader of this ADR's history knows these were
@@ -1246,11 +1253,34 @@ vector); and whether per-operation rate-limit checks use one Lua script
 per dimension or one per operation across all its dimensions (§8, §10 —
 one per operation, for compound atomicity).
 
-Everything in this section's bulleted list above (not the "resolved"
-paragraph) is a genuine implementation-time decision that should be made
-(and recorded, with rationale, in code comments and/or an ADR addendum)
-when implementation actually starts — not decided speculatively here
-without evidence.
+**Resolved during implementation** (slices 1–2 — recorded here with
+rationale, per this section's own instruction, rather than decided
+silently in code):
+
+- **Redis client timeout value** (§13): `0.05`s (both socket and connect
+  timeout) — `app/core/config.py`'s `redis_socket_timeout_seconds`/
+  `redis_socket_connect_timeout_seconds`, configurable, not hardcoded.
+- **TTL safety factor** (§10): `2.0×` — `RedisTokenBucketLimiter`'s
+  `_TTL_SAFETY_FACTOR` in `app/core/rate_limit.py`.
+- **Pinned Redis image version** (§16): `redis:7.4-alpine`, in both
+  `infra/compose/docker-compose.yml` and `.github/workflows/ci.yml`.
+- **HMAC key location** (§14): reuses `secret_key` by default
+  (`Settings.rate_limit_hash_key_resolved`), with an explicit
+  `RATE_LIMIT_HASH_KEY` override available for deployments that want key
+  separation — chosen to avoid requiring a new secret to be provisioned
+  for every deployment when the threat model (Redis-key dictionary
+  resistance) doesn't strictly need one distinct from JWT signing.
+- **Whether `register` shares Tier A's fallback instead of failing
+  open**: resolved with a distinction the ADR's original wording didn't
+  draw — see the dedicated note in "Implementation status" and
+  `SOLVING.md`'s 2026-09-14 entry on this exact question. Short version:
+  `register` shares Tier A's fallback whenever Redis was never
+  configured at all, and only fails open (Tier B, as originally written)
+  during a genuine mid-request outage of an *already-configured* Redis.
+
+Everything in this section's remaining bulleted list is a genuine
+decision still left for a future slice or a real deployment target —
+not decided speculatively here without evidence.
 
 ## 23. Consequences
 
@@ -1285,28 +1315,77 @@ without evidence.
 
 ## Implementation status
 
-**Four distinct maturity states apply to everything in this ADR, and
+**Five distinct maturity states apply to everything in this ADR, and
 they are not interchangeable — conflating them is exactly the kind of
-overclaim this document works to avoid:**
+overclaim this document works to avoid.** As of this ADR's original
+acceptance, everything below was "Designed" only. **As of implementation
+Slice 1** (commit `b1f1b00` on branch `issue-redis-rate-limiting`,
+**committed, not yet pushed or merged**) **and Slice 2** (same branch,
+on top of that commit, **implemented but uncommitted, working-tree-only**
+— see `HANDOFF.md`), that is no longer uniformly true; the table below is
+now per-component, not a single status for the whole ADR:
 
-| State | Meaning | Status for this ADR |
-|---|---|---|
-| **Designed** | Written down, reasoned about, reviewed (including adversarially) | **Yes** — this document |
-| **Implemented** | Code exists that does what's designed | **No** |
-| **Tested** | Automated tests (unit/integration/security/regression, §17) verify the implementation | **No** — cannot exist before implementation |
-| **Production-validated** | Actually run against real production traffic and shown to behave as designed | **No** — no production deployment of this project exists at all (§1) |
+| State | Meaning |
+|---|---|
+| **Designed** | Written down, reasoned about, reviewed (including adversarially) |
+| **Implemented** | Code exists that does what's designed |
+| **Tested** | Automated tests (unit/integration/security/regression, §17) verify the implementation |
+| **Committed** | The code is part of a real Git commit on this branch — distinct from merely existing in the working tree |
+| **Production-validated** | Actually run against real production traffic and shown to behave as designed |
 
-Nothing in this ADR should be read as claiming any state to the right of
-"Designed." Specifically, as of this ADR's acceptance:
+| Component | Designed | Implemented | Tested | Committed | Production-validated |
+|---|---|---|---|---|---|
+| Redis configuration (§7, `.env.example`/`app/core/config.py`) | Yes | **Yes** (slice 1) | **Yes** (config-validation tests) | **Yes** (`b1f1b00`) | No |
+| Redis connection abstraction (`app/core/redis_client.py`) | Yes | **Yes** (slice 1) | **Yes** (real-Redis tests) | **Yes** (`b1f1b00`) | No |
+| Redis key namespace + HMAC-SHA256 identifier (§14, `app/core/redis_keys.py`) | Yes | **Yes** (slice 1) | **Yes** | **Yes** (`b1f1b00`) | No |
+| Trusted-proxy IP resolution (§9a, `app/core/ip_resolution.py`) | Yes | **Yes** (slice 1) | **Yes** | **Yes** (`b1f1b00`) | No — the function exists and is committed, but is **not called from any endpoint in the committed state**; slice 2 would wire it in (see below) |
+| Multi-key atomic Lua token-bucket engine (§8/§10, `RedisTokenBucketLimiter`/`DimensionSpec` in `app/core/rate_limit.py`) | Yes | **Yes** (slice 1) | **Yes** — including the direct multi-key-atomicity and concurrency regression tests §17 names, against a real Redis instance | **Yes** (`b1f1b00`) | No |
+| `redis` Docker Compose/CI service (§16) | Yes | **Yes** (slice 1) | N/A (infra, not app logic) | **Yes** (`b1f1b00`) | No |
+| **Endpoint wiring** — every `enforce_*_rate_limit` dependency attempts the Redis engine above first | Yes | **Yes** (slice 2) | **Yes** — `tests/test_rate_limit_wiring.py` (real-Redis key creation via a live endpoint call, Tier A/B failure-policy HTTP tests, spoofed-header-ignored-by-default) plus every pre-existing `test_auth.py`/`test_password_reset.py` rate-limit assertion, now exercised through the live Redis path | **No** — implemented and tested only in the uncommitted Slice 2 working tree; every endpoint's committed behavior still calls only the in-process limiter | No |
+| Redis failure policy in the actual request path (§13's Tier A/B fallback logic, `_check_or_fallback()`) | Yes — with one sub-decision resolved during implementation, see below | **Yes** (slice 2) | **Yes** — unit-level via dependency override, and live against the real Docker Compose stack (Redis stopped mid-session, both tiers verified, then Redis restarted and enforcement resumed without a restart) | **No** — uncommitted, working-tree-only, same as endpoint wiring above | No |
+| Deterministic abuse/risk layer (§11–§12, `AbuseDecisionEngine`) | Yes | **No** | No | No | No |
+| `AuditEvent.RATE_LIMITED` / abuse-escalation audit emission (§15) | Yes | **No** | No | No | No |
 
-- No Redis dependency has been added to `backend/pyproject.toml`.
-- No `redis` service exists in `infra/compose/docker-compose.yml`.
-- No code implementing the Lua script, token bucket, abuse rules, or
-  failure-policy fallback exists anywhere in this repository.
-- No tests for any of the above exist.
-- The existing `FixedWindowRateLimiter` (§5) remains the only rate
-  limiter actually running, unchanged, exactly as it was before this ADR.
+**§13's Tier B sub-decision, resolved during slice 2 (recorded here per
+§22's instruction that open decisions get their rationale recorded
+alongside the code, not decided silently):** §13 left open "whether
+`register` should actually share Tier A's fallback instead" of failing
+open. Implementation distinguishes "Redis was never configured for this
+deployment" (`get_redis_client()` returns `None` — always falls back to
+`FixedWindowRateLimiter`, every operation, including `register`) from "Redis
+is configured but is currently unreachable" (`RedisUnavailableError` —
+where Tier A/B's documented policies apply as written). Rationale: since
+`REDIS_URL` defaults to unset, applying Tier B's literal fail-open to the
+"never configured" case would leave `register` with zero rate limiting
+by default in every environment that hasn't explicitly opted into Redis
+— a regression of `docs/SECURITY.md` principle 8 for the *default*
+state, not an actual outage. Full reasoning and verification:
+`SOLVING.md`'s 2026-09-14 "ADR 0006 §13's Tier B..." entry.
 
-Implementation is the next task, tracked in `HANDOFF.md`, and begins only
-on explicit go-ahead — not as a continuation of the work that produced
-this ADR.
+**What this means in practice, stated plainly:** Slice 2's code — every
+`enforce_*_rate_limit` dependency attempting the Redis engine first,
+using ADR §9's exact per-operation dimensions (IP always; account via
+keyed-HMAC email for `login`/`forgot-password`; session ID, parsed from
+the refresh-token cookie without a database round-trip, for `refresh`),
+falling back to `FixedWindowRateLimiter` per the resolved Tier A/B policy
+above — **exists, is implemented, and is tested, but is not committed.**
+It sits as uncommitted working-tree changes on top of the Slice 1 commit
+(`b1f1b00`). **Until Slice 2 is itself reviewed and committed, it is not
+a real, observable change to any authentication endpoint's rate-limiting
+behavior in this repository's actual history** — every endpoint's
+*committed* behavior is still exactly the pre-Redis in-process limiter,
+unchanged. Slice 2's behavior has been verified both by automated tests
+and live against the running Docker Compose stack (including a genuine
+Redis outage and recovery), which establishes it is *correct*, not that
+it is *live*. What is **not** yet true in either committed or uncommitted
+form: the deterministic abuse/risk layer (§11/§12) does not exist, so no
+`STRICT_THROTTLE`/`TEMPORARY_BLOCK` escalation is possible, and
+`AuditEvent.RATE_LIMITED` is still never emitted (§15). Nothing in this
+ADR should be read as claiming **Production-validated** for any
+component: no production deployment of this project exists at all (§1).
+
+Remaining work (tracked in `HANDOFF.md`'s "Exact next recommended
+action"): push and open a PR for Slice 1; after it merges, review and
+commit Slice 2; only after that, the deterministic abuse layer (§11/§12)
+and its audit-emission wiring (§15) — its own reviewed unit of work, not
+folded into slice 2, and not to be started before Slice 1/2 have landed.
