@@ -103,6 +103,52 @@ with invented history of either kind.
 
 ## [Unreleased — committed]
 
+### 2026-09-15 — `feat: implement distributed Redis rate limiting foundation` (b1f1b00)
+
+*(Branch `issue-redis-rate-limiting`, committed locally — **not yet
+pushed, no PR open**. See `HANDOFF.md` for exact state.)*
+
+Implements the parts of [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
+that don't require touching any endpoint, per this slice's explicit
+scope — no authentication endpoint's behavior changes yet:
+
+- Added the `redis` Python dependency (`backend/pyproject.toml`,
+  `backend/uv.lock`).
+- New Redis settings in `backend/app/core/config.py`: `REDIS_URL`
+  (optional), explicit socket/connect timeouts (default 50ms, ADR §13),
+  `TRUSTED_PROXY_CIDRS` (default empty, ADR §9a).
+- New `backend/app/core/redis_client.py`: connection abstraction, an
+  exception-free `is_redis_available()` check, `RedisUnavailableError`.
+- New `backend/app/core/redis_keys.py`: centralized rate-limit key
+  construction and an HMAC-SHA256 email identifier (ADR §14).
+- New `backend/app/core/ip_resolution.py`: trusted-proxy-aware client IP
+  resolution (ADR §9a) — not yet called from any endpoint.
+- Extended `backend/app/core/rate_limit.py` with `RedisTokenBucketLimiter`
+  / `DimensionSpec` / `TokenBucketResult` — the ADR §8/§10 multi-key
+  atomic Lua token-bucket engine (one `EVAL` per operation, over every
+  dimension key that operation has, all-or-nothing). The existing
+  `FixedWindowRateLimiter` and every `enforce_*_rate_limit` function are
+  unchanged; nothing calls the new engine yet.
+- Added a pinned, healthcheck-gated `redis:7.4-alpine` service to
+  `infra/compose/docker-compose.yml` and `.github/workflows/ci.yml` (ADR
+  §16 — local dev/CI only); `.env.example` documents the new variables.
+- 51 new backend tests (170 total, up from 119), including real-Redis
+  integration tests that directly regression-test the multi-key
+  atomicity property ADR 0006 §17 names (sequential and concurrent).
+  `ruff`/`mypy` clean; full suite passes against real Postgres + real
+  Redis. Independently re-validated in an isolated worktree immediately
+  before this commit, from the staged tree alone.
+- Documented a non-obvious Redis/Lua gotcha in `SOLVING.md`: Lua scripts
+  silently truncate a returned float to an integer over RESP2, so the
+  token-bucket script's retry-after value is computed and returned in
+  integer milliseconds, not fractional seconds.
+- Does **not** include Slice 2 (endpoint wiring) — that remains
+  uncommitted working-tree-only on this branch, per an explicit
+  Git-separation task. `PROJECT_STATE.md`/`HANDOFF.md`/`docs/SECURITY.md`/
+  ADR 0006's "Implementation status" are updated separately to reflect
+  this checkpoint accurately (see those files and their own history for
+  the exact correction).
+
 ### 2026-09-14 — `feat: complete secure cookie auth and password recovery` (864d783)
 
 *(GitHub Issue #2 checkpoint. Opened as PR #10, verified green on GitHub

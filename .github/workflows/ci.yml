@@ -31,9 +31,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # ADR 0006 §16 — real Redis for the token-bucket engine's own
+      # integration tests (backend/tests/test_redis_*.py); not yet
+      # consumed by any request path (see docs/DECISIONS/0006).
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql+psycopg://raguser:ragpass@localhost:5432/ragdb
       SECRET_KEY: ci-test-secret-key-not-for-production
+      REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
 
