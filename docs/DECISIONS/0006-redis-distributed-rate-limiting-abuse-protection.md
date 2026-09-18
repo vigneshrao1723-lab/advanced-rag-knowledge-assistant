@@ -1,12 +1,12 @@
 # 0006. Redis-backed distributed rate limiting + deterministic abuse protection
 
-**Status:** Accepted (design approved; implementation in progress —
-Slice 1 (Redis engine + supporting infrastructure) is implemented and
-**committed** (`b1f1b00`, not yet pushed/merged); Slice 2 (wiring that
-engine into every `enforce_*_rate_limit` dependency) is implemented but
-**uncommitted, working-tree-only**; the deterministic abuse layer §11/§12
-is not started in either form; see "Implementation status" at the end of
-this document and `HANDOFF.md`)
+**Status:** Accepted (design approved; implementation in progress — Slice
+1, the Redis engine + supporting infrastructure, is implemented,
+**committed, and merged into `main`** as squash commit `46ef03b` via PR
+#11; Slice 2, wiring that engine into every `enforce_*_rate_limit`
+dependency, is implemented but **uncommitted, working-tree-only**; the
+deterministic abuse layer §11/§12 is not started in either form; see
+"Implementation status" at the end of this document and `HANDOFF.md`)
 **Date:** 2026-09-14
 
 ## 1. Context
@@ -1319,30 +1319,31 @@ not decided speculatively here without evidence.
 they are not interchangeable — conflating them is exactly the kind of
 overclaim this document works to avoid.** As of this ADR's original
 acceptance, everything below was "Designed" only. **As of implementation
-Slice 1** (commit `b1f1b00` on branch `issue-redis-rate-limiting`,
-**committed, not yet pushed or merged**) **and Slice 2** (same branch,
-on top of that commit, **implemented but uncommitted, working-tree-only**
-— see `HANDOFF.md`), that is no longer uniformly true; the table below is
-now per-component, not a single status for the whole ADR:
+Slice 1** (squash commit `46ef03b`, **merged into `main` via PR #11**)
+**and Slice 2** (branch `issue-redis-rate-limiting-slice-2`, on top of
+that merge, **implemented but uncommitted, working-tree-only** — see
+`HANDOFF.md`), that is no longer uniformly true; the table below is now
+per-component, not a single status for the whole ADR:
 
 | State | Meaning |
 |---|---|
 | **Designed** | Written down, reasoned about, reviewed (including adversarially) |
 | **Implemented** | Code exists that does what's designed |
 | **Tested** | Automated tests (unit/integration/security/regression, §17) verify the implementation |
-| **Committed** | The code is part of a real Git commit on this branch — distinct from merely existing in the working tree |
+| **Committed** | The code is part of a real Git commit — distinct from merely existing in the working tree — and, for Slice 1, merged into `main` |
 | **Production-validated** | Actually run against real production traffic and shown to behave as designed |
 
 | Component | Designed | Implemented | Tested | Committed | Production-validated |
 |---|---|---|---|---|---|
-| Redis configuration (§7, `.env.example`/`app/core/config.py`) | Yes | **Yes** (slice 1) | **Yes** (config-validation tests) | **Yes** (`b1f1b00`) | No |
-| Redis connection abstraction (`app/core/redis_client.py`) | Yes | **Yes** (slice 1) | **Yes** (real-Redis tests) | **Yes** (`b1f1b00`) | No |
-| Redis key namespace + HMAC-SHA256 identifier (§14, `app/core/redis_keys.py`) | Yes | **Yes** (slice 1) | **Yes** | **Yes** (`b1f1b00`) | No |
-| Trusted-proxy IP resolution (§9a, `app/core/ip_resolution.py`) | Yes | **Yes** (slice 1) | **Yes** | **Yes** (`b1f1b00`) | No — the function exists and is committed, but is **not called from any endpoint in the committed state**; slice 2 would wire it in (see below) |
-| Multi-key atomic Lua token-bucket engine (§8/§10, `RedisTokenBucketLimiter`/`DimensionSpec` in `app/core/rate_limit.py`) | Yes | **Yes** (slice 1) | **Yes** — including the direct multi-key-atomicity and concurrency regression tests §17 names, against a real Redis instance | **Yes** (`b1f1b00`) | No |
-| `redis` Docker Compose/CI service (§16) | Yes | **Yes** (slice 1) | N/A (infra, not app logic) | **Yes** (`b1f1b00`) | No |
-| **Endpoint wiring** — every `enforce_*_rate_limit` dependency attempts the Redis engine above first | Yes | **Yes** (slice 2) | **Yes** — `tests/test_rate_limit_wiring.py` (real-Redis key creation via a live endpoint call, Tier A/B failure-policy HTTP tests, spoofed-header-ignored-by-default) plus every pre-existing `test_auth.py`/`test_password_reset.py` rate-limit assertion, now exercised through the live Redis path | **No** — implemented and tested only in the uncommitted Slice 2 working tree; every endpoint's committed behavior still calls only the in-process limiter | No |
+| Redis configuration (§7, `.env.example`/`app/core/config.py`) | Yes | **Yes** (slice 1) | **Yes** (config-validation tests) | **Yes** — merged (`46ef03b`) | No |
+| Redis connection abstraction (`app/core/redis_client.py`) | Yes | **Yes** (slice 1) | **Yes** (real-Redis tests) | **Yes** — merged (`46ef03b`) | No |
+| Redis key namespace + HMAC-SHA256 identifier (§14, `app/core/redis_keys.py`) | Yes | **Yes** (slice 1) | **Yes** | **Yes** — merged (`46ef03b`) | No |
+| Trusted-proxy IP resolution (§9a, `app/core/ip_resolution.py`) | Yes | **Yes** (slice 1) | **Yes** | **Yes** — merged (`46ef03b`) | No — the function exists and is merged, but is **not called from any endpoint in the committed state**; Slice 2 (below, still uncommitted) is what wires it in |
+| Multi-key atomic Lua token-bucket engine (§8/§10, `RedisTokenBucketLimiter`/`DimensionSpec` in `app/core/rate_limit.py`) | Yes | **Yes** (slice 1) | **Yes** — including the direct multi-key-atomicity and concurrency regression tests §17 names, against a real Redis instance | **Yes** — merged (`46ef03b`) | No |
+| `redis` Docker Compose/CI service (§16) | Yes | **Yes** (slice 1) | N/A (infra, not app logic) | **Yes** — merged (`46ef03b`) | No |
+| **Endpoint wiring** — every `enforce_*_rate_limit` dependency attempts the Redis engine above first | Yes | **Yes** (slice 2) | **Yes** — `tests/test_rate_limit_wiring.py` (13 tests: real-Redis key creation for `login`/`refresh`/`forgot-password`, an IP-only proof for `reset-password`, Tier A/B failure-policy HTTP tests for every endpoint, spoofed-header-ignored-by-default, an endpoint-driven multi-dimension atomicity test, a cross-user isolation test) plus every pre-existing `test_auth.py`/`test_password_reset.py` rate-limit assertion, now exercised through the live Redis path | **No** — implemented and tested only in the uncommitted Slice 2 working tree; every endpoint's committed (`main`) behavior still calls only the in-process limiter | No |
 | Redis failure policy in the actual request path (§13's Tier A/B fallback logic, `_check_or_fallback()`) | Yes — with one sub-decision resolved during implementation, see below | **Yes** (slice 2) | **Yes** — unit-level via dependency override, and live against the real Docker Compose stack (Redis stopped mid-session, both tiers verified, then Redis restarted and enforcement resumed without a restart) | **No** — uncommitted, working-tree-only, same as endpoint wiring above | No |
+| Redis-failure fallback observability (§13's "Mechanics common to both tiers" logging requirement) | Yes | **Yes** (slice 2 review-fix pass) — `_log_redis_fallback()` in `app/core/rate_limit.py`, `app.rate_limit` logger, `operation`/`policy` fields only | **Yes** — implicitly exercised by the existing Tier A/B fallback tests; no dedicated log-content assertion test exists | **No** — uncommitted, working-tree-only | No |
 | Deterministic abuse/risk layer (§11–§12, `AbuseDecisionEngine`) | Yes | **No** | No | No | No |
 | `AuditEvent.RATE_LIMITED` / abuse-escalation audit emission (§15) | Yes | **No** | No | No | No |
 
@@ -1368,24 +1369,29 @@ using ADR §9's exact per-operation dimensions (IP always; account via
 keyed-HMAC email for `login`/`forgot-password`; session ID, parsed from
 the refresh-token cookie without a database round-trip, for `refresh`),
 falling back to `FixedWindowRateLimiter` per the resolved Tier A/B policy
-above — **exists, is implemented, and is tested, but is not committed.**
-It sits as uncommitted working-tree changes on top of the Slice 1 commit
-(`b1f1b00`). **Until Slice 2 is itself reviewed and committed, it is not
-a real, observable change to any authentication endpoint's rate-limiting
-behavior in this repository's actual history** — every endpoint's
-*committed* behavior is still exactly the pre-Redis in-process limiter,
-unchanged. Slice 2's behavior has been verified both by automated tests
-and live against the running Docker Compose stack (including a genuine
-Redis outage and recovery), which establishes it is *correct*, not that
-it is *live*. What is **not** yet true in either committed or uncommitted
-form: the deterministic abuse/risk layer (§11/§12) does not exist, so no
-`STRICT_THROTTLE`/`TEMPORARY_BLOCK` escalation is possible, and
-`AuditEvent.RATE_LIMITED` is still never emitted (§15). Nothing in this
-ADR should be read as claiming **Production-validated** for any
-component: no production deployment of this project exists at all (§1).
+above — **exists, is implemented, and is tested (183 tests in the
+working tree, including this checkpoint's 8 additional HTTP-level tests
+and structured fallback logging), but is not committed.** It sits as
+uncommitted working-tree changes on `issue-redis-rate-limiting-slice-2`,
+on top of the merged Slice 1 (`46ef03b`). **Until Slice 2 is itself
+reviewed and committed, it is not a real, observable change to any
+authentication endpoint's rate-limiting behavior in this repository's
+actual history** — every endpoint's *committed* (`main`) behavior is
+still exactly the pre-Redis in-process limiter, unchanged. Slice 2's
+behavior has been verified both by automated tests and, for the original
+wiring, live against the running Docker Compose stack in an earlier
+checkpoint (including a genuine Redis outage and recovery), which
+establishes it is *correct*, not that it is *live*. What is **not** yet
+true in either committed or uncommitted form: the deterministic
+abuse/risk layer (§11/§12) does not exist, so no `STRICT_THROTTLE`/
+`TEMPORARY_BLOCK` escalation is possible, and `AuditEvent.RATE_LIMITED`
+is still never emitted (§15). Nothing in this ADR should be read as
+claiming **Production-validated** for any component: no production
+deployment of this project exists at all (§1).
 
 Remaining work (tracked in `HANDOFF.md`'s "Exact next recommended
-action"): push and open a PR for Slice 1; after it merges, review and
-commit Slice 2; only after that, the deterministic abuse layer (§11/§12)
-and its audit-emission wiring (§15) — its own reviewed unit of work, not
-folded into slice 2, and not to be started before Slice 1/2 have landed.
+action"): review and commit Slice 2, push it, and open a PR into `main`
+— mirroring exactly how Slice 1 was landed; only after that, the
+deterministic abuse layer (§11/§12) and its audit-emission wiring (§15)
+— its own reviewed unit of work, not folded into slice 2, and not to be
+started before Slice 2 has landed.

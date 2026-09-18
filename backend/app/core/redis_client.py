@@ -6,14 +6,14 @@ throughout the application; everything that needs Redis goes through this
 module (for the connection itself) and `app.core.rate_limit`
 (`RedisTokenBucketLimiter`, for the actual rate-limit operations).
 
-Redis is optional infrastructure at this point in the project (see
-`docs/SECURITY.md` "Rate limiting approach"): nothing in the running
-application currently depends on it (the Redis-backed limiter is not wired
-into any endpoint yet — ADR 0006 "Implementation status"). `REDIS_URL`
-being unset simply means `get_redis_client()` returns `None`; callers must
-treat that identically to "Redis is unreachable" and fall back per ADR
-0006 §13's failure policy — never let a raw `redis` exception escape past
-this module's boundary.
+Redis is optional infrastructure (see `docs/SECURITY.md` "Rate limiting
+approach"): every `enforce_*_rate_limit` dependency (`app/core/rate_limit.py`)
+attempts the Redis-backed limiter through this module first, falling back
+to the in-process limiter when it isn't configured or reachable (ADR 0006
+§13). `REDIS_URL` being unset simply means `get_redis_client()` returns
+`None`; callers must treat that identically to "Redis is unreachable" and
+fall back per ADR 0006 §13's failure policy — never let a raw `redis`
+exception escape past this module's boundary.
 """
 
 from __future__ import annotations

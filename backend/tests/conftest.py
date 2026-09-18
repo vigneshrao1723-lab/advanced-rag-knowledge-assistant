@@ -4,6 +4,7 @@ import os
 from collections.abc import Callable, Iterator
 
 import pytest
+import redis
 from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI
@@ -18,6 +19,12 @@ os.environ.setdefault(
     "DATABASE_URL", "postgresql+psycopg://raguser:ragpass@localhost:5432/ragdb"
 )
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-pytest-only")
+# Real Redis, per the same "no mock substitute for the real datastore"
+# precedent ADR 0002 established for PostgreSQL, extended to Redis by ADR
+# 0006 §16 — a mock cannot verify the atomicity/concurrency properties
+# the Redis-backed rate limiter depends on. Only overridden if the
+# environment doesn't already set it (CI/Docker Compose do).
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 from app.core.db import engine, get_db  # noqa: E402
 from app.core.rate_limit import (  # noqa: E402
@@ -27,6 +34,7 @@ from app.core.rate_limit import (  # noqa: E402
     register_rate_limiter,
     reset_password_rate_limiter,
 )
+from app.core.redis_client import get_redis_client  # noqa: E402
 from app.main import create_app  # noqa: E402
 
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -63,12 +71,30 @@ def db_session() -> Iterator[DbSession]:
 def _reset_rate_limiters() -> None:
     """The TestClient always presents the same fake client host, so without
     a reset every test would share one rate-limit bucket per limiter —
-    tests that don't specifically exercise rate limiting shouldn't trip it."""
+    tests that don't specifically exercise rate limiting shouldn't trip it.
+
+    Since `enforce_*_rate_limit` now attempts the Redis-backed limiter
+    first (ADR 0006 §13, implementation slice 2), this must also clear
+    the `rl:*` keys a real Redis accumulates across tests — resetting
+    only the in-process `FixedWindowRateLimiter` instances is no longer
+    sufficient once Redis is reachable during the test run."""
     login_rate_limiter.reset()
     register_rate_limiter.reset()
     refresh_rate_limiter.reset()
     forgot_password_rate_limiter.reset()
     reset_password_rate_limiter.reset()
+
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        try:
+            for key in redis_client.scan_iter(match="rl:*"):
+                redis_client.delete(key)
+        except redis.RedisError:
+            # Redis is configured but unreachable during this test run —
+            # every `enforce_*_rate_limit` dependency already falls back
+            # to the (just-reset) in-process limiter in that case (ADR
+            # 0006 §13), so there is nothing Redis-side left to clean.
+            pass
 
 
 @pytest.fixture

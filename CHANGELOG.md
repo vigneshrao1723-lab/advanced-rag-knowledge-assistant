@@ -10,6 +10,78 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
+### 2026-09-18 — Redis rate limiting: implementation slice 2 (wire the engine into every endpoint)
+
+*(Branch `issue-redis-rate-limiting-slice-2`, on top of the merged Slice
+1 (`46ef03b`, PR #11) — not yet committed/pushed, no PR open. See
+`HANDOFF.md` for exact state.)*
+
+Wires the Redis-backed engine built in slice 1 into every
+`enforce_*_rate_limit` dependency (`backend/app/core/rate_limit.py`),
+per [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
+§6/§9/§13. This **is** a real, observable change to every authentication
+endpoint's rate-limiting behavior:
+
+- `register`, `login`, `refresh`, `forgot-password`, `reset-password` all
+  now attempt `RedisTokenBucketLimiter` first, using ADR §9's exact
+  per-operation dimensions (IP via the new trusted-proxy-aware
+  `resolve_client_ip()`; HMAC-hashed email for `login`/`forgot-password`'s
+  account dimension; the refresh-token cookie's session ID — no DB
+  lookup — for `refresh`), falling back to the existing
+  `FixedWindowRateLimiter` per ADR §13's operation-aware policy.
+- **Resolved one of ADR §13/§22's explicitly-open implementation
+  decisions, with rationale recorded in the ADR, `SOLVING.md`, and code**:
+  an *unconfigured* Redis (`REDIS_URL` unset — today's default
+  everywhere) always falls back to the in-process limiter, for every
+  operation including `register`; the ADR's literal Tier B fail-open is
+  reserved for a genuine mid-request outage of an *already-configured*
+  Redis. Implementing the literal default would have made `register`
+  unprotected by default in every environment today.
+- New `rate_limit_hash_key` setting (`backend/app/core/config.py`) —
+  resolves ADR §14/§22's "HMAC key location" open decision by reusing
+  `SECRET_KEY` unless explicitly overridden.
+- Fixed a real test-isolation gap this wiring exposed: `conftest.py`'s
+  `_reset_rate_limiters` fixture only reset the in-process limiters, not
+  the `rl:*` Redis keys every test now writes through the live wiring —
+  52 previously-passing tests failed until this was fixed. Full writeup
+  in `SOLVING.md`.
+- 5 new HTTP-level tests (`backend/tests/test_rate_limit_wiring.py`,
+  175 total up from 170): real-Redis key creation via a live endpoint
+  call, Tier A/Tier B failure-policy behavior via dependency override,
+  the unconfigured-vs-unreachable distinction, spoofed
+  `X-Forwarded-For` ignored by default. `ruff`/`mypy` clean; full suite
+  re-run 3 times with no flakiness.
+- Verified live against the real Docker Compose stack: inspected the
+  exact Redis keys a live login created (`redis-cli --scan`), confirmed
+  login capacity enforcement across a real session, confirmed
+  `/api/v1/health/ready` stays independent of Redis, and exercised a
+  genuine Redis outage and recovery mid-session — `register` failed open
+  only during the outage, `login` still hit `429` via the fallback
+  limiter during that same outage, and enforcement resumed automatically
+  once Redis came back, with no process restart.
+- Does **not** include the deterministic abuse-detection layer (ADR
+  §11/§12) — still not started, see `HANDOFF.md`.
+
+**2026-09-18 update — read-only security/architecture review and fixes**
+(still within this same uncommitted slice): a dedicated review of the
+above found 0 P0, 3 P1, 3 P2, 2 P3 findings. Fixed, still uncommitted:
+structured logging on the Redis-failure fallback path
+(`_log_redis_fallback()`, ADR §13's own requirement — `operation`/
+`policy` fields only, never a request-derived value); corrected stale
+docstrings in `redis_client.py`/`ip_resolution.py` ("not wired into any
+endpoint yet", false once this slice lands); 8 new HTTP-level tests in
+`backend/tests/test_rate_limit_wiring.py` (5 → 13) covering `refresh`/
+`forgot-password`/`reset-password` Redis-key creation and Tier A
+fallback (previously only `login`/`register` had them), an
+endpoint-driven multi-dimension atomicity regression test for `login`,
+and a cross-user account-isolation test. **183/183 pass** (170 from the
+merged Slice 1 + 13 from this file), `ruff`/`mypy` clean, re-run 3 times
+with no flakiness. This documentation checkpoint (`PROJECT_STATE.md`,
+`HANDOFF.md`, `docs/SECURITY.md`, ADR 0006) was also corrected in the
+same pass to stop describing Slice 1 as uncommitted — it merged into
+`main` as `46ef03b` via PR #11 since the last time these files were
+touched.
+
 ### 2026-09-11 — Application Foundation: backend/frontend/infra scaffold, Docker fixes, CI workflow
 
 - Backend (`backend/`): FastAPI scaffold with configuration
@@ -103,51 +175,40 @@ with invented history of either kind.
 
 ## [Unreleased — committed]
 
-### 2026-09-15 — `feat: implement distributed Redis rate limiting foundation` (b1f1b00)
+### 2026-09-15 — `feat: implement distributed Redis rate limiting foundation` (b1f1b00), merged as `46ef03b`
 
-*(Branch `issue-redis-rate-limiting`, committed locally — **not yet
-pushed, no PR open**. See `HANDOFF.md` for exact state.)*
+*(Branch `issue-redis-rate-limiting`. Reconciled with a documentation
+checkpoint, `docs: reconcile Redis Slice 1 project state` (`c8aa2be`),
+pushed, opened as **PR #11**, verified green on GitHub Actions CI (3/3
+checks), and **merged into `main` as squash commit `46ef03b`** — a
+single-parent squash merge (parent `7e439d2`), so `b1f1b00`/`c8aa2be`
+are not themselves ancestors of `46ef03b`, but its tree content is
+byte-identical to `c8aa2be`'s (`git diff c8aa2be 46ef03b` is empty).
+`main` and `origin/main` are both at `46ef03b`. The `issue-redis-rate-limiting`
+branch still exists locally and on `origin` (not auto-deleted) but has
+no content not already in `main`; Slice 2 work continues on a new
+branch, `issue-redis-rate-limiting-slice-2`, cut from the merged `main`.)*
 
-Implements the parts of [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
-that don't require touching any endpoint, per this slice's explicit
-scope — no authentication endpoint's behavior changes yet:
-
-- Added the `redis` Python dependency (`backend/pyproject.toml`,
-  `backend/uv.lock`).
-- New Redis settings in `backend/app/core/config.py`: `REDIS_URL`
-  (optional), explicit socket/connect timeouts (default 50ms, ADR §13),
-  `TRUSTED_PROXY_CIDRS` (default empty, ADR §9a).
-- New `backend/app/core/redis_client.py`: connection abstraction, an
-  exception-free `is_redis_available()` check, `RedisUnavailableError`.
-- New `backend/app/core/redis_keys.py`: centralized rate-limit key
-  construction and an HMAC-SHA256 email identifier (ADR §14).
-- New `backend/app/core/ip_resolution.py`: trusted-proxy-aware client IP
-  resolution (ADR §9a) — not yet called from any endpoint.
-- Extended `backend/app/core/rate_limit.py` with `RedisTokenBucketLimiter`
-  / `DimensionSpec` / `TokenBucketResult` — the ADR §8/§10 multi-key
-  atomic Lua token-bucket engine (one `EVAL` per operation, over every
-  dimension key that operation has, all-or-nothing). The existing
-  `FixedWindowRateLimiter` and every `enforce_*_rate_limit` function are
-  unchanged; nothing calls the new engine yet.
-- Added a pinned, healthcheck-gated `redis:7.4-alpine` service to
-  `infra/compose/docker-compose.yml` and `.github/workflows/ci.yml` (ADR
-  §16 — local dev/CI only); `.env.example` documents the new variables.
-- 51 new backend tests (170 total, up from 119), including real-Redis
-  integration tests that directly regression-test the multi-key
-  atomicity property ADR 0006 §17 names (sequential and concurrent).
-  `ruff`/`mypy` clean; full suite passes against real Postgres + real
-  Redis. Independently re-validated in an isolated worktree immediately
-  before this commit, from the staged tree alone.
-- Documented a non-obvious Redis/Lua gotcha in `SOLVING.md`: Lua scripts
-  silently truncate a returned float to an integer over RESP2, so the
-  token-bucket script's retry-after value is computed and returned in
-  integer milliseconds, not fractional seconds.
-- Does **not** include Slice 2 (endpoint wiring) — that remains
-  uncommitted working-tree-only on this branch, per an explicit
-  Git-separation task. `PROJECT_STATE.md`/`HANDOFF.md`/`docs/SECURITY.md`/
-  ADR 0006's "Implementation status" are updated separately to reflect
-  this checkpoint accurately (see those files and their own history for
-  the exact correction).
+Adds the Redis-backed distributed rate-limiting foundation designed in
+ADR 0006 (§8/§10/§14), without wiring it into any endpoint yet: the
+multi-key atomic Lua token-bucket engine (`RedisTokenBucketLimiter`,
+`DimensionSpec`), a Redis connection abstraction with an exception-free
+availability check, centralized rate-limit key construction with a
+keyed-HMAC (not plain-hash) email identifier, and a trusted-proxy-aware
+IP resolver (secure-by-default: `X-Forwarded-For` ignored unless the
+peer is within a configured trusted CIDR). The existing in-process
+`FixedWindowRateLimiter` and every `enforce_*_rate_limit` function are
+byte-for-byte unchanged and remain what every endpoint actually uses —
+still true as merged. Also adds the `redis` dependency, a pinned
+`redis:7.4-alpine` Docker Compose/CI service, and 51 new tests (119 →
+170) covering config validation, the Lua engine's atomicity/concurrency/
+TTL/cost semantics (including the multi-key all-or-nothing regression
+test for the partial-consumption race found during ADR review), and
+trusted-proxy IP resolution. Independently validated in an isolated
+worktree before the commit: 170/170 tests pass against real Postgres and
+real Redis, `ruff`/`mypy` clean. Endpoint wiring (Slice 2) was
+deliberately kept out of this PR — see the "implementation slice 2"
+entry above for its own, separate status.
 
 ### 2026-09-14 — `feat: complete secure cookie auth and password recovery` (864d783)
 
