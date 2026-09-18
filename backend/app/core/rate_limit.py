@@ -4,21 +4,47 @@
 project's rate limiting since Issue #2 — correct for the single-process
 deployment this project runs today (see
 infra/docker/backend.Dockerfile's entrypoint: one `uvicorn` process, no
-`--workers`). Every `enforce_*_rate_limit` function below is unchanged
-from that behavior in this slice.
+`--workers`). It remains the **fallback** implementation (ADR 0006 §6,
+§13), not dead code: every `enforce_*_rate_limit` dependency below falls
+back to it whenever Redis is unconfigured or unreachable.
 
-`RedisTokenBucketLimiter` (ADR 0006 §8/§10) is the distributed engine
-this slice adds: one atomic Lua (`EVAL`) invocation per *operation*, over
-every dimension key that operation has, evaluating every dimension
-before writing any of them, so a rejected request never partially
-consumes a dimension it happened to pass. **Not wired into any endpoint
-yet** — same scope boundary as `app/core/redis_client.py` and
-`app/core/ip_resolution.py`; wiring this engine into
-`enforce_*_rate_limit` is a separate, later, reviewed slice.
+`RedisTokenBucketLimiter` (ADR 0006 §8/§10) is the distributed engine:
+one atomic Lua (`EVAL`) invocation per *operation*, over every dimension
+key that operation has, evaluating every dimension before writing any of
+them, so a rejected request never partially consumes a dimension it
+happened to pass.
+
+**Slice 2 (this revision): the Redis engine is now wired into every
+`enforce_*_rate_limit` dependency**, per ADR 0006 §6's flow and §13's
+operation-aware failure policy — see `_check_or_fallback()` and each
+`enforce_*` function below for exactly how. The deterministic abuse layer
+(ADR 0006 §11/§12) is a separate, later slice and is not implemented
+here.
+
+**Failure-policy interpretation, recorded here because ADR 0006 §13
+explicitly left it open ("whether register should actually share Tier
+A's fallback instead is a reasonable alternative"):** this implementation
+distinguishes "Redis was never configured for this deployment"
+(`get_redis_client()` returns `None`) from "Redis is configured but is
+currently unreachable" (`RedisTokenBucketLimiter.check_all()` raises
+`RedisUnavailableError`). Only the second case triggers ADR §13's
+per-tier policy (Tier A falls back to `FixedWindowRateLimiter`; Tier B —
+`register` — fails open). The first case *always* falls back to
+`FixedWindowRateLimiter`, for every operation including `register`,
+identically to this module's pre-slice-2 behavior. Rationale: `REDIS_URL`
+defaults to unset, so treating "never configured" the same as "Tier B's
+mid-outage fail-open" would mean `register` has *zero* rate limiting by
+default in every environment that hasn't explicitly opted into Redis —
+an unacceptable regression of `docs/SECURITY.md` principle 8 for a
+default state, not an outage. Tier B's genuine fail-open behavior is
+reserved for its intended scenario: a deployment that *has* chosen
+Redis-backed limiting hitting a transient outage ("a Redis blip", per the
+ADR's own phrasing).
 """
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from collections import defaultdict
@@ -26,9 +52,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import redis
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 
-from app.core.redis_client import RedisUnavailableError
+from app.core.config import get_settings
+from app.core.cookies import REFRESH_TOKEN_COOKIE
+from app.core.ip_resolution import resolve_client_ip
+from app.core.redis_client import RedisUnavailableError, get_redis_client
+from app.core.redis_keys import hash_account_identifier, rate_limit_key
+from app.core.security import parse_refresh_token
+
+logger = logging.getLogger("app.rate_limit")
 
 
 class FixedWindowRateLimiter:
@@ -36,6 +69,14 @@ class FixedWindowRateLimiter:
         self._limit = limit
         self._window_seconds = window_seconds
         self._hits: dict[str, list[float]] = defaultdict(list)
+
+    @property
+    def limit(self) -> int:
+        return self._limit
+
+    @property
+    def window_seconds(self) -> float:
+        return self._window_seconds
 
     def check(self, key: str) -> None:
         now = time.monotonic()
@@ -58,6 +99,11 @@ class FixedWindowRateLimiter:
 
 
 # Separate limiters per endpoint so a burst on one doesn't lock out another.
+# Their (limit, window_seconds) pairs are also where the Redis-backed
+# engine's capacity/refill-rate numbers come from (ADR 0006 §8's
+# "Continuity with today's numbers") — see `_dimension_for()` below, which
+# reads `.limit`/`.window_seconds` from these same objects rather than
+# duplicating the numbers.
 login_rate_limiter = FixedWindowRateLimiter(limit=5, window_seconds=60)
 register_rate_limiter = FixedWindowRateLimiter(limit=5, window_seconds=60)
 refresh_rate_limiter = FixedWindowRateLimiter(limit=20, window_seconds=60)
@@ -66,29 +112,18 @@ reset_password_rate_limiter = FixedWindowRateLimiter(limit=10, window_seconds=60
 
 
 def client_ip(request: Request) -> str:
+    """The direct TCP peer, with no trusted-proxy handling.
+
+    Still used by call sites outside the rate limiter (audit logging,
+    session IP recording in `app/api/v1/auth.py`) — deliberately left
+    unchanged in this slice, which only wires `resolve_client_ip()` (ADR
+    0006 §9a) into the rate-limit dependencies below. Changing what IP
+    address audit logs/sessions record is a separate decision, out of
+    scope here.
+    """
     if request.client is not None:
         return request.client.host
     return "unknown"
-
-
-def enforce_login_rate_limit(request: Request) -> None:
-    login_rate_limiter.check(client_ip(request))
-
-
-def enforce_register_rate_limit(request: Request) -> None:
-    register_rate_limiter.check(client_ip(request))
-
-
-def enforce_refresh_rate_limit(request: Request) -> None:
-    refresh_rate_limiter.check(client_ip(request))
-
-
-def enforce_forgot_password_rate_limit(request: Request) -> None:
-    forgot_password_rate_limiter.check(client_ip(request))
-
-
-def enforce_reset_password_rate_limit(request: Request) -> None:
-    reset_password_rate_limiter.check(client_ip(request))
 
 
 # --- Redis-backed distributed token bucket (ADR 0006 §8, §10) ---------------
@@ -250,3 +285,233 @@ class RedisTokenBucketLimiter:
             allowed=bool(allowed_flag),
             retry_after_seconds=float(retry_after_ms) / 1000.0,
         )
+
+
+# --- Endpoint wiring (ADR 0006 §6, §9, §13) ----------------------------------
+
+
+def _dimension(
+    operation: str, dimension: str, value: str, limiter: FixedWindowRateLimiter
+) -> DimensionSpec:
+    """Build a `DimensionSpec` whose capacity/refill-rate are derived
+    live from an existing `FixedWindowRateLimiter`'s own numbers (ADR
+    0006 §8's "Continuity with today's numbers") — never a second,
+    independently-maintained copy of the same limit."""
+    return DimensionSpec(
+        key=rate_limit_key(operation, dimension, value),
+        capacity=limiter.limit,
+        refill_rate=limiter.limit / limiter.window_seconds,
+    )
+
+
+async def _extract_email_from_json_body(request: Request) -> str | None:
+    """Best-effort peek at a JSON request body's `email` field, for the
+    account dimension (ADR 0006 §9's `login`/`forgot-password` rows).
+
+    Deliberately tolerant of any parse failure: this is a hint used to
+    build a *stronger* rate-limit key when possible, never a validator —
+    a malformed body still reaches the endpoint's own Pydantic validation
+    afterward (`Request.json()`/`.body()` cache the raw bytes, so reading
+    them here doesn't consume them). On any failure, callers simply fall
+    back to the IP-only dimension.
+    """
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - untrusted input, any parse failure means "no email available"
+        return None
+    if not isinstance(body, dict):
+        return None
+    email = body.get("email")
+    if not isinstance(email, str) or not email:
+        return None
+    return email
+
+
+def _log_redis_fallback(*, operation: str, fail_open: bool) -> None:
+    """ADR 0006 §13 ("Mechanics common to both tiers"): a Redis-failure
+    fallback event must be observable via structured logging — not a
+    Postgres audit row, which §15 reserves for abuse-layer escalations,
+    not ordinary degraded operation. This is the only signal an operator
+    gets that the rate limiter has fallen back to the in-process limiter
+    for an already-configured Redis that's currently unreachable.
+
+    Deliberately logs only the fixed, non-secret operation name and
+    which failure-policy tier applied — never a request-derived value
+    (email, IP, token, session ID), consistent with this codebase's
+    existing logging convention (see `auth_service.py`'s `logger.info`
+    calls, which log `user_id`, never raw email/password).
+    """
+    logger.warning(
+        "redis_rate_limit_unavailable",
+        extra={
+            "operation": operation,
+            "policy": "fail_open" if fail_open else "fallback_to_in_process_limiter",
+        },
+    )
+
+
+def _check_or_fallback(
+    *,
+    operation: str,
+    dimensions: list[DimensionSpec],
+    redis_client: redis.Redis | None,
+    fallback: FixedWindowRateLimiter,
+    fallback_key: str,
+    fail_open_on_redis_error: bool,
+) -> None:
+    """ADR 0006 §13's operation-aware failure policy, applied uniformly.
+
+    `redis_client is None` (Redis never configured for this deployment)
+    always falls back to `fallback.check()` — see the module docstring
+    for why this is treated differently from a genuine mid-request
+    `RedisUnavailableError`, where `fail_open_on_redis_error` selects
+    Tier A (`False` — fall back) vs. Tier B (`True` — fail open,
+    `register` only). Only the second case is logged (`_log_redis_fallback`)
+    — Redis never being configured at all is this deployment's normal,
+    expected default, not a degradation worth a log line on every request.
+    """
+    if redis_client is None:
+        fallback.check(fallback_key)
+        return
+
+    limiter = RedisTokenBucketLimiter(redis_client)
+    try:
+        result = limiter.check_all(dimensions)
+    except RedisUnavailableError:
+        _log_redis_fallback(operation=operation, fail_open=fail_open_on_redis_error)
+        if fail_open_on_redis_error:
+            return
+        fallback.check(fallback_key)
+        return
+
+    if not result.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Try again later.",
+        )
+
+
+async def enforce_register_rate_limit(
+    request: Request,
+    redis_client: redis.Redis | None = Depends(get_redis_client),
+) -> None:
+    """Tier B (ADR 0006 §13): fails open on a genuine Redis outage — see
+    the module docstring for why "never configured" is not treated as
+    that outage."""
+    settings = get_settings()
+    ip = resolve_client_ip(request, settings.trusted_proxy_cidrs_list)
+
+    _check_or_fallback(
+        operation="register",
+        dimensions=[_dimension("register", "ip", ip, register_rate_limiter)],
+        redis_client=redis_client,
+        fallback=register_rate_limiter,
+        fallback_key=ip,
+        fail_open_on_redis_error=True,
+    )
+
+
+async def enforce_login_rate_limit(
+    request: Request,
+    redis_client: redis.Redis | None = Depends(get_redis_client),
+) -> None:
+    """Tier A (ADR 0006 §13). Dimensions per ADR §9: IP, and the
+    submitted email (keyed HMAC, §14) when it's extractable."""
+    settings = get_settings()
+    ip = resolve_client_ip(request, settings.trusted_proxy_cidrs_list)
+    email = await _extract_email_from_json_body(request)
+
+    dimensions = [_dimension("login", "ip", ip, login_rate_limiter)]
+    if email is not None:
+        account_hash = hash_account_identifier(
+            email, key=settings.rate_limit_hash_key_resolved.encode("utf-8")
+        )
+        dimensions.append(_dimension("login", "acct", account_hash, login_rate_limiter))
+
+    _check_or_fallback(
+        operation="login",
+        dimensions=dimensions,
+        redis_client=redis_client,
+        fallback=login_rate_limiter,
+        fallback_key=ip,
+        fail_open_on_redis_error=False,
+    )
+
+
+def enforce_refresh_rate_limit(
+    request: Request,
+    redis_client: redis.Redis | None = Depends(get_redis_client),
+) -> None:
+    """Tier A (ADR 0006 §13). Dimensions per ADR §9: session ID (parsed
+    from the refresh-token cookie without a DB round-trip — ADR §7) and
+    IP, when the cookie is present and well-formed."""
+    settings = get_settings()
+    ip = resolve_client_ip(request, settings.trusted_proxy_cidrs_list)
+
+    dimensions = [_dimension("refresh", "ip", ip, refresh_rate_limiter)]
+    raw_refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
+    if raw_refresh_token is not None:
+        parsed = parse_refresh_token(raw_refresh_token)
+        if parsed is not None:
+            session_id, _secret = parsed
+            dimensions.append(
+                _dimension("refresh", "session", str(session_id), refresh_rate_limiter)
+            )
+
+    _check_or_fallback(
+        operation="refresh",
+        dimensions=dimensions,
+        redis_client=redis_client,
+        fallback=refresh_rate_limiter,
+        fallback_key=ip,
+        fail_open_on_redis_error=False,
+    )
+
+
+async def enforce_forgot_password_rate_limit(
+    request: Request,
+    redis_client: redis.Redis | None = Depends(get_redis_client),
+) -> None:
+    """Tier A (ADR 0006 §13). Dimensions per ADR §9: IP, and the
+    submitted email (keyed HMAC, §14) when it's extractable."""
+    settings = get_settings()
+    ip = resolve_client_ip(request, settings.trusted_proxy_cidrs_list)
+    email = await _extract_email_from_json_body(request)
+
+    dimensions = [_dimension("forgot-password", "ip", ip, forgot_password_rate_limiter)]
+    if email is not None:
+        account_hash = hash_account_identifier(
+            email, key=settings.rate_limit_hash_key_resolved.encode("utf-8")
+        )
+        dimensions.append(
+            _dimension("forgot-password", "acct", account_hash, forgot_password_rate_limiter)
+        )
+
+    _check_or_fallback(
+        operation="forgot-password",
+        dimensions=dimensions,
+        redis_client=redis_client,
+        fallback=forgot_password_rate_limiter,
+        fallback_key=ip,
+        fail_open_on_redis_error=False,
+    )
+
+
+def enforce_reset_password_rate_limit(
+    request: Request,
+    redis_client: redis.Redis | None = Depends(get_redis_client),
+) -> None:
+    """Tier A (ADR 0006 §13). IP only per ADR §9 — the reset token's own
+    256-bit entropy is the real defense; see the ADR for why dimensioning
+    by token or account isn't used here."""
+    settings = get_settings()
+    ip = resolve_client_ip(request, settings.trusted_proxy_cidrs_list)
+
+    _check_or_fallback(
+        operation="reset-password",
+        dimensions=[_dimension("reset-password", "ip", ip, reset_password_rate_limiter)],
+        redis_client=redis_client,
+        fallback=reset_password_rate_limiter,
+        fallback_key=ip,
+        fail_open_on_redis_error=False,
+    )

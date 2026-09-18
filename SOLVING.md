@@ -304,3 +304,104 @@ the script*, and unscale on the client side; there is no Lua-script
 return path that preserves a float as a float to a RESP2 client. Worth
 checking any time a new Lua script in this codebase returns a computed
 number, not just a stored one.
+
+## 2026-09-14 — Wiring the Redis rate limiter into endpoints made 52 previously-passing tests fail (Redis rate-limiting implementation, slice 2)
+
+**Symptom:** immediately after wiring `RedisTokenBucketLimiter` into
+`enforce_*_rate_limit` (so `login`/`register`/etc. now try the real Redis
+path first), the full backend test suite went from 170/170 passing to
+52 failing — almost every test that touches `register` or `login`,
+including ones that don't look like they're about rate limiting at all
+(`test_workspaces.py`'s setup helper registers a user first).
+
+**Root cause:** `backend/tests/conftest.py`'s `_reset_rate_limiters`
+fixture (autouse) only ever called `.reset()` on the in-process
+`FixedWindowRateLimiter` instances. Once `enforce_register_rate_limit`
+etc. started attempting the Redis path first, each test's `register`/
+`login` calls began writing real, TTL-bound `rl:register:ip:testclient`/
+`rl:login:ip:testclient` keys to the one real Redis every test in the
+session shares — and nothing ever cleared them between tests. Every
+`TestClient` presents the same fake host (`"testclient"`), so by the
+~6th test that called `register`, that Redis-backed bucket was already
+exhausted and every subsequent test's very first `register` call got a
+`429` instead of the `201` it expected.
+
+**Fix:** extended `_reset_rate_limiters` to also, after resetting the
+in-process limiters, `SCAN`+`DELETE` every `rl:*` key from
+`get_redis_client()` (wrapped in `try/except redis.RedisError`, since if
+Redis is unreachable during a test run every `enforce_*_rate_limit` call
+already falls back to the just-reset in-process limiter, so there is
+nothing to clean up in that case).
+
+**Verification:** full suite back to green (175/175 after also adding
+slice 2's own new tests), re-run 3 times with no flakiness.
+
+**Prevention/lesson:** **wiring a new backing store into existing code
+paths can silently invalidate test-isolation assumptions the existing
+tests never had to state explicitly.** The original `_reset_rate_limiters`
+fixture's docstring already explained *why* it exists ("the TestClient
+always presents the same fake client host") — that reasoning didn't
+change, but the set of *state* it needed to reset silently grew the
+moment a second backing store (Redis) started being written to by the
+same code path. Any time a new persistent/shared backend is wired into
+a function that previously only touched in-memory state, re-check every
+existing "reset between tests" fixture for whether it now needs to reset
+the new backend too — the old fixture passing its own tests is not
+evidence it still resets *everything* the code under test now touches.
+
+## 2026-09-14 — ADR 0006 §13's Tier B ("register fails open") would have made register unprotected by default on every deployment (Redis rate-limiting implementation, slice 2)
+
+**Symptom (caught during design of the wiring, before writing the fail-open
+branch):** ADR 0006 §13 states Tier B's policy plainly: "on Redis failure
+[`register`] fails open (falls back to no additional limiting beyond
+ordinary application validation)." Implementing that literally — treating
+`get_redis_client() is None` (Redis never configured) the same as a
+`RedisUnavailableError` raised mid-request (Redis configured but down) —
+means `register` has **zero** rate limiting the instant this code ships,
+in every environment that hasn't explicitly set `REDIS_URL`. That is
+every environment today: local dev, CI, and any hypothetical production
+deployment, since `redis_url` defaults to `None`.
+
+**Root cause:** the ADR's Tier B language was written with a specific
+scenario in mind — "a Redis blip" in a deployment that has *already*
+chosen Redis-backed limiting as primary — but the same code path
+(`RedisUnavailableError`, or in this case just "no client at all") is
+reached by two different real-world situations that the ADR's wording
+doesn't distinguish: a deployment that opted into Redis and is having a
+transient outage, versus a deployment (i.e. every one so far) that
+simply hasn't turned Redis on yet. ADR §13 itself flagged this exact
+sub-decision as unresolved: "whether `register` should actually share
+Tier A's fallback instead is a reasonable alternative... this should be
+revisited once real abuse data exists" — but implementing the literal
+default without revisiting it would have shipped the permissive option
+as this project's actual, immediate behavior.
+
+**Fix:** `_check_or_fallback()` (`app/core/rate_limit.py`) distinguishes
+the two cases explicitly: `redis_client is None` always falls back to
+`FixedWindowRateLimiter` (for every operation, `register` included,
+matching this module's exact pre-slice-2 behavior when Redis isn't
+configured); only a `RedisUnavailableError` raised from an actually-
+configured client selects the tier-specific policy (Tier A fallback vs.
+Tier B fail-open). This resolves ADR §13's explicitly-open sub-decision
+in favor of safety-by-default, documented with rationale in the module
+docstring, `HANDOFF.md`, and ADR 0006's "Implementation status" section
+— not silently deviated from.
+
+**Verification:**
+`test_redis_configured_but_none_still_uses_fallback_for_register` and
+`test_redis_unavailable_fails_open_for_register`
+(`tests/test_rate_limit_wiring.py`) assert the two cases produce
+different behavior; also verified live against the real Docker Compose
+stack — `register` stayed rate-limited with `REDIS_URL` unset, and
+specifically failed open (7/7 succeeded past the base limit of 5) only
+once Redis was actually started and then stopped mid-session.
+
+**Prevention/lesson:** **an ADR's stated default for a genuine outage
+scenario is not automatically the right default for "this capability has
+never been turned on yet."** When a failure-handling branch is reached by
+both "an enabled dependency broke" and "this dependency was never
+enabled," check whether the *safe* default (do what happens today) and
+the *documented* default (what the design says for an outage) actually
+agree before wiring the literal design into code — here they didn't, and
+the ADR had already flagged it as an open decision precisely because it
+hadn't been resolved yet.

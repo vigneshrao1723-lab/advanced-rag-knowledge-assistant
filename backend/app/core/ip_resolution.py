@@ -1,12 +1,11 @@
 """Trusted-proxy-aware client IP resolution (ADR 0006 §9a).
 
-Not wired into any endpoint yet — this slice only implements the
-reusable abstraction the Redis-backed limiter's IP dimension will use
-once a future slice switches `enforce_*_rate_limit` over to it. Today's
-`app.core.rate_limit.client_ip()` (a direct, unconditional
-`request.client.host` read) is unchanged and remains what every existing
-endpoint actually uses — that is a deliberate scope boundary for this
-slice, not an oversight.
+`resolve_client_ip()` is what every `enforce_*_rate_limit` dependency
+(`app/core/rate_limit.py`) uses for its IP dimension. `client_ip()` in
+`app.core.rate_limit` (a direct, unconditional `request.client.host`
+read, no trusted-proxy handling) remains separately in use for audit
+logging and session IP recording (`app/api/v1/auth.py`) — changing what
+IP address those record is a separate decision, out of scope here.
 
 Model, exactly as ADR 0006 §9a specifies:
 
@@ -85,8 +84,9 @@ def resolve_ip(
 
 
 def resolve_client_ip(request: Request, trusted_cidrs: list[str]) -> str:
-    """`Request`-based wrapper around `resolve_ip()`. Not called from any
-    endpoint in this slice — see module docstring."""
+    """`Request`-based wrapper around `resolve_ip()`, called from every
+    `enforce_*_rate_limit` dependency's IP dimension — see module
+    docstring."""
     direct_peer = request.client.host if request.client is not None else "unknown"
     forwarded_for = request.headers.get("x-forwarded-for")
     return resolve_ip(

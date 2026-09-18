@@ -120,9 +120,13 @@ class Settings(BaseSettings):
     smtp_from_email: str = "noreply@example.com"
     smtp_use_tls: bool = False
 
-    # Redis (ADR 0006) — optional: no code path attempts a Redis connection
-    # yet in this slice (see app/core/redis_client.py's module docstring).
-    # No hardcoded connection target: deployment-aware, like `database_url`.
+    # Redis (ADR 0006) — optional: every `enforce_*_rate_limit` dependency
+    # (app/core/rate_limit.py) attempts the Redis-backed distributed
+    # limiter first when this is set, and falls back to the in-process
+    # `FixedWindowRateLimiter` when it isn't (ADR 0006 §13 — see
+    # `rate_limit.py`'s module docstring for the exact "unconfigured vs.
+    # unreachable" distinction). No hardcoded connection target:
+    # deployment-aware, like `database_url`.
     redis_url: str | None = None
     # Short, explicit timeouts (ADR 0006 §13: "on the order of tens of
     # milliseconds") so a degraded-but-not-down Redis cannot make a
@@ -150,6 +154,21 @@ class Settings(BaseSettings):
     @property
     def trusted_proxy_cidrs_list(self) -> list[str]:
         return [cidr.strip() for cidr in self.trusted_proxy_cidrs.split(",") if cidr.strip()]
+
+    # HMAC key for Redis email-derived identifiers (ADR 0006 §14/§22 —
+    # resolved here as an implementation-time decision, recorded with its
+    # rationale rather than left open): `None` (the default) reuses
+    # `secret_key` rather than requiring a new secret to be provisioned
+    # for a threat model (Redis-key dictionary-matching resistance) that
+    # doesn't need key separation from JWT signing to be effective — both
+    # are already server-only secrets never exposed to a client. Set this
+    # explicitly only if a deployment specifically wants to rotate the
+    # rate-limit HMAC key independently of `secret_key`.
+    rate_limit_hash_key: str | None = None
+
+    @property
+    def rate_limit_hash_key_resolved(self) -> str:
+        return self.rate_limit_hash_key or self.secret_key
 
     # Reserved for future issues — not consumed by any code path yet.
     llm_api_key: str | None = None
