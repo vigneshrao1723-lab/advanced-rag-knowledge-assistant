@@ -8,35 +8,35 @@ in-flight task — overwrite it as work progresses, don't append a history
 
 ## Current task
 
-**Redis distributed rate limiting — Slice 1 is merged into `main`; Slice 2
-is implemented but still fully uncommitted**, on branch
-`issue-redis-rate-limiting-slice-2` (a fresh branch cut from the merged
-`main`, replacing the original `issue-redis-rate-limiting`, which is now
-closed out). Issue #1 and Issue #2 are merged to `main`. ADR 0006's design
+**Redis distributed rate limiting is fully merged into `main` — both
+slices.** Issue #1 and Issue #2 are merged to `main`. ADR 0006's design
 was adversarially reviewed and finalized as commit `7e439d2` (pushed,
-then itself merged into `main`). Redis Slice 1 (foundation + token-bucket
-engine) was committed as `b1f1b00`, reconciled with a documentation
-checkpoint (`c8aa2be`), pushed, opened as **PR #11**, and **merged into
-`main` as squash commit `46ef03b`** — `main`/`origin/main` are currently
-at `46ef03b`. Slice 2 (wiring that engine into every
-`enforce_*_rate_limit` dependency, plus the observability/test-coverage
-fixes from its own security review — see below) is real code on top of
-that merged base: it is **not yet committed, not pushed, and no PR is
-open.**
+then itself merged into `main`). Redis **Slice 1** (foundation +
+token-bucket engine) was committed as `b1f1b00`, reconciled with a
+documentation checkpoint (`c8aa2be`), pushed, opened as **PR #11**, and
+**merged into `main` as squash commit `46ef03b`**. Redis **Slice 2**
+(wiring that engine into every `enforce_*_rate_limit` dependency, plus
+the observability/test-coverage fixes from its own security review — see
+below) was then implemented on a fresh branch,
+`issue-redis-rate-limiting-slice-2`, committed as `f61737f`, pushed,
+opened as **PR #12**, verified green on GitHub Actions CI (3/3 checks),
+and **merged into `main` as squash commit `5391a78`**. **`main`/
+`origin/main` are currently at `5391a78`.** Both feature branches were
+deleted on `origin` after their respective merges. Nothing is pending
+review, push, or merge for either slice.
 
-**What changes in Slice 2, concretely:** every authentication endpoint's
-actual rate-limiting behavior will go through the Redis-backed engine
-first (falling back to the pre-existing in-process limiter per ADR
-§13) — this is a real, observable change once committed, verified by
-automated tests (see "Tests run" below) and, for the original wiring, by
-live testing against the running Docker Compose stack in an earlier
-checkpoint (including a genuine Redis outage and recovery). **None of
-this is active in the currently committed codebase** — `main` at
-`46ef03b` still has every `enforce_*_rate_limit` function calling only
-the in-process limiter, unchanged. The deterministic abuse-detection
-layer (ADR 0006 §11), Playwright, and Issue #3 are all still not started
-— do not start any of them without an explicit go-ahead. See "Next major
-task" below for what comes after Slice 2.
+**What this means in practice:** every authentication endpoint's actual
+rate-limiting behavior now goes through the Redis-backed engine first,
+falling back to the pre-existing in-process limiter per ADR §13 — **this
+is a real, observable change, now active in the committed codebase on
+`main`.** Verified by automated tests (see "Tests run" below), by
+GitHub Actions CI on PR #12 (backend/frontend/Docker-build checks all
+passed), and, for the original wiring, by live testing against the
+running Docker Compose stack in an earlier checkpoint (including a
+genuine Redis outage and recovery). The deterministic abuse-detection
+layer (ADR 0006 §11), Playwright, and Issue #3 are all still not
+started — do not start any of them without an explicit go-ahead. See
+"Next major task" below for what comes next.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -218,8 +218,8 @@ this in):
   plain hash).
 - **`app/core/ip_resolution.py`** (new): `resolve_ip()` (pure function)
   and `resolve_client_ip()` (`Request` wrapper) implementing ADR §9a's
-  trusted-proxy walk. Not called from any endpoint as of this merged
-  slice — Slice 2 (below, still uncommitted) is what wires it in.
+  trusted-proxy walk. Not called from any endpoint as of this Slice 1
+  checkpoint — Slice 2 (below, now also merged) is what wires it in.
 - **`app/core/rate_limit.py`** (extended, not replaced): `DimensionSpec`,
   `TokenBucketResult`, `RedisTokenBucketLimiter` — the ADR §8/§10 Lua
   token-bucket engine. One `EVAL` per operation, over every dimension key
@@ -240,8 +240,8 @@ this in):
 
 ## Completed work (Redis implementation slice 2 — wire the engine into every endpoint)
 
-Branch `issue-redis-rate-limiting-slice-2`, uncommitted, on top of the
-merged Slice 1 (`46ef03b`):
+**Merged into `main` as squash commit `5391a78` via PR #12**, on top of
+the merged Slice 1 (`46ef03b`):
 
 - **`app/core/rate_limit.py`'s `enforce_*_rate_limit` functions rewritten**
   to attempt the Redis engine first, per ADR §9's exact per-operation
@@ -403,15 +403,17 @@ still entirely within Slice 2's uncommitted working tree:
   only the Redis-failure *fallback* path gained logging in this pass; a
   broader, pre-existing gap belonging with the future abuse-detection/
   observability work, not a Slice 2 regression.
-- **Slice 1 is merged into `main` (`46ef03b`, via PR #11). Slice 2 is
-  fully uncommitted** — not pushed, no open PR, on branch
-  `issue-redis-rate-limiting-slice-2`.
+- **Both Slice 1 (`46ef03b`, PR #11) and Slice 2 (`5391a78`, PR #12) are
+  merged into `main`.** Both feature branches were deleted on `origin`
+  after their respective merges.
 
 ## Next major task: the deterministic abuse-detection layer (ADR 0006 §11/§12)
 
-**Not the next action — do not start this yet.** Slice 2 must first be
-reviewed (again, post-fixes) and committed/merged. Recorded here so the
-plan stays visible, not as a go-ahead. When it is time: **read
+**Both Redis slices are now merged — this is genuinely the next planned
+piece of ADR 0006, but still requires its own explicit go-ahead before
+any code is written**, same as every other unit of work in this
+repository (`AGENTS.md` §6). Recorded here so the plan stays visible,
+not as a standing instruction to start it. When it is time: **read
 [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
 §11/§12 in full before writing any code.** This is the last major piece
 of ADR 0006 that doesn't exist yet:
@@ -460,14 +462,20 @@ Redis, and `gh` CLI access are all confirmed working in this environment.
   check .` (pass), `uv run mypy .` (pass, 75 files), `uv run pytest -v`
   (**175/175 pass** — 170 from Slice 1 + 5 HTTP-level wiring tests,
   against real Postgres **and** real Redis).
-- **Slice 2, after the review's P1/P2 fixes (this checkpoint):**
-  `uv run ruff check .` (pass), `uv run mypy .` (pass, **75 files**),
-  `uv run pytest -v` (**183/183 pass** — 170 from Slice 1 + 13 from
+- **Slice 2, after the review's P1/P2 fixes, pre-merge:** `uv run ruff
+  check .` (pass), `uv run mypy .` (pass, **75 files**), `uv run pytest
+  -v` (**183/183 pass** — 170 from Slice 1 + 13 from
   `test_rate_limit_wiring.py`, against real Postgres **and** real
   Redis). Re-ran the full suite 3 times to check for flakiness — none
-  observed. **This 183/183 figure describes the working tree, not the
-  committed codebase** — the committed state (`main` at `46ef03b`) is
-  still 170/170.
+  observed. This was the exact code committed as `f61737f` and merged
+  as `5391a78` — **this 183/183 figure now describes the committed
+  codebase on `main`**, not just a working tree.
+- **PR #12, GitHub Actions CI (post-merge verification, independent of
+  the local run above):** 3/3 checks passed — backend lint/typecheck/
+  tests, frontend lint/typecheck/tests/build, Docker build check. This
+  session's own Docker/WSL integration became unavailable shortly after
+  the local 183/183 run above, so this CI result is the first
+  re-verification of the merged code since then.
 - New tests this checkpoint (8, added to `test_rate_limit_wiring.py`):
   Redis-key-creation tests for `refresh` and `forgot-password`; a
   `reset-password` test proving IP-only dimension creation; Tier A
@@ -484,15 +492,12 @@ Redis, and `gh` CLI access are all confirmed working in this environment.
 
 ## Exact next recommended action
 
-1. **Review Slice 2 again, post-fixes** (the P1/P2 items from its
-   security/architecture review are now addressed; see "Completed work"
-   above for exactly what changed).
-2. **On approval: commit Slice 2** on `issue-redis-rate-limiting-slice-2`,
-   push, and open a PR into `main` — mirroring exactly how Slice 1 was
-   landed (small, separately reviewed unit of work per `AGENTS.md` §6).
-3. **After Slice 2 merges:** implement the deterministic abuse-detection
-   layer (ADR §11/§12) — see "Next major task" above. **Do not start this
-   before Slice 2 has landed.**
-4. **Then:** Playwright browser E2E for the authentication/
+Both Redis slices are merged into `main` (`46ef03b` via PR #11, `5391a78`
+via PR #12) — nothing pending for either. The next work, in order:
+
+1. **Implement the deterministic abuse-detection layer** (ADR §11/§12) —
+   see "Next major task" above. Not started; requires its own explicit
+   go-ahead before any code is written, per `AGENTS.md` §6's workflow.
+2. **Then:** Playwright browser E2E for the authentication/
    password-recovery flows — not started.
-5. **Then:** begin GitHub Issue #3 (Knowledge Ingestion) — not started.
+3. **Then:** begin GitHub Issue #3 (Knowledge Ingestion) — not started.

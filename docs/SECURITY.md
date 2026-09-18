@@ -128,50 +128,37 @@ documented below rather than anticipated speculatively:
   Redis-backed token-bucket rate limiting plus a deterministic (non-ML),
   rule-based abuse-detection layer, an operation-aware Redis failure
   policy, and a key design that never stores raw credentials.
-- **Redis-backed token-bucket engine implemented, committed, and merged
-  into `main`** (Slice 1, squash commit `46ef03b` via PR #11), **but NOT
-  wired into any endpoint in the committed codebase:** the multi-key
-  atomic Lua token-bucket engine (`RedisTokenBucketLimiter`, ADR §8/§10),
-  a Redis connection abstraction, centralized key construction with a
-  keyed-HMAC (not plain-hash) email identifier (ADR §14), and a
-  trusted-proxy-aware IP resolver (`resolve_client_ip()`, ADR §9a —
-  secure-by-default: `X-Forwarded-For`/`Forwarded` ignored unless the
-  peer is within a configured trusted CIDR) all exist and are tested (51
-  tests, against a real Redis instance, all merged). **No
-  `enforce_*_rate_limit` dependency calls this engine as committed** —
-  every endpoint's actual, merged behavior is still exactly the
-  in-process limiter described above, unchanged.
-- **Endpoint wiring exists only as uncommitted working-tree changes**
-  (Slice 2, not committed, not part of `main`, not pushed, no PR — branch
-  `issue-redis-rate-limiting-slice-2`): on top of the merged Slice 1,
-  uncommitted code would make every `enforce_*_rate_limit` dependency
-  (`register`, `login`, `refresh`, `forgot-password`, `reset-password`)
-  attempt the Redis engine above first, using ADR §9's exact per-operation
-  dimensions — IP always; the submitted email, as a keyed-HMAC identifier,
-  for `login`/`forgot-password`; the session ID, parsed from the
-  refresh-token cookie without a database round-trip, for `refresh` —
-  falling back to the in-process limiter per ADR §13's operation-aware
-  policy when Redis is unreachable. This includes one implementation-time
+- **Redis-backed distributed rate limiting implemented, committed,
+  pushed, and merged into `main` — both the engine and its endpoint
+  wiring:** Slice 1 (squash commit `46ef03b` via PR #11) added the
+  multi-key atomic Lua token-bucket engine (`RedisTokenBucketLimiter`,
+  ADR §8/§10), a Redis connection abstraction, centralized key
+  construction with a keyed-HMAC (not plain-hash) email identifier (ADR
+  §14), and a trusted-proxy-aware IP resolver (`resolve_client_ip()`, ADR
+  §9a — secure-by-default: `X-Forwarded-For` ignored unless the peer is
+  within a configured trusted CIDR). Slice 2 (squash commit `5391a78` via
+  PR #12) wired all of it into every `enforce_*_rate_limit` dependency —
+  `register`, `login`, `refresh`, `forgot-password`, `reset-password` now
+  all attempt the Redis engine first, using ADR §9's exact per-operation
+  dimensions — IP always; the submitted email, as a keyed-HMAC
+  identifier, for `login`/`forgot-password`; the session ID, parsed from
+  the refresh-token cookie without a database round-trip, for
+  `refresh` — falling back to the in-process limiter per ADR §13's
+  operation-aware policy when Redis is unreachable. **This is now active
+  in the committed codebase on `main`.** One implementation-time
   refinement of §13, recorded with rationale in ADR 0006's "Implementation
   status" and `SOLVING.md`: an unconfigured Redis always falls back to
   the in-process limiter, for every operation including `register`;
   §13's literal Tier B fail-open is reserved for a genuine mid-request
-  outage of an *already-configured* Redis. This behavior is real and
-  tested — 13 HTTP-level tests as of this checkpoint's review-fix pass
-  (Redis-key creation and Tier A fallback for every Tier-A endpoint, not
-  just `login`; an endpoint-driven multi-dimension atomicity test; a
-  cross-user account-isolation test), plus live verification against a
-  running Docker Compose stack in an earlier checkpoint (including a
-  genuine Redis outage and recovery) — **but is not active in the
-  committed codebase** — do not treat it as the system's current behavior
-  until it is itself reviewed and committed. A structured log line now
-  fires on a genuine Redis-failure fallback (ADR §13's own requirement,
-  added during this checkpoint's review-fix pass — `app.rate_limit`
-  logger, `operation`/`policy` fields only, never a request-derived
-  value). The deterministic abuse-detection layer (ADR §11) does not
-  exist in either committed or uncommitted form — no `STRICT_THROTTLE`/
-  `TEMPORARY_BLOCK` escalation is possible anywhere in this system today.
-  In both forms, Redis's role remains strictly limited to ephemeral
+  outage of an *already-configured* Redis. A structured log line fires on
+  a genuine Redis-failure fallback (ADR §13's own requirement —
+  `app.rate_limit` logger, `operation`/`policy` fields only, never a
+  request-derived value). Tested: 183 backend tests (119 pre-Redis + 51
+  Slice 1 + 13 Slice 2), verified locally against real Postgres + real
+  Redis and via GitHub Actions CI on PR #12 (backend/frontend/Docker-build
+  checks all passed). The deterministic abuse-detection layer (ADR §11)
+  does not exist yet — no `STRICT_THROTTLE`/`TEMPORARY_BLOCK` escalation
+  is possible. Redis's role remains strictly limited to ephemeral
   rate-limit state; PostgreSQL remains the only durable datastore (ADR
   0002) — Redis never becomes a second source of truth for users,
   sessions, workspaces, or audit logs.
