@@ -1227,10 +1227,6 @@ task's explicit concern):
 
 ## 22. Open decisions (explicitly not invented in this ADR)
 
-- Exact numeric thresholds for every abuse rule (§11: `N`, `M`, `W` per
-  rule) and for the strict-throttle bucket's capacity/refill relative to
-  the base bucket (§12) — blocked on the abuse layer itself, a later
-  slice.
 - **Trusted-proxy configuration values** (§9a): the actual
   `TRUSTED_PROXY_CIDRS` for any real deployment are unknowable until a
   hosting target is chosen — not invented here (the *mechanism* is
@@ -1278,6 +1274,78 @@ silently in code):
   configured at all, and only fails open (Tier B, as originally written)
   during a genuine mid-request outage of an *already-configured* Redis.
 
+**Resolved during the abuse-layer design/readiness review (before Slice
+3a implementation) — recorded here with rationale, per this section's
+own instruction:**
+
+- **Exact numeric thresholds for R1–R5** (§11's `N`/`M`/`W`), starting
+  conservative values, not claimed optimal or production-proven:
+
+  | Rule | Threshold | Window |
+  |---|---|---|
+  | R1 (login, IP) | N=10 failures | 600s |
+  | R2 (login, account) | N=10 failures | 600s |
+  | R3 (login, distinct IPs/account) | M=5 | 600s |
+  | R4 (forgot-password, IP) | N=10 requests | 600s |
+  | R5 (reset-password, IP) | N=15 validation failures | 600s |
+
+  **Corrected token-bucket timing analysis, worked precisely (an
+  earlier verbal estimate of "~2 minutes" for reaching 10 failures was
+  wrong and is not carried into this record):** the `login`
+  `FixedWindowRateLimiter`-derived token bucket is `capacity=5,
+  refill_rate=5/60` tokens/sec. A fresh bucket grants an **immediate
+  burst of 5** (not spread over 60s), then refills continuously at
+  1 token per 12s. Reaching a 10th *allowed* request (the ceiling on how
+  many *failures* R1/R2 can possibly count, since a request rejected by
+  the base bucket never reaches `auth_service.login()` to produce a
+  failure) from a fresh bucket takes `(N − capacity) / refill_rate =
+  (10 − 5) / (5/60) = 60` seconds at the earliest, assuming an attacker
+  polls continuously. `reset-password`'s bucket (`capacity=10,
+  refill_rate=10/60`) reaches R5's N=15 at `(15 − 10)/(10/60) = 30`
+  seconds. Both are comfortably inside W=600s, so every rule fires with
+  wide margin for a sustained max-rate attacker; the corrected 60s
+  figure (not 120s) also means a rapidly, manually retrying legitimate
+  user could organically approach N=10 faster than previously assumed —
+  noted here as the honest basis for "start conservative, tune from
+  telemetry," not as a reason to change N.
+
+- **Strict-throttle bucket shape** (§12), uniform across every rule that
+  produces `STRICT_THROTTLE` (R1, R2, R4) rather than a per-rule value:
+  capacity=2, refill_rate=2 tokens/600s, cost=1. TTL is *derived*, not a
+  separate invented number — reusing the existing
+  `DimensionSpec.resolved_ttl_seconds()` formula and `_TTL_SAFETY_FACTOR`
+  (`capacity/refill_rate × 2.0` = 1200s / 20 minutes). Implemented as an
+  *additional* `DimensionSpec` appended to the same
+  `RedisTokenBucketLimiter.check_all()` dimension list already in use —
+  no second rate-limiter engine. A later crossing of an already-escalated
+  dimension's threshold refreshes the bucket's TTL (keeps the escalation
+  alive while abuse continues) but never resets its already-consumed
+  token count back to full capacity.
+- **TEMPORARY_BLOCK's TTL** (§12): fixed at 600s, and — a deliberate,
+  load-bearing asymmetry with the strict-throttle bucket above — **never
+  refreshed by a later threshold crossing**, only ever set once at
+  creation. This is what actually guarantees §12's "never permanent or
+  indefinite," not merely an assumption about call order: if a later
+  crossing could keep extending a block's TTL, a persistent low-level
+  attacker could hold a dimension blocked indefinitely.
+- **Successful-login decay** (not previously specified by §11/§12 at
+  all): account-scoped state (R2's failcount, R3's HyperLogLog) resets
+  on *that account's own* successful login; IP-scoped state (R1's
+  failcount) and `TEMPORARY_BLOCK` flags are never reset by any login
+  outcome, decaying only via their own TTL. A uniform reset-on-success
+  policy was considered and rejected: it would let an attacker who fails
+  against many accounts from one IP "launder" that IP's failure history
+  the moment *any one* of those accounts succeeds (their own, or one
+  they eventually guess), handing them a fresh attack budget against
+  every other account still being attempted from that IP. No
+  generation/version mechanism is used for the reset/failure race this
+  policy creates — analysis found the race is bounded (Redis's strict
+  command ordering means the result is always one of two individually-
+  correct outcomes, never corrupted) and not attacker-exploitable
+  (triggering a "success" requires already possessing the correct
+  credential, at which point there is nothing left for a reset to
+  protect).
+
 Everything in this section's remaining bulleted list is a genuine
 decision still left for a future slice or a real deployment target —
 not decided speculatively here without evidence.
@@ -1321,7 +1389,21 @@ overclaim this document works to avoid.** As of this ADR's original
 acceptance, everything below was "Designed" only. **As of implementation
 Slice 1** (squash commit `46ef03b`, **merged into `main` via PR #11**)
 **and Slice 2** (squash commit `5391a78`, **merged into `main` via
-PR #12** — see `HANDOFF.md`), that is no longer uniformly true; the
+PR #12** — see `HANDOFF.md`), that is no longer uniformly true. **Slice
+3a** (the abuse-protection layer's low-level Redis primitives —
+`app/core/abuse_keys.py`, `app/core/abuse_state.py`) is now
+**implemented, real-Redis validated, but still uncommitted,
+working-tree-only**: its 32 tests (`tests/test_abuse_state.py`) passed 3
+consecutive times against a real Redis and real PostgreSQL, run inside
+the `compose-backend-1` container over Docker-internal hostnames after
+the host shell's own path to those containers' published ports proved
+broken (an environment fault, not a code defect) — see `HANDOFF.md` for
+the exact method and evidence, including live Redis key/TTL inspection.
+This is **not** a clean host-side run of the current 215-test full suite
+(the container's image was stale and had an unrelated app-runtime
+`EMAIL_PROVIDER` setting that affected 5 password-reset tests — see
+`HANDOFF.md`) and **not** a production validation. No endpoint wiring, no
+rule table, and no `AbuseDecisionEngine` exist yet (Slice 3b/3c). The
 table below is now per-component, not a single status for the whole ADR:
 
 | State | Meaning |
@@ -1343,8 +1425,13 @@ table below is now per-component, not a single status for the whole ADR:
 | **Endpoint wiring** — every `enforce_*_rate_limit` dependency attempts the Redis engine above first | Yes | **Yes** (slice 2) | **Yes** — `tests/test_rate_limit_wiring.py` (13 tests: real-Redis key creation for `login`/`refresh`/`forgot-password`, an IP-only proof for `reset-password`, Tier A/B failure-policy HTTP tests for every endpoint, spoofed-header-ignored-by-default, an endpoint-driven multi-dimension atomicity test, a cross-user isolation test) plus every pre-existing `test_auth.py`/`test_password_reset.py` rate-limit assertion, now exercised through the live Redis path | **Yes** — merged (`5391a78`, PR #12); every endpoint's committed (`main`) behavior now attempts the Redis engine first | No |
 | Redis failure policy in the actual request path (§13's Tier A/B fallback logic, `_check_or_fallback()`) | Yes — with one sub-decision resolved during implementation, see below | **Yes** (slice 2) | **Yes** — unit-level via dependency override, and live against the real Docker Compose stack (Redis stopped mid-session, both tiers verified, then Redis restarted and enforcement resumed without a restart) | **Yes** — merged (`5391a78`) | No |
 | Redis-failure fallback observability (§13's "Mechanics common to both tiers" logging requirement) | Yes | **Yes** (slice 2 review-fix pass) — `_log_redis_fallback()` in `app/core/rate_limit.py`, `app.rate_limit` logger, `operation`/`policy` fields only | **Yes** — implicitly exercised by the existing Tier A/B fallback tests; no dedicated log-content assertion test exists | **Yes** — merged (`5391a78`) | No |
-| Deterministic abuse/risk layer (§11–§12, `AbuseDecisionEngine`) | Yes | **No** | No | No | No |
-| `AuditEvent.RATE_LIMITED` / abuse-escalation audit emission (§15) | Yes | **No** | No | No | No |
+| Abuse key builders (`app/core/abuse_keys.py`) | Yes | **Yes** (slice 3a) | **Yes** — real-Redis, 32/32 `tests/test_abuse_state.py`, 3 consecutive runs inside `compose-backend-1`; not yet via a clean host-side 215-test full-suite run (see `HANDOFF.md`) | **No** — uncommitted, working-tree-only | No |
+| Atomic record primitives (`app/core/abuse_state.py`: `record_login_failure`, `record_ip_failure`, `reset_account_state`, one Lua invocation per multi-signal event) | Yes | **Yes** (slice 3a) | **Yes** — same real-Redis validation as above, plus live key/TTL inspection confirming atomic multi-signal writes | **No** — uncommitted | No |
+| HyperLogLog lifecycle for R3 (`PFADD`/`PFCOUNT`, TTL, account-scoped reset) | Yes | **Yes** (slice 3a) | **Yes** — same real-Redis validation as above | **No** — uncommitted | No |
+| Strict-throttle primitive (approved capacity=2/refill=2/600s, reuses `DimensionSpec`/`RedisTokenBucketLimiter`, no new bucket engine) | Yes | **Yes** (slice 3a) | **Yes** — same real-Redis validation as above | **No** — uncommitted | No |
+| Temporary-block primitive (fixed 600s TTL, never refreshed by a later crossing — see §22) | Yes | **Yes** (slice 3a) | **Yes** — same real-Redis validation as above | **No** — uncommitted | No |
+| `AbuseDecisionEngine`, R1–R5 rule table, `check()`, endpoint wiring (§6's flow) | Yes | **No** (Slice 3b/3c) | No | No | No |
+| `AuditEvent.RATE_LIMITED` / abuse-escalation audit emission (§15) | Yes | **No** (Slice 3c) | No | No | No |
 
 **§13's Tier B sub-decision, resolved during slice 2 (recorded here per
 §22's instruction that open decisions get their rationale recorded

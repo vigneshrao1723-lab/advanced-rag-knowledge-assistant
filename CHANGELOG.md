@@ -10,6 +10,87 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
+### 2026-09-19 — Abuse-protection Slice 3a: real-Redis validation
+
+- **Still not committed** — this entry records a validation result for
+  the same uncommitted working tree as the entry immediately below, not a
+  new implementation change.
+- The host shell's path to the Dockerized Redis/Postgres published ports
+  (`127.0.0.1:5432`/`127.0.0.1:6379`) was found broken this session (TCP
+  handshake succeeds, protocol read reset) — confirmed as an environment
+  fault via internal Docker-network health checks and via a
+  previously-passing, unrelated test file failing identically, not a
+  Slice 3a defect.
+- Worked around by running `tests/test_abuse_state.py` **inside the
+  running `compose-backend-1` container**, over its internal `db`/`redis`
+  Docker service hostnames: **32/32 passed, 3 consecutive runs**, no
+  flakiness. Live Redis inspection during that run confirmed real
+  `abuse:*` key creation of every expected type, a finite positive TTL on
+  every key observed, and no raw email substring in any key name or
+  value. `ruff`/`mypy` re-confirmed clean inside the container.
+- The container's own backend image was stale relative to `main` HEAD
+  (missing 8 pre-existing tests from `test_rate_limit_wiring.py`) and had
+  an `EMAIL_PROVIDER=smtp` app-runtime setting that caused 5 unrelated
+  `test_password_reset.py` failures (diagnosed and resolved via a
+  one-off, file-free `EMAIL_PROVIDER=console` invocation override to
+  confirm the root cause) — **this is not a run of the current 215-test
+  full suite** and is not represented as one.
+- Net effect: Slice 3a's 32 tests are now **real-Redis validated**,
+  distinct from — and not yet extending to — a clean host-side full-suite
+  run or any production validation.
+
+### 2026-09-18 — Abuse-protection Slice 3a: Redis/Lua primitives for the deterministic abuse layer (ADR 0006 §11/§12)
+
+- **Not committed.** Implements only the low-level Redis primitives the
+  abuse layer needs — no rule table, no `AbuseDecisionEngine`, no
+  endpoint wiring (Slice 3b/3c, not started). Every existing endpoint
+  (`register`/`login`/`refresh`/`forgot-password`/`reset-password`)
+  remains byte-for-byte unchanged from Slice 2.
+- `backend/app/core/abuse_keys.py` (new): key builders for the `abuse:`
+  namespace (`failcount_key`, `distinct_ips_key`, `strict_throttle_key`,
+  `block_key`), mirroring `redis_keys.py`'s role for `rl:`.
+- `backend/app/core/abuse_state.py` (new): atomic Lua-scripted
+  primitives, fully parameterized (no hardcoded thresholds):
+  `record_login_failure()` (one Lua invocation atomically updating the
+  IP failcount, account failcount, and distinct-IP HyperLogLog together,
+  escalating each dimension independently once its own threshold is
+  crossed); `record_ip_failure()` (the shared primitive behind the
+  forgot-password/reset-password IP counters, parameterized by a
+  `strict`/`block` escalation mode); `reset_account_state()` (the
+  successful-login decay — deletes only the account-scoped failcount and
+  distinct-IP HyperLogLog, never the IP failcount or any block/strict
+  state); `is_strict_throttle_active()`/`is_temporarily_blocked()`
+  (read-only checks for Slice 3b's future use). STRICT_THROTTLE reuses
+  the existing `RedisTokenBucketLimiter`/`DimensionSpec` bucket shape —
+  no new bucket engine. TEMPORARY_BLOCK's TTL is set once at creation and
+  never refreshed (guarantees ADR §12's "never permanent or indefinite");
+  STRICT_THROTTLE's TTL does refresh on re-escalation. All primitives
+  raise `RedisUnavailableError` on failure — no second fallback limiter.
+- `backend/tests/test_abuse_state.py` (new, 32 tests): failcount
+  lifecycle, HyperLogLog lifecycle, reset-on-success scoping, block/
+  strict-throttle creation and TTL semantics, multi-signal atomicity,
+  concurrent-write races (real `threading`, no mocks), cross-account/
+  cross-IP isolation, Redis-unavailable handling, and a check that no raw
+  email or secret is ever stored in a Redis value.
+- `ruff`/`mypy` clean on all three new files; `pytest --collect-only`
+  succeeds at 215 tests (183 existing + 32 new). **The 32 new tests have
+  not been executed against a real Redis this session** — Docker/WSL was
+  confirmed unavailable (connection-refused checks against both
+  6379/5432; see `HANDOFF.md` for the exact evidence). Do not read "215
+  collected" as a passing count.
+- Docs updated in the same working tree: `docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md`
+  (R1–R5 thresholds/windows resolved and recorded, the corrected
+  60-second token-bucket timing derivation replacing an earlier wrong
+  "~2 minutes" estimate, the strict/block TTL-asymmetry rationale, the
+  successful-login decay policy, and a 7-row per-component
+  implementation-status breakdown for the abuse layer),
+  `PROJECT_STATE.md` (component-status rows), `HANDOFF.md` (current
+  task, a new "Completed work (Redis abuse layer — Slice 3a)" section,
+  revised "Next major task"/"Tests run"/"Exact next recommended action").
+  `docs/SECURITY.md` was reviewed and needs no change — it already
+  states the abuse layer doesn't exist yet, still true since Slice 3a
+  changes no runtime behavior.
+
 ### 2026-09-11 — Application Foundation: backend/frontend/infra scaffold, Docker fixes, CI workflow
 
 - Backend (`backend/`): FastAPI scaffold with configuration
