@@ -33,10 +33,27 @@ is a real, observable change, now active in the committed codebase on
 GitHub Actions CI on PR #12 (backend/frontend/Docker-build checks all
 passed), and, for the original wiring, by live testing against the
 running Docker Compose stack in an earlier checkpoint (including a
-genuine Redis outage and recovery). The deterministic abuse-detection
-layer (ADR 0006 §11), Playwright, and Issue #3 are all still not
-started — do not start any of them without an explicit go-ahead. See
-"Next major task" below for what comes next.
+genuine Redis outage and recovery).
+
+**The deterministic abuse-detection layer's design was then approved and
+Slice 3a (low-level Redis primitives only) was implemented and then
+real-Redis validated** — `app/core/abuse_keys.py` and
+`app/core/abuse_state.py`, plus 32 new tests in `tests/test_abuse_state.py`.
+**This is currently uncommitted, working-tree-only.** Initial validation
+attempts found the WSL host shell's path to the Dockerized Redis/Postgres
+published ports was broken (TCP handshake succeeds, protocol read reset —
+an environment fault, not a code defect); the 32 tests were then run
+**inside the `compose-backend-1` container** over the Docker-internal
+`db`/`redis` hostnames and **passed 3 consecutive times (32/32 each run)**
+against real Redis and real PostgreSQL, with live Redis key/TTL inspection
+confirming correct `abuse:*` key creation and no raw-email leakage. `ruff`/
+`mypy` are clean (host and container). This is real-Redis validation of
+the 32 targeted tests specifically — **not** a clean host-side run of the
+current 215-test full suite (still blocked by the host networking fault)
+and **not** a production validation; see "Completed
+work (Redis abuse layer — Slice 3a)" below for the full writeup. Do not
+start Slice 3b/3c, Playwright, or Issue #3 without an explicit go-ahead.
+See "Next major task" below for what comes next.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -366,14 +383,115 @@ still entirely within Slice 2's uncommitted working tree:
   Postgres + real Redis, re-run 3 times, no flakiness), `ruff`/`mypy`
   clean.
 
+## Completed work (Redis abuse layer — Slice 3a: primitives only)
+
+**Uncommitted, working-tree-only.** Implements only the low-level,
+fully-parameterized Redis/Lua primitives ADR 0006 §11/§12/§14 needs —
+explicitly not the rule table, not `AbuseDecisionEngine`, not endpoint
+wiring (all Slice 3b/3c, not started). No existing file was modified
+except the two documentation files noted below; `register`/`refresh`/
+`login`/`forgot-password`/`reset-password` are byte-for-byte unchanged
+from Slice 2.
+
+- **`app/core/abuse_keys.py`** (new): key builders for the `abuse:`
+  namespace, mirroring `redis_keys.py`'s role for `rl:` —
+  `failcount_key`, `distinct_ips_key`, `strict_throttle_key`, `block_key`.
+- **`app/core/abuse_state.py`** (new): atomic Lua-scripted primitives,
+  with no knowledge of R1–R5 as named rules (fully parameterized —
+  thresholds/windows are Slice 3b's rule table, not hardcoded here):
+  - `record_login_failure()` — **one Lua invocation** that atomically
+    increments the IP failcount (R1) and account failcount (R2), adds the
+    IP to the account's distinct-IP HyperLogLog (R3), and escalates each
+    dimension independently once its own threshold is crossed. Multi-
+    signal atomicity matches the same "check all → decide → write all"
+    pattern Slice 1's `_TOKEN_BUCKET_LUA` already established.
+  - `record_ip_failure()` — the shared primitive behind R4/R5
+    (forgot-password/reset-password IP counters), parameterized by an
+    `escalation: Literal["strict", "block"]` argument (passed to Lua as a
+    **numeric** flag, not a string — a deliberate risk-reduction choice
+    made because the script could not be execute-tested live this
+    session; the codebase's existing Lua scripts never pass string
+    ARGVs, so this also matches convention).
+  - **Fixed-window counters**: TTL is set only when a counter is first
+    created (`count == 1`), never refreshed by later increments — a
+    deliberate simplicity choice, not a sliding window.
+  - **STRICT_THROTTLE**: created via `HSETNX` (never resets an
+    already-escalated/partially-consumed bucket) reusing the existing
+    `RedisTokenBucketLimiter`/`DimensionSpec` bucket shape — no new
+    bucket engine. Its TTL **does refresh** on every re-escalation, to
+    keep the throttle alive while abuse continues.
+  - **TEMPORARY_BLOCK**: created via `SETNX`, TTL **set once at creation
+    and never refreshed** by a later crossing — this asymmetry with
+    STRICT_THROTTLE is exactly what guarantees ADR §12's "never permanent
+    or indefinite" requirement; there is no manual-unblock path, and a
+    successful login must never remove it (verified — see next bullet).
+  - `reset_account_state()` — the successful-login decay: deletes the
+    account-scoped failcount (R2) and the distinct-IP HyperLogLog (R3)
+    only. **Never touches R1 (IP failcount), block state, or strict-
+    throttle state.** Concurrency semantics (a reset racing a concurrent
+    failure) are "last write wins," documented in-code as a deliberate,
+    bounded, self-healing, non-exploitable choice — **no generation/
+    version counter was introduced**, matching this project's own prior
+    analysis that one isn't needed (an attacker cannot trigger their own
+    account's success without already having the correct credential).
+  - `is_strict_throttle_active()` / `is_temporarily_blocked()` — plain
+    `EXISTS` reads, unused by anything yet, provided for Slice 3b's
+    future `check()`.
+  - Every primitive raises `RedisUnavailableError` on any
+    `redis.RedisError` — never swallows, never introduces a second
+    fallback limiter (matches ADR §13's existing outage contract exactly;
+    the abuse layer relies on the same fail-open/fallback policy Slice 2
+    already implements for the base rate limiter).
+- **`tests/test_abuse_state.py`** (new, 32 tests): failcount creation/
+  increment/TTL/expiry; HLL creation/repeated-IP/distinct-IP counting/
+  threshold boundary/expiry/reset-on-success; R2 reset vs. R1-not-reset;
+  block creation/TTL/expiry/not-removed-by-success; strict-throttle
+  not-created-by-ordinary-failures/created-only-after-escalation/correct
+  capacity/does-not-reset-consumed-tokens-on-re-escalation/TTL/expiry;
+  multi-signal atomicity; concurrent-failure-increment and concurrent-
+  reset-vs-failure race tests (real `threading`, asserting only bounded,
+  non-negative, valid final states — no mocks); cross-account isolation;
+  shared-IP-multiple-accounts; one-account-multiple-IPs; Redis-
+  unavailable (all 5 primitives); no raw email/secret ever stored in a
+  Redis value; a bounded-TTL sweep across every key type. Uses small
+  fast test thresholds (e.g. 3/1–2s), not the real R1–R5 production
+  values — this slice tests the mechanism, not the rule table.
+  - **`ruff`/`mypy` clean** on all three new files. Test collection on
+    the host succeeds (`pytest --collect-only` → 215 tests: 183 existing +
+    32 new).
+  - **Real-Redis validated**: after the host shell's own path to the
+    Dockerized Redis/Postgres published ports was confirmed broken (an
+    environment fault, not a code defect — see "Tests run" below), the 32
+    tests were copied into and run inside the already-running
+    `compose-backend-1` container, over the Docker-internal `db`/`redis`
+    hostnames, and **passed 3 consecutive times (32/32 each run)**. This
+    is not the same as a clean host-side run of the current 215-test full
+    suite, and not a production validation — see "Tests run" for the
+    full method and caveats.
+- **Documentation updated this slice**: ADR 0006 (§22's now-resolved
+  open decisions moved into a new "Resolved during the abuse-layer
+  design/readiness review" subsection — the full R1–R5 threshold/window
+  table, the corrected 60-second token-bucket timing derivation replacing
+  an earlier wrong "~2 minutes" estimate, the strict/block TTL-asymmetry
+  rationale, and the decay policy; the "Implementation status" table's
+  abuse-layer row split into 7 granular per-component rows, all
+  Tested=No/Committed=No with an explicit Docker-unavailable note) and
+  `PROJECT_STATE.md` (component-status rows updated). `docs/SECURITY.md`
+  was reviewed and needs **no change** — it already states the abuse
+  layer doesn't exist yet, which remains true since Slice 3a changes zero
+  runtime behavior (unused primitives, no wiring).
+
 ## Explicitly NOT done (do not assume otherwise)
 
-- **Deterministic abuse/risk layer** (ADR 0006 §11/§12) — not started. No
-  `AbuseDecisionEngine`, no rule table, no `abuse:*` Redis keys, no
-  `STRICT_THROTTLE`/`TEMPORARY_BLOCK` escalation is reachable yet. (When
-  you build this: it must remain deterministic, rule-based logic — never
-  call it "AI" or claim ML/statistical evaluation unless an actual
-  evaluated model backs that claim, per the ADR's explicit non-goal.)
+- **Deterministic abuse/risk layer — decision engine and wiring (Slice
+  3b/3c)** — not started. Slice 3a (above) added only the low-level
+  Redis primitives, uncommitted. No `AbuseDecisionEngine`, no rule table,
+  no endpoint wiring, no `STRICT_THROTTLE`/`TEMPORARY_BLOCK` escalation
+  is reachable from any request yet — the primitives exist but nothing
+  calls them. (When you build this: it must remain deterministic,
+  rule-based logic — never call it "AI" or claim ML/statistical
+  evaluation unless an actual evaluated model backs that claim, per the
+  ADR's explicit non-goal.)
 - **`AuditEvent.RATE_LIMITED` is still never emitted** — the observability
   split (ADR §15) is designed but not implemented; no audit-logging code
   was added in either slice.
@@ -407,43 +525,55 @@ still entirely within Slice 2's uncommitted working tree:
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: the deterministic abuse-detection layer (ADR 0006 §11/§12)
+## Next major task: abuse-detection Slice 3b/3c (decision engine + wiring)
 
-**Both Redis slices are now merged — this is genuinely the next planned
-piece of ADR 0006, but still requires its own explicit go-ahead before
-any code is written**, same as every other unit of work in this
-repository (`AGENTS.md` §6). Recorded here so the plan stays visible,
-not as a standing instruction to start it. When it is time: **read
+**Slice 3a (Redis primitives, see above) is implemented, real-Redis
+validated (32/32, 3 consecutive runs, inside `compose-backend-1` — see
+"Completed work" and "Tests run"), but still uncommitted — it should be
+committed (per normal workflow: commit/push/PR/merge on its own) before
+Slice 3b begins**, and Slice 3b itself still requires its own explicit
+go-ahead before any code is written, same as every other unit of work in
+this repository
+(`AGENTS.md` §6). Recorded here so the plan stays visible, not as a
+standing instruction to start it. When it is time: **read
 [ADR 0006](docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
-§11/§12 in full before writing any code.** This is the last major piece
-of ADR 0006 that doesn't exist yet:
+§11/§12 and its "Resolved during the abuse-layer design/readiness
+review" subsection in full before writing any code** — the R1–R5
+thresholds, the strict/block TTL semantics, and the decay policy are
+already decided; Slice 3b consumes them, it doesn't re-derive them.
 
-- **Rule table (§11)**: R1–R5, deterministic `if`-level checks against
-  counters — not a numeric score, not ML. Needs its own signal-recording
-  primitives (login-failure counters per IP/account, the HyperLogLog
-  distinct-IP-per-account signal, reset-token-failure counters), all
-  TTL-bound (§18's cardinality analysis).
-- **Decision states (§12)**: `STRICT_THROTTLE` (a second, stricter token
-  bucket activated for an escalation window) and `TEMPORARY_BLOCK`
-  (checked first, before the ordinary bucket, per §6's flow diagram —
-  this needs its own read-only "is this dimension currently blocked?"
-  check wired in ahead of the `RedisTokenBucketLimiter.check_all()` calls
-  slice 2 just added).
+- **Rule table (§11, values now resolved)**: R1 (login failures/IP,
+  N=10, W=600s → STRICT_THROTTLE), R2 (login failures/account, N=10,
+  W=600s → STRICT_THROTTLE), R3 (distinct IPs/account via HLL, M=5,
+  W=600s → TEMPORARY_BLOCK), R4 (forgot-password/IP, N=10, W=600s →
+  STRICT_THROTTLE), R5 (reset-password validation failures/IP, N=15,
+  W=600s → TEMPORARY_BLOCK). Deterministic `if`-level checks against the
+  Slice 3a counters — not a numeric score, not ML.
+- **Decision states (§12)**: `STRICT_THROTTLE`/`TEMPORARY_BLOCK`, both
+  now backed by Slice 3a's primitives. `TEMPORARY_BLOCK` must be checked
+  first, before the ordinary bucket, per §6's flow diagram — needs a
+  read-only "is this dimension currently blocked?" check
+  (`is_temporarily_blocked()`, already written) wired in ahead of the
+  `RedisTokenBucketLimiter.check_all()` calls Slice 2 added.
 - **R2's severity is `STRICT_THROTTLE`, not `TEMPORARY_BLOCK`** — this
   was the account-lockout-as-DoS-vector correction from the design
   review; don't regress it.
 - **Audit emission (§15)**: this is also where `AuditEvent.RATE_LIMITED`
   finally gets emitted (for `STRICT_THROTTLE`) alongside a new constant
   for `TEMPORARY_BLOCK`.
-- **§11/§22's open numeric thresholds** (`N`, `M`, `W` per rule) need
-  actual values chosen and documented with rationale — this repository
-  has no incident history to derive them from; start conservative.
 - Files likely touched: a new `app/core/abuse_detection.py` (or similar —
-  not decided here), `app/core/audit.py` (new constant),
-  `app/core/rate_limit.py`'s `enforce_*` functions (the block-check needs
-  to run before `_check_or_fallback()`, per §6's flow).
+  not decided here) housing the rule table / `AbuseDecisionEngine` /
+  `check()` that calls Slice 3a's primitives, `app/core/audit.py` (new
+  constant), `app/core/rate_limit.py`'s `enforce_*` functions (the
+  block-check needs to run before `_check_or_fallback()`, per §6's
+  flow).
+- **Before Slice 3b starts**: Slice 3a has now had its real-Redis test run
+  (32/32, 3 consecutive runs inside `compose-backend-1` — see "Tests
+  run"); what remains is its own commit/PR/merge, per normal workflow —
+  don't build Slice 3b on top of an uncommitted Slice 3a.
 
-After that: Playwright E2E, then GitHub Issue #3 — neither started.
+After that: Slice 3c, then Playwright E2E, then GitHub Issue #3 — none
+started.
 
 ## Blockers
 
@@ -489,15 +619,96 @@ Redis, and `gh` CLI access are all confirmed working in this environment.
   additions only, not a change to the wiring's runtime behavior.
 - Frontend: untouched across every Redis checkpoint — not re-run (no
   frontend file changed).
+- **Slice 3a (this checkpoint, uncommitted): `uv run ruff check .`**
+  (pass, 78 files) and **`uv run mypy .`** (pass, "Success: no issues
+  found in 78 source files") both clean, covering all three new files.
+  **`uv run pytest --collect-only -q`** succeeded: **215 tests collected**
+  (183 existing + 32 new) — this confirms imports/wiring are structurally
+  correct, it is **not** a passing-test count. Actually running
+  `uv run pytest tests/test_abuse_state.py -q` produced **32 errors**,
+  every one a `sqlalchemy.exc` connection failure from the shared
+  session-scoped `_migrated_database` autouse fixture (it requires a real
+  Postgres for an Alembic migration, gating every test file including the
+  Redis-only ones). Confirmed this is purely environmental, not a code
+  defect: `docker compose ... up -d db redis` failed with "docker: command
+  not found"; `/mnt/wsl/` contains only `resolv.conf` (no
+  `docker-desktop` integration socket); direct TCP connection attempts to
+  both `127.0.0.1:6379` and `127.0.0.1:5432` returned "Connection
+  refused." Per explicit prior instruction, no Docker-level workaround
+  (installing Docker Engine in WSL, editing Docker config) was attempted.
+  **This particular attempt never got the 32 new tests executed against a
+  real Redis** — superseded by the real-Redis validation recorded
+  immediately below, from a later checkpoint in this same slice.
+
+- **Slice 3a real-Redis validation (later checkpoint, still uncommitted):**
+  once Docker Desktop/WSL integration came back, the *host shell's own*
+  path to the running containers' published ports (`127.0.0.1:5432`,
+  `127.0.0.1:6379`) was tested and found broken — TCP handshake succeeds,
+  but the protocol-level read is reset immediately (`psycopg.OperationalError:
+  server closed the connection unexpectedly`; `redis.ConnectionError:
+  Connection reset by peer`) — confirmed as an environment/networking
+  fault (not Postgres/Redis/code) via `/api/v1/health/ready` and
+  `redis-cli ping` both succeeding from **inside** the Docker network, and
+  via a previously-passing, unrelated Redis test file
+  (`test_redis_rate_limiter.py`) failing identically. Worked around by
+  running the tests **inside the already-running `compose-backend-1`
+  container** instead, over its internal `db`/`redis` hostnames (the same
+  values `docker-compose.yml` already sets as that container's own
+  `DATABASE_URL`/`REDIS_URL` — no override needed). Since that container's
+  image predates the uncommitted Slice 3a files (no bind mount), the three
+  new files were `docker cp`'d into the container's writable layer for the
+  duration of the validation, then removed afterward — no image rebuild,
+  no compose/file change, no host repo change.
+  - `uv run pytest tests/test_abuse_state.py -v` **32 passed**, 3
+    consecutive times (5.6–5.8s each run, no flakiness).
+  - Live Redis inspection (calling `record_login_failure`/
+    `record_ip_failure` directly, before any cleanup fixture ran)
+    confirmed real `abuse:*` keys of every expected type/TTL
+    (`abuse:failcount:*` strings TTL 60s, `abuse:distinct_ips:acct:*`
+    string/HLL TTL 60s with correct `PFCOUNT`, `abuse:strict:*` hashes TTL
+    1200s, `abuse:block:*` string flags TTL 600s) — every key observed had
+    a finite, positive TTL, and no raw email substring appeared in any key
+    name or value (scanned directly, not assumed).
+  - `ruff check .` / `mypy .` also re-run inside the container: both
+    clean, matching the host results.
+  - **This container's image was itself stale relative to `main` HEAD**
+    (missing exactly the 8 tests Slice 2's review-fix pass added to
+    `test_rate_limit_wiring.py` — confirmed by diffing collected test IDs
+    against the host's 215) — so the full-suite run inside that container
+    collected 207, not 215. That run initially showed 5 failures, all in
+    `test_password_reset.py`, root-caused to the container's
+    `EMAIL_PROVIDER=smtp` app-runtime setting (for manual Mailpit testing)
+    versus the test suite's implicit expectation of `EMAIL_PROVIDER=console`
+    (`conftest.py` doesn't default this one, unlike `DATABASE_URL`/
+    `REDIS_URL`/`SECRET_KEY`) — confirmed via a one-off invocation-level
+    override (`EMAIL_PROVIDER=console`, no file changed): 207/207 passed.
+    **Neither 207 number should be read as "the current 215-test suite
+    passed"** — that still requires either a fixed host-to-container
+    network path or a freshly rebuilt container image, neither done this
+    checkpoint.
+  - **Net result: the 32 Slice 3a tests are real-Redis validated. The
+    215-test full suite is not yet validated on a clean host run this
+    session** (unrelated to Slice 3a's own correctness).
 
 ## Exact next recommended action
 
-Both Redis slices are merged into `main` (`46ef03b` via PR #11, `5391a78`
-via PR #12) — nothing pending for either. The next work, in order:
+Both Redis Slice 1/2 are merged into `main` (`46ef03b` via PR #11,
+`5391a78` via PR #12) — nothing pending for either. **Slice 3a (abuse
+primitives) is implemented, real-Redis validated (32/32, 3 consecutive
+runs), but still uncommitted** — see "Completed work (Redis abuse layer —
+Slice 3a)" and "Tests run" above. The next work, in order:
 
-1. **Implement the deterministic abuse-detection layer** (ADR §11/§12) —
-   see "Next major task" above. Not started; requires its own explicit
-   go-ahead before any code is written, per `AGENTS.md` §6's workflow.
-2. **Then:** Playwright browser E2E for the authentication/
+1. **Commit/push/PR/merge Slice 3a on its own**, per normal workflow, same
+   as Slices 1 and 2 — its real-Redis validation is done; what's left is
+   the ordinary Git finalization steps. (Optionally, before or as part of
+   that: get a clean host-side run of the full 215-test suite once the
+   host-to-container networking fault is resolved, or rebuild the
+   `compose-backend-1` image so an in-container full-suite run reflects
+   current `main` HEAD — neither blocks Slice 3a's own acceptance, since
+   its own 32 tests are already validated.)
+2. **Then, with an explicit go-ahead: Slice 3b/3c** — the rule table /
+   `AbuseDecisionEngine` / endpoint wiring. See "Next major task" above.
+   Not started.
+3. **Then:** Playwright browser E2E for the authentication/
    password-recovery flows — not started.
-3. **Then:** begin GitHub Issue #3 (Knowledge Ingestion) — not started.
+4. **Then:** begin GitHub Issue #3 (Knowledge Ingestion) — not started.
