@@ -53,8 +53,8 @@ from typing import Literal
 import redis
 
 from app.core.abuse_keys import block_key, distinct_ips_key, failcount_key, strict_throttle_key
-from app.core.rate_limit import DimensionSpec
 from app.core.redis_client import RedisUnavailableError
+from app.core.token_bucket_types import DimensionSpec
 
 # STRICT_THROTTLE's token-bucket shape (ADR 0006, approved parameters) —
 # uniform across every rule that produces this state (R1, R2, R4); not a
@@ -464,3 +464,23 @@ def is_temporarily_blocked(
         return bool(client.exists(block_key(operation, dimension, value)))
     except redis.RedisError as exc:
         raise RedisUnavailableError(str(exc)) from exc
+
+
+def temporary_block_ttl_seconds(
+    client: redis.Redis, *, operation: str, dimension: str, value: str
+) -> int | None:
+    """Remaining TTL (seconds) for an active TEMPORARY_BLOCK, or `None`
+    if this dimension isn't currently blocked -- Slice 3b (ADR 0006 §12)
+    needs this, not just `is_temporarily_blocked()`'s plain boolean, to
+    build an accurate `Retry-After` for a blocked response. Read-only
+    (`TTL`) -- doesn't create, refresh, or consume anything, and doesn't
+    change `is_temporarily_blocked()`'s own existing contract; the two
+    coexist as separate, minimal reads for their separate callers."""
+    try:
+        ttl = client.ttl(block_key(operation, dimension, value))
+    except redis.RedisError as exc:
+        raise RedisUnavailableError(str(exc)) from exc
+    # TTL returns -2 (key missing) / -1 (key exists, no expiry -- never
+    # happens here, since creation and EXPIRE are always paired) for "not
+    # blocked"; only a positive integer means an active, bounded block.
+    return ttl if ttl > 0 else None
