@@ -10,6 +10,78 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
+### 2026-09-19 — Abuse-protection Slice 3b: decision engine and endpoint wiring
+
+- **Not committed.** Implements the deterministic decision layer on top
+  of Slice 3a's primitives (now merged, see `[Unreleased — committed]`
+  below) and wires it into `login`/`forgot-password`/`reset-password` —
+  the only three operations any of R1–R5 target. `register`/`refresh`
+  remain byte-for-byte unchanged.
+- `backend/app/core/abuse_decision.py` (new): a module-level R1–R5 rule
+  table (the data that makes `TEMPORARY_BLOCK` deterministically
+  dominate `STRICT_THROTTLE` — block dimensions are always resolved
+  before any strict dimension is even inspected); `check()` (pre-request,
+  read-only); four explicitly-named record functions
+  (`record_login_failure`, `record_login_success`,
+  `record_forgot_password_request`, `record_reset_validation_failure` —
+  deliberately not one function overloaded with a `succeeded` flag,
+  since `forgot-password` has no real success/failure branch to key
+  off); fails open unconditionally on Redis unavailability, no-ops when
+  Redis is unconfigured; never touches PostgreSQL or `app.core.audit`
+  (Slice 3c's job).
+- `backend/app/core/abuse_state.py` (additive): one new primitive,
+  `temporary_block_ttl_seconds()`, for an accurate `Retry-After` on a
+  blocked response — no existing signature changed.
+- `backend/app/core/token_bucket_types.py` (new): `DimensionSpec`/
+  `TokenBucketResult` extracted out of `rate_limit.py` to break a
+  circular import (`rate_limit.py` → `abuse_decision.py` →
+  `abuse_state.py` → `rate_limit.py`) discovered — via an actual
+  `ImportError`, not just suspected — while wiring this slice.
+  `rate_limit.py` re-exports both names unchanged; no other call site
+  needed to change.
+- `backend/app/core/rate_limit.py` / `backend/app/api/v1/auth.py`
+  (modified): `enforce_login_rate_limit`/
+  `enforce_forgot_password_rate_limit`/`enforce_reset_password_rate_limit`
+  now consult `abuse_decision.check()` ahead of the base `check_all()`
+  (an active block rejects immediately; an active strict dimension is
+  folded into the same atomic `check_all()` invocation as the base
+  dimensions — never a second Redis round trip). `login`/
+  `forgot-password`/`reset-password` gained post-outcome recording,
+  called only after the real outcome is known — never in the
+  pre-request dependency, which necessarily runs before authentication
+  is attempted.
+- `backend/tests/test_abuse_decision.py` (new, 33 tests): rule-table
+  shape, per-rule threshold behavior for R1–R5, TTL/non-refresh
+  semantics, simultaneous-rule precedence (confirming block always
+  dominates strict, by construction), account/IP isolation,
+  successful-login reset scoping, R4's unconditional recording, R5's
+  failure-only recording, Redis-unavailable/unconfigured handling,
+  concurrency races, strict-dimension atomicity with the base dimension,
+  and no raw secret leakage. Two test-design bugs (not implementation
+  bugs) were found and fixed during this slice's own validation.
+- `ruff`/`mypy` clean (81 source files). **33/33 new tests passed, 3
+  consecutive times, against real Redis + real PostgreSQL**, run inside
+  `compose-backend-1` (the host shell's own published-port path remained
+  broken this session too) — alongside the unaffected 32 from Slice 3a
+  (65/65 combined).
+- **A genuine test-infrastructure gap was found and deliberately not
+  fixed** (out of scope for this slice): `tests/conftest.py`'s
+  `_reset_rate_limiters` sweeps `rl:*` between tests but not the new
+  `abuse:*` keys, so a full pre-existing-suite run can accumulate real
+  R4 state across the shared default `TestClient` IP and fail 2
+  pre-existing `test_password_reset.py` tests — reproduced from a
+  freshly flushed Redis, confirmed unrelated to this slice's own
+  correctness. Recorded in `HANDOFF.md` with the exact one-line fix for
+  a future, separately-approved change.
+- Docs updated in the same working tree: ADR 0006 (§6's flow diagram
+  corrected — the original placed `record(outcome)` inside the
+  pre-request dependency, which is unreachable since outcomes aren't
+  known until the endpoint body runs; "Implementation status" table
+  updated), `PROJECT_STATE.md`, `HANDOFF.md`. `docs/SECURITY.md`
+  reviewed and left unchanged — it describes the *committed* codebase,
+  and Slice 3b isn't committed yet, so its "abuse layer doesn't exist
+  yet" statement remains accurate for `main`.
+
 ### 2026-09-19 — Abuse-protection Slice 3a: real-Redis validation
 
 - **Still not committed** — this entry records a validation result for
@@ -183,6 +255,26 @@ with invented history of either kind.
   task.
 
 ## [Unreleased — committed]
+
+### 2026-09-19 — `feat: add Redis abuse state primitives` (676d7e5), merged as `026dcf3`
+
+*(Branch `issue-redis-rate-limiting-slice-3a`, on top of the merged
+Slice 2 (`5391a78`, PR #12). Opened as **PR #13**, verified green on
+GitHub Actions CI (backend lint/typecheck/tests, frontend
+lint/typecheck/tests/build, Docker build check), merged into `main` as
+squash commit `026dcf3`.)*
+
+Adds `backend/app/core/abuse_keys.py` (the `abuse:` Redis key namespace)
+and `backend/app/core/abuse_state.py` (atomic Lua-scripted record/reset
+primitives for R1–R5's counters, R3's distinct-IP HyperLogLog, the
+strict-throttle bucket, and the temporary-block flag — reusing the
+existing token-bucket engine for the strict bucket, no new engine).
+Fully parameterized — no rule thresholds hardcoded. 32 tests
+(`backend/tests/test_abuse_state.py`), real-Redis validated (32/32, 3
+consecutive runs) before this PR was opened. No endpoint wiring —
+`register`/`refresh`/`login`/`forgot-password`/`reset-password` remain
+byte-for-byte unchanged from Slice 2 (that's Slice 3b, see
+`[Unreleased — working tree]` above).
 
 ### 2026-09-18 — `feat: wire Redis rate limiting into auth endpoints` (f61737f), merged as `5391a78`
 
