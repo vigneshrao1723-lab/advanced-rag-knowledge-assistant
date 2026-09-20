@@ -626,13 +626,33 @@ targets them).
   artifact of repeated same-session reruns) by flushing Redis and
   running the full suite once, cleanly, twice (with and without the
   `EMAIL_PROVIDER` override) — both times, exactly these same 2 tests
-  failed with the identical `429` root cause. **Deliberately not fixed
-  in this slice** — `tests/conftest.py` was explicitly out of scope;
-  the one-line fix (mirroring the existing `rl:*` sweep to also cover
-  `abuse:*`) is recorded here for a future, separately-approved change.
-  `test_abuse_decision.py`/`test_abuse_state.py` are unaffected (each
-  has its own dedicated `abuse:*`-sweeping cleanup fixture, scoped to
-  just those files).
+  failed with the identical `429` root cause. `test_abuse_decision.py`/
+  `test_abuse_state.py` were unaffected throughout (each has its own
+  dedicated `abuse:*`-sweeping cleanup fixture, scoped to just those
+  files).
+
+**Test-isolation fix (same branch, follow-up commit `46a2860`):**
+`tests/conftest.py`'s `_reset_rate_limiters` extended to also sweep
+`abuse:*` between tests, mirroring the existing `rl:*` pattern-delete
+loop exactly, under the same `RedisError` tolerance already in place —
+one file, no production code touched, no test skipped/xfailed/reordered,
+no sleeps added. Confirmed CI itself hit the identical root cause on PR
+#14 before this fix (3/248 failed: the same 2 `test_password_reset.py`
+tests plus `test_rate_limit_wiring.py::test_successful_forgot_password_creates_the_redis_ip_and_account_dimension_keys`,
+which failed there with the same `429 == 200` signature — a different
+specific test than locally, purely because CI's test-execution order
+differs, not a different root cause). After the fix: the 3 previously-
+failing tests pass individually and together; the complete **248-test
+backend suite passed 248/248, 3 consecutive runs** (real Postgres + real
+Redis, inside `compose-backend-1`, `EMAIL_PROVIDER=console` to match
+CI's own environment — confirmed via `.github/workflows/ci.yml` that CI
+never sets `EMAIL_PROVIDER` at all, so it was never affected by this
+container's separate `EMAIL_PROVIDER=smtp` runtime artifact). No new
+regression test was added — the existing suite (specifically the
+forgot-password wiring test that was one of the 3 originally failing)
+already directly demonstrates the fix, and adding another would have
+been redundant. `ruff`/`mypy` clean (host and container, 81 source
+files — the fixture change touches only a test file).
 - **Documentation updated this slice**: ADR 0006 (§6's flow diagram
   corrected — the original placed `record(outcome)` inside the
   pre-request dependency, which is unreachable since outcomes aren't
@@ -717,16 +737,10 @@ standing instruction to start it.
   see "Known limitations" in the Slice 3b report), and audit-row
   assertions through `TestClient`. Deliberately not added in Slice 3b,
   per that slice's own readiness review.
-- **The `tests/conftest.py` `abuse:*` sweep gap** (found during Slice
-  3b's validation, not fixed): `_reset_rate_limiters` needs a second
-  `scan_iter(match="abuse:*")` sweep alongside its existing `rl:*` one,
-  or the pre-existing suite will keep intermittently failing once R4/R1
-  state accumulates across enough `forgot-password`/`login` calls
-  sharing the default `TestClient` IP within one pytest session. This
-  is a one-line, low-risk fix mirroring an existing pattern — worth
-  doing before or alongside Slice 3c, since Slice 3c's own HTTP-level
-  tests will make this worse, not better (more forgot-password/login
-  calls per session).
+- **The `tests/conftest.py` `abuse:*` sweep gap has been fixed** (commit
+  `46a2860`, same branch) — `_reset_rate_limiters` now sweeps `abuse:*`
+  alongside its existing `rl:*` pattern, and the complete 248-test suite
+  passes cleanly, 3 consecutive runs. No longer a blocker for anything.
 - **Before Slice 3c starts**: Slice 3b needs its own commit/PR/merge,
   per normal workflow — don't build Slice 3c on top of an uncommitted
   Slice 3b.
@@ -857,44 +871,42 @@ Redis, and `gh` CLI access are all confirmed working in this environment.
   bugs (not implementation bugs) were found and fixed during this
   validation — see "Completed work (Redis abuse layer — Slice 3b)" for
   exactly what and why.
-  - **Full pre-existing suite, run inside the container from a freshly
-    flushed Redis, `EMAIL_PROVIDER=console` overridden**: 238 passed, 2
-    failed (240 collected). Diagnosed precisely (not assumed): the 2
-    failures are a real, reproducible consequence of Slice 3b's own
-    wiring interacting with `tests/conftest.py`'s incomplete
-    `_reset_rate_limiters` fixture (sweeps `rl:*`, not the new
-    `abuse:*`) — confirmed by direct diagnostic script showing a `429`
-    response, and confirmed reproducible from a clean Redis flush, twice,
-    not an artifact of repeated same-session reruns. **Not fixed** —
-    `tests/conftest.py` was explicitly out of scope for this slice. See
-    "Next major task" above for the one-line fix this needs.
   - **Circular-import fix verified**: `from app.main import create_app;
     create_app()` succeeds; `mypy .` passes across all 81 files
     (including the explicit-reexport fix `DimensionSpec as DimensionSpec`
     needed for `no_implicit_reexport` compliance after the
     `token_bucket_types.py` extraction).
+- **Test-isolation fix (commit `46a2860`, same branch)**: full
+  pre-existing suite, run inside the container from a freshly flushed
+  Redis, `EMAIL_PROVIDER=console` overridden to match CI's own
+  environment (confirmed via `.github/workflows/ci.yml` that CI never
+  sets `EMAIL_PROVIDER`) — before the fix, 238 passed/2 failed locally
+  (240 collected); CI itself independently hit 245 passed/3 failed on
+  PR #14 (the same root cause, landing on one extra test due to a
+  different execution order). After the fix: **the complete 248-test
+  suite (215 pre-abuse-layer + 32 Slice 3a + 33 Slice 3b — `conftest.py`
+  changes don't add tests, they just fix isolation) passed 248/248, 3
+  consecutive runs**, real Postgres + real Redis. `ruff check .`/`mypy .`
+  both clean after the fix too (81 source files — the fixture change is
+  test-only).
 
 ## Exact next recommended action
 
 Redis Slices 1/2/3a are merged into `main` (`46ef03b` PR #11, `5391a78`
 PR #12, `026dcf3` PR #13) — nothing pending for any of them. **Slice 3b
 (decision engine + endpoint wiring) is implemented, real-Redis validated
-(65/65, 3 consecutive runs), but still uncommitted** — see "Completed
-work (Redis abuse layer — Slice 3b)" and "Tests run" above. The next
-work, in order:
+(65/65, 3 consecutive runs), the test-isolation gap it surfaced is fixed
+(commit `46a2860`), and the complete 248-test suite passes cleanly (3
+consecutive runs) — but PR #14 is still open, uncommitted to `main`,
+awaiting human merge** — see "Completed work (Redis abuse layer — Slice
+3b)" and "Tests run" above. The next work, in order:
 
-1. **Commit/push/PR/merge Slice 3b on its own**, per normal workflow,
-   same as Slices 1/2/3a — its real-Redis validation is done; what's
-   left is the ordinary Git finalization steps.
-2. **Separately, low-priority but real**: fix `tests/conftest.py`'s
-   `_reset_rate_limiters` to also sweep `abuse:*` (one line, mirrors the
-   existing `rl:*` sweep exactly) — needed for the pre-existing suite to
-   run cleanly end-to-end now that the abuse layer is actually wired.
-   Not blocking Slice 3b's own acceptance (its own 65 tests are already
-   validated and unaffected by this gap).
-3. **Then, with an explicit go-ahead: Slice 3c** — audit emission
+1. **Human review and merge of PR #14** — implementation, real-Redis
+   validation, test-isolation fix, and complete-suite validation are all
+   done; this agent does not merge PRs itself.
+2. **Then, with an explicit go-ahead: Slice 3c** — audit emission
    (`AuditEvent.RATE_LIMITED`/`ABUSE_TEMPORARY_BLOCK_APPLIED`) and
    HTTP-level test coverage. See "Next major task" above. Not started.
-4. **Then:** Playwright browser E2E for the authentication/
+3. **Then:** Playwright browser E2E for the authentication/
    password-recovery flows — not started.
-5. **Then:** begin GitHub Issue #3 (Knowledge Ingestion) — not started.
+4. **Then:** begin GitHub Issue #3 (Knowledge Ingestion) — not started.

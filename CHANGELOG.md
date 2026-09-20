@@ -10,6 +10,28 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
+### 2026-09-19 — Test-isolation fix: sweep `abuse:*` Redis keys between tests
+
+- **Not committed to `main`** (commit on the still-open PR #14 branch,
+  `issue-redis-rate-limiting-slice-3b`). Fixes a real test-isolation gap
+  the abuse-protection layer's endpoint wiring (Slice 3b, below)
+  surfaced and CI itself caught: `backend/tests/conftest.py`'s
+  `_reset_rate_limiters` autouse fixture swept `rl:*` Redis keys between
+  tests but not the new `abuse:*` keys `login`/`forgot-password`/
+  `reset-password` now write. Every `TestClient` request shares the same
+  fixed default peer IP, so that state accumulated across unrelated
+  tests within one pytest session and could legitimately trip R4's
+  `STRICT_THROTTLE`, producing real `429` responses in later,
+  unconnected tests.
+- Fixed with a single, minimal change: the existing `rl:*`
+  pattern-delete loop now also sweeps `abuse:*`, under the same
+  `RedisError` tolerance already in place. No production code touched
+  (`abuse_decision.py`/`abuse_state.py`/`rate_limit.py`/`auth.py` all
+  unchanged); no test skipped, `xfail`ed, or reordered.
+- The complete backend suite (248 tests: 215 pre-abuse-layer + 32 Slice
+  3a + 33 Slice 3b) **passed 248/248, 3 consecutive runs**, against real
+  PostgreSQL and real Redis. `ruff`/`mypy` clean.
+
 ### 2026-09-19 — Abuse-protection Slice 3b: decision engine and endpoint wiring
 
 - **Not committed.** Implements the deterministic decision layer on top
