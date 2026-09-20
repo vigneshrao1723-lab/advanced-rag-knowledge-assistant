@@ -10,6 +10,49 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
+### 2026-09-20 — Browser E2E foundation: Playwright for authentication/password-recovery
+
+- **Not committed.** Introduces Playwright, previously absent from this
+  repository (`@playwright/test` existed only transitively, unused, in
+  `frontend/package-lock.json`'s dependency graph).
+- `frontend/playwright.config.ts` (new): Chromium, `baseURL` from
+  `PLAYWRIGHT_BASE_URL` (default `http://localhost:3000`), `workers: 1`/
+  `fullyParallel: false` deliberately — the backend's base rate limiter
+  and deterministic abuse layer (ADR 0006) both key partly by source IP,
+  and every request in a Playwright run shares one peer address.
+- `frontend/e2e/fixtures/`: `users.ts`, `mailpit.ts` (reads the
+  password-reset email through Mailpit's real REST API, not a mock of
+  the email provider), `auth-helpers.ts` (drives the real UI for
+  register/login/logout).
+- `frontend/e2e/app-availability.spec.ts` (3 tests), `auth.spec.ts` (9
+  tests — registration, session persistence/reload, logout,
+  protected-route redirects, and a genuine CSRF positive+negative case
+  through the real backend middleware), `password-recovery.spec.ts` (7
+  tests — the full forgot-password → Mailpit → reset-password →
+  post-reset login → session-revocation flow) — 19 tests total, run
+  against the real frontend/backend/PostgreSQL/Redis/Mailpit stack, no
+  mocks.
+- Three genuine findings from this validation, all fixed as test-code
+  corrections — no application/production code changed for any of them:
+  a locator strict-mode ambiguity (a created workspace's name correctly
+  renders in three places, not a bug); a direct refresh-revocation check
+  that initially forgot the CSRF header a state-changing endpoint
+  requires; and Chromium's own "Failed to load resource: 401" console
+  logging for the expected, already-handled anonymous-visitor
+  auth-bootstrap check.
+- `npx eslint e2e/ playwright.config.ts` / `npx tsc --noEmit -p .` both
+  clean. **19/19 passed, 3 consecutive clean runs** (properly spaced —
+  see `HANDOFF.md` for why 3 back-to-back runs with no gap hit a real,
+  correctly-working backend rate limit rather than a suite bug).
+  Existing 48 vitest tests and `npm run lint` unaffected.
+- `.github/workflows/ci.yml` gains a new `e2e` job (real service
+  containers, deterministic readiness waits, uploads the HTML report and
+  failure logs as artifacts) — not yet run on GitHub Actions as of this
+  entry.
+- Docs updated in the same working tree: `docs/DEPLOYMENT.md` (new
+  "Browser E2E (Playwright)" section, CI/CD section extended),
+  `PROJECT_STATE.md`, `HANDOFF.md`.
+
 ### 2026-09-20 — Abuse-protection Slice 3c: escalation audit emission + HTTP-level tests
 
 - **Not committed.** Adds abuse-escalation audit emission on top of
@@ -331,6 +374,28 @@ with invented history of either kind.
   task.
 
 ## [Unreleased — committed]
+
+### 2026-09-20 — `feat: emit audit events for abuse-layer escalations` (58b6c71), merged as `75dd466`
+
+*(Branch `issue-redis-rate-limiting-slice-3c`, on top of the merged
+Slice 3b (`42529e3`, PR #14). Opened as **PR #15**, verified green on
+GitHub Actions CI (3/3 checks) on the first push, merged into `main` as
+squash commit `75dd466`.)*
+
+Adds `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` to
+`backend/app/core/audit.py` and a `_audit_abuse_escalation()` helper in
+`backend/app/api/v1/auth.py`, called from `login`/`forgot-password`/
+`reset-password` right after each abuse-state `record_*()` call — emits
+`AuditEvent.RATE_LIMITED` for a `STRICT_THROTTLE` transition or
+`AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` for a `TEMPORARY_BLOCK`
+transition, exactly once per escalation, with metadata limited to
+rule/operation/dimension, the already-HMAC-hashed account identifier
+when account-scoped, and the block TTL — never a raw secret. No
+abuse-decision production code (`abuse_decision.py`/`abuse_state.py`/
+`rate_limit.py`) was modified. 6 new HTTP-level tests
+(`backend/tests/test_abuse_audit.py`), real-Redis validated (6/6, 3
+consecutive runs, alongside the complete 254-test suite) before this PR
+was opened.
 
 ### 2026-09-20 — `feat: add abuse-decision engine and wire R1-R5 into auth endpoints` (906e2f9) + `test: clear abuse:* Redis keys between tests alongside rl:*` (46a2860) + docs (2896b1d), merged as `42529e3`
 

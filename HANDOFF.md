@@ -8,73 +8,34 @@ in-flight task — overwrite it as work progresses, don't append a history
 
 ## Current task
 
-**Redis distributed rate limiting is fully merged into `main` — both
-slices.** Issue #1 and Issue #2 are merged to `main`. ADR 0006's design
-was adversarially reviewed and finalized as commit `7e439d2` (pushed,
-then itself merged into `main`). Redis **Slice 1** (foundation +
-token-bucket engine) was committed as `b1f1b00`, reconciled with a
-documentation checkpoint (`c8aa2be`), pushed, opened as **PR #11**, and
-**merged into `main` as squash commit `46ef03b`**. Redis **Slice 2**
-(wiring that engine into every `enforce_*_rate_limit` dependency, plus
-the observability/test-coverage fixes from its own security review — see
-below) was then implemented on a fresh branch,
-`issue-redis-rate-limiting-slice-2`, committed as `f61737f`, pushed,
-opened as **PR #12**, verified green on GitHub Actions CI (3/3 checks),
-and **merged into `main` as squash commit `5391a78`**. **`main`/
-`origin/main` are currently at `5391a78`.** Both feature branches were
-deleted on `origin` after their respective merges. Nothing is pending
-review, push, or merge for either slice.
+**Redis distributed rate limiting + the deterministic abuse-protection
+layer are fully merged into `main` — Slices 1 through 3c, all of ADR
+0006.** Issue #1 and Issue #2 are merged. In order: Slice 1 (foundation
++ token-bucket engine) — PR #11, squash commit `46ef03b`. Slice 2
+(endpoint wiring) — PR #12, squash commit `5391a78`. Slice 3a (abuse-state
+Redis primitives) — PR #13, squash commit `026dcf3`. Slice 3b (decision
+engine + R1–R5 endpoint wiring, plus a `tests/conftest.py` test-isolation
+fix that slice's own validation surfaced) — PR #14, squash commit
+`42529e3`. Slice 3c (abuse-escalation audit emission —
+`AuditEvent.RATE_LIMITED`/`ABUSE_TEMPORARY_BLOCK_APPLIED` — plus 6
+HTTP-level tests) — PR #15, squash commit `75dd466`. **`main`/
+`origin/main` are at `75dd466`.** Nothing is pending review, push, or
+merge for any of them. Full per-slice implementation detail for each is
+preserved below under its own "Completed work" section — not repeated
+here, per this file's own "don't append a history" instruction.
 
-**What this means in practice:** every authentication endpoint's actual
-rate-limiting behavior now goes through the Redis-backed engine first,
-falling back to the pre-existing in-process limiter per ADR §13 — **this
-is a real, observable change, now active in the committed codebase on
-`main`.** Verified by automated tests (see "Tests run" below), by
-GitHub Actions CI on PR #12 (backend/frontend/Docker-build checks all
-passed), and, for the original wiring, by live testing against the
-running Docker Compose stack in an earlier checkpoint (including a
-genuine Redis outage and recovery).
-
-**The deterministic abuse-detection layer's design was approved, and
-Slice 3a (low-level Redis primitives) was implemented, real-Redis
-validated (32/32, 3 consecutive runs), and merged into `main` as squash
-commit `026dcf3` (PR #13).** `main`/`origin/main` are at `026dcf3`.
-
-**Slice 3b (the decision engine + endpoint wiring) was implemented,
-real-Redis validated, had its own test-isolation-gap finding fixed, and
-merged into `main` as squash commit `42529e3` (PR #14).** `main`/
-`origin/main` are at `42529e3`. `app/core/abuse_decision.py`
-(`check()`/`record_login_failure()`/`record_login_success()`/
-`record_forgot_password_request()`/`record_reset_validation_failure()`,
-the R1–R5 rule table), the additive `temporary_block_ttl_seconds()`
-primitive in `abuse_state.py`, `app/core/token_bucket_types.py`
-(extracted to break a real import cycle), and the wiring into
-`rate_limit.py`'s `enforce_login_rate_limit`/
-`enforce_forgot_password_rate_limit`/`enforce_reset_password_rate_limit`
-plus `app/api/v1/auth.py`'s `login`/`forgot-password`/`reset-password`
-endpoints are **all now active in the committed codebase on `main`.**
-`tests/conftest.py`'s `_reset_rate_limiters` now also sweeps `abuse:*`
-between tests (the fix for the gap that slice's own validation found).
-
-**Slice 3c (abuse-escalation audit emission + HTTP-level test coverage)
-has now also been implemented and real-Redis validated, but is still
-uncommitted, working-tree-only** — `app/core/audit.py` gained one new
-constant (`ABUSE_TEMPORARY_BLOCK_APPLIED`); `app/api/v1/auth.py` gained
-a `_audit_abuse_escalation()` helper, called from `login`/
-`forgot-password`/`reset-password` right after each `record_*()` call,
-emitting `AuditEvent.RATE_LIMITED` (`STRICT_THROTTLE`) or
-`AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` (`TEMPORARY_BLOCK`) exactly
-once per escalation — never on an already-escalated repeat, never for
-an ordinary `ALLOW`. No abuse-decision production code was modified;
-this slice only consumes `AbuseRecordOutcome`'s existing return value.
-6 new HTTP-level tests (`tests/test_abuse_audit.py`) exercise the real
-endpoints end-to-end (real Redis, real PostgreSQL) — **6/6 passed, 3
-consecutive runs**, alongside the complete **254-test backend suite
-passing 254/254, 3 consecutive runs**. See "Completed work (Redis abuse
-layer — Slice 3c)" below for the full writeup, including two test-design
-bugs found and fixed during this slice's own validation (not production
-defects). Do not start Playwright or Issue #3 without an explicit
-go-ahead. See "Next major task" below for what comes next.
+**Browser E2E coverage (Playwright) for the authentication/
+password-recovery flows has now been implemented and real-stack
+validated, but is still uncommitted, working-tree-only** —
+`frontend/playwright.config.ts` + `frontend/e2e/` (19 tests across 3
+spec files), run against the real frontend/backend/PostgreSQL/Redis/
+Mailpit stack, no mocks. **19/19 passed, 3 consecutive clean runs**
+(spaced to respect the backend's own real `register` rate-limit window —
+see "Completed work (Playwright E2E — authentication/password-recovery)"
+below for exactly why, and for two genuine findings this validation
+surfaced and fixed as test-code corrections, not application changes).
+Do not start Issue #3 without an explicit go-ahead. See "Next major
+task" below for what comes next.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -758,17 +719,129 @@ abuse-decision code modified, only consumed.
   the two new event types and their metadata/`user_id` conventions),
   `PROJECT_STATE.md`, this file.
 
+## Completed work (Playwright E2E — authentication/password-recovery)
+
+**Uncommitted, working-tree-only.** No Playwright infrastructure existed
+before this — `@playwright/test` was not installed (only present
+transitively, unused, in `frontend/package-lock.json`'s dependency
+graph); introduced fresh.
+
+- **`frontend/playwright.config.ts`** (new): `baseURL` from
+  `PLAYWRIGHT_BASE_URL` (default `http://localhost:3000`); Chromium only,
+  for now; `trace`/`screenshot`/`video` captured `retain-on-failure`/
+  `only-on-failure` for debugging without bloating every run.
+  **`workers: 1`, `fullyParallel: false`, deliberately** — the backend's
+  base rate limiter and the deterministic abuse layer (ADR 0006) both key
+  partly by source IP, and every Playwright request in a run shares one
+  peer address; parallel specs would risk a real, correctly-functioning
+  `429` unrelated to what any individual test checks.
+- **`frontend/e2e/fixtures/`**: `users.ts` (unique-email/password
+  helpers, mirroring the backend pytest suite's own `_unique_email()`
+  pattern); `mailpit.ts` (polls Mailpit's real REST API —
+  `http://localhost:8025` — for the password-reset email by recipient
+  and subject, extracts the reset link by regex; a genuine poll loop for
+  real, variable SMTP-capture delivery latency, not a fixed sleep);
+  `auth-helpers.ts` (`registerViaUi`/`loginViaUi`/`logoutViaUi`/
+  `readBrowserStorage`, all driving the real UI, never a direct API
+  shortcut for the flows actually under test).
+- **`frontend/e2e/app-availability.spec.ts`** (3 tests): the home page
+  loads with no unexpected console errors, an anonymous visitor sees
+  the log in/register entry points, the backend readiness endpoint the
+  application itself depends on is reachable and reports `ready`.
+- **`frontend/e2e/auth.spec.ts`** (9 tests, 2 `describe.serial` blocks
+  each driving one shared `page` created in `beforeAll` — `.serial()`
+  alone does not share a page/context between tests, so each block
+  creates and closes its own explicitly): short-password client-side
+  validation (no request sent); a full register → verify no token in
+  `localStorage`/`sessionStorage` → reload persists the session → logout
+  ends it → an unauthenticated visitor is redirected away from a
+  protected route journey; a separate login → storage-security check →
+  **CSRF negative case** (a state-changing `POST` with the session's real
+  cookies but no `X-CSRF-Token` header — the exact shape the
+  double-submit pattern exists to reject — gets a real `403` from the
+  real middleware) → **CSRF positive case** (the same mutation through
+  the real UI, which does attach the header, succeeds) journey.
+- **`frontend/e2e/password-recovery.spec.ts`** (7 tests, one
+  `describe.serial` block): forgot-password for an existing account and
+  for a nonexistent one return the identical generic message
+  (enumeration resistance); the real email is read back through Mailpit,
+  the reset link is followed, the new password is accepted, and no
+  token/link is left in browser storage; the old password stops
+  authenticating (with the backend's own generic
+  "Incorrect email or password." message — itself further
+  enumeration-resistance evidence); the new password authenticates; and
+  — the one test needing genuinely persistent pre-reset session state —
+  the pre-reset session's **refresh capability** (not its short-lived
+  access token, which is documented, intentional, not-retroactively-
+  invalidated behavior — ADR 0003's hot-path trade-off, already proven
+  by the backend's own
+  `test_password_reset_does_not_retroactively_invalidate_an_already_issued_access_token`)
+  is confirmed revoked (`401`) by a direct, CSRF-header-attached
+  `POST /api/v1/auth/refresh` using that session's own cookies.
+- **Genuine findings from this validation, all fixed as test-code
+  corrections — no application/production code was changed for any of
+  them:**
+  1. A locator using `getByText(workspaceName)` hit a real strict-mode
+     ambiguity — the created workspace's name legitimately renders in
+     three places at once (the workspace switcher, the list, and its own
+     detail heading), which is correct application behavior, not a bug.
+     Fixed by scoping the assertion to the main content region.
+  2. A direct `POST /api/v1/auth/refresh` call meant to prove session
+     revocation returned `403`, not the expected `401` — because, like
+     `/api/v1/workspaces`, `/refresh` is itself a state-changing,
+     CSRF-protected endpoint, and the raw request (deliberately, in the
+     *other*, adjacent CSRF-negative test) didn't attach the header.
+     Fixed by reading the session's own `csrf_token` cookie and attaching
+     it, matching what `lib/api-client.ts` already does for every real
+     request.
+  3. `page.on("console", ...)` with `type() === "error"` also captures
+     Chromium's own "Failed to load resource: 401" log line for the
+     anonymous-visitor auth-bootstrap check
+     (`GET /api/v1/users/me` on mount, `lib/auth-context.tsx`) —
+     expected, already-caught application behavior, not a fatal error.
+     Fixed by filtering that specific, well-understood log pattern while
+     still catching any other console error and any genuine uncaught
+     exception (`pageerror`, a separate listener, unchanged).
+- **`ruff`/`npx eslint e2e/ playwright.config.ts`/`npx tsc --noEmit`**
+  all clean. **19/19 passed, 3 consecutive clean runs.** The first
+  attempt at 3 back-to-back runs (no gap) hit a real, correctly-working
+  `429` from the backend's own `register` rate limiter (capacity 5/60s
+  per source IP) — not flakiness, a deterministic consequence of firing
+  ~9 registrations inside one 60-second window across 3 runs. Re-run
+  cleanly 3 times with the real bucket's own TTL-based refill (polled via
+  `redis-cli TTL`, not a blind sleep) between runs. **This means: do not
+  fire the full E2E suite repeatedly back-to-back with no gap** — a
+  single CI job run is unaffected (one run, once), but local repeat runs
+  for flakiness-hunting need the same spacing.
+- Existing frontend suite (**48 vitest tests**) and `npm run lint`
+  confirmed unaffected/still clean.
+- **`.github/workflows/ci.yml`** gained a new `e2e` job (after
+  `backend`/`frontend` pass): real Postgres/Redis/Mailpit service
+  containers, the real backend (`uvicorn`) and frontend (`next dev`)
+  started as background processes with a deterministic readiness-poll
+  wait (not a fixed sleep), then `npm run test:e2e`; uploads the HTML
+  report (and, on failure, the server logs — no secrets) as build
+  artifacts. **Not yet run on GitHub Actions as of this entry** — this
+  session's own validation was local, against the already-running
+  `docker compose` stack; the CI job's exact behavior will be confirmed
+  once the PR is actually opened and CI runs for real, not claimed here
+  in advance.
+- **This is not a production validation.**
+
 ## Explicitly NOT done (do not assume otherwise)
 
-- **Slice 3c (audit emission + HTTP-level tests) is implemented,
-  real-Redis validated, but uncommitted, working-tree-only** — see
-  "Completed work (Redis abuse layer — Slice 3c)" above. `AuditEvent.RATE_LIMITED`
-  and the new `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` are now both
-  emitted, exactly once per escalation, from `login`/`forgot-password`/
+- **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
+  and `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` are both emitted,
+  exactly once per escalation, from `login`/`forgot-password`/
   `reset-password`. This remains deterministic, rule-based logic
   throughout — never call it "AI" or claim ML/statistical evaluation
   unless an actual evaluated model backs that claim, per the ADR's
   explicit non-goal.
+- **Playwright E2E is implemented, real-stack validated, but
+  uncommitted, working-tree-only** — see "Completed work (Playwright E2E
+  — authentication/password-recovery)" above. Covers only the
+  authentication/password-recovery surface; no document/chat/search UI
+  exists yet for E2E coverage to extend to.
 - **Document-access/ingestion audit events (Issue #3) do not exist
   yet** — `AuditEvent` still only covers auth/workspace/rate-limit/
   abuse-escalation events.
@@ -802,26 +875,24 @@ abuse-decision code modified, only consumed.
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: Playwright E2E, then GitHub Issue #3
+## Next major task: GitHub Issue #3 (Knowledge Ingestion)
 
-**ADR 0006's deterministic abuse-protection layer is now functionally
-complete end-to-end — primitives (Slice 3a, merged), decision engine +
-endpoint wiring (Slice 3b, merged), and audit emission (Slice 3c,
-implemented + real-Redis validated, awaiting its own commit/PR/merge).**
-Nothing further is planned under ADR 0006 unless a future decision
-proposes one (e.g. a `Retry-After` header, `Forwarded` header support —
-see "Known limitations" in the Slice 3c report below).
+**ADR 0006's deterministic abuse-protection layer is functionally
+complete end-to-end and fully merged (Slices 1–3c).** Nothing further is
+planned under it unless a future decision proposes one (e.g. a
+`Retry-After` header, `Forwarded` header support — see "Known
+limitations" in the Slice 3c report above). Browser E2E coverage for the
+authentication/password-recovery flows is implemented and validated,
+awaiting its own commit/PR/merge.
 
-**Before anything else starts**: Slice 3c needs its own commit/PR/merge,
-per normal workflow — don't start new feature work on top of an
-uncommitted Slice 3c.
+**Before anything else starts**: the Playwright E2E work needs its own
+commit/PR/merge, per normal workflow — don't start new feature work on
+top of an uncommitted E2E suite.
 
 With an explicit go-ahead, the next work in this repository's own
 stated order (`PROJECT_STATE.md` "Immediate priorities") is:
 
-1. **Playwright browser E2E** for the authentication/password-recovery
-   flows — not started. No config, no test files, no dependency.
-2. **GitHub Issue #3 (Knowledge Ingestion)** — not started.
+1. **GitHub Issue #3 (Knowledge Ingestion)** — not started.
 
 ## Blockers
 
@@ -979,21 +1050,37 @@ Redis, and `gh` CLI access are all confirmed working in this environment.
   remained broken, same symptom as every prior session). Two test-design
   bugs (not implementation bugs) were found and fixed during this
   validation — see "Completed work (Redis abuse layer — Slice 3c)" for
-  exactly what and why.
+  exactly what and why. **Slice 3c subsequently merged into `main` as
+  `75dd466` (PR #15) with CI green (3/3 checks).**
+- **Playwright E2E (this checkpoint, uncommitted): `npx eslint e2e/
+  playwright.config.ts`** and **`npx tsc --noEmit -p .`** both clean.
+  **19 tests across 3 spec files (`app-availability.spec.ts`,
+  `auth.spec.ts`, `password-recovery.spec.ts`) — 19/19 passed, 3
+  consecutive clean runs**, against the real frontend/backend/
+  PostgreSQL/Redis/Mailpit stack (already-running `docker compose`
+  services this session; host-shell HTTP connectivity to the published
+  `3000`/`8000`/`8025` ports was tested and confirmed working this
+  session — unlike the raw Postgres/Redis wire-protocol issue seen in
+  earlier sessions, plain HTTP was reachable here). An initial attempt
+  at 3 back-to-back runs with no gap hit a real, correctly-working `429`
+  from the backend's own `register` rate limiter (not flakiness — see
+  "Completed work (Playwright E2E...)" for the exact mechanism and fix).
+  Existing **48 vitest tests** and `npm run lint` confirmed unaffected.
 
 ## Exact next recommended action
 
-Redis Slices 1/2/3a/3b are merged into `main` (`46ef03b` PR #11,
-`5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14) — nothing pending
-for any of them. **Slice 3c (audit emission + HTTP-level tests) is
-implemented, real-Redis validated (6/6, 3 consecutive runs; complete
-254-test suite, 3 consecutive runs), but still uncommitted** — see
-"Completed work (Redis abuse layer — Slice 3c)" and "Tests run" above.
-The next work, in order:
+Redis Slices 1/2/3a/3b/3c are merged into `main` (`46ef03b` PR #11,
+`5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14, `75dd466` PR #15) —
+nothing pending for any of them. **Playwright E2E for the authentication/
+password-recovery flows is implemented, real-stack validated (19/19, 3
+consecutive runs), but still uncommitted** — see "Completed work
+(Playwright E2E — authentication/password-recovery)" and "Tests run"
+above. The next work, in order:
 
-1. **Commit/push/PR/merge Slice 3c on its own**, per normal workflow,
-   same as every prior slice — its real-Redis validation is done; what's
-   left is the ordinary Git finalization steps.
-2. **Then, with an explicit go-ahead:** Playwright browser E2E for the
-   authentication/password-recovery flows — not started.
-3. **Then:** begin GitHub Issue #3 (Knowledge Ingestion) — not started.
+1. **Commit/push/PR/merge the Playwright E2E work on its own**, per
+   normal workflow, same as every prior slice — its real-stack
+   validation is done locally; what's left is the ordinary Git
+   finalization steps, plus confirming the new `e2e` CI job actually
+   goes green on GitHub Actions (not yet run there as of this entry).
+2. **Then, with an explicit go-ahead:** begin GitHub Issue #3 (Knowledge
+   Ingestion) — not started.

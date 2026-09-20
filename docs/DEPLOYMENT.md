@@ -47,6 +47,40 @@ committed; see `PROJECT_STATE.md` and `git status`.
   cross-workspace-isolation flow was exercised against the running
   containers via curl.
 
+## Browser E2E (Playwright, implemented)
+
+- `frontend/e2e/` — TypeScript Playwright specs covering the
+  authentication/password-recovery flows end-to-end through the real
+  frontend, real backend, real PostgreSQL, real Redis, and real Mailpit
+  (`frontend/playwright.config.ts`) — no mocks, matching this project's
+  "no mock substitute for the real datastore" precedent (ADR 0002,
+  extended by ADR 0006 §16) applied to the full stack. Covers app
+  availability, registration, login, session persistence, logout,
+  protected-route redirects, CSRF (a genuine positive case through the
+  real UI and a genuine negative case — a state-changing request
+  missing the `X-CSRF-Token` header — both against the real backend
+  middleware), and the full forgot-password → Mailpit → reset-password →
+  post-reset login → session-revocation flow.
+- `frontend/e2e/fixtures/mailpit.ts` reads the password-reset email
+  through Mailpit's own REST API (`http://localhost:8025`, already
+  exposed by `infra/compose/docker-compose.yml`) — real SMTP capture,
+  not a stub of the email provider.
+- Run locally: start the stack (`docker compose -f
+  infra/compose/docker-compose.yml up`, or the backend/frontend
+  processes directly with a real Postgres/Redis/Mailpit reachable), then
+  `cd frontend && npx playwright install chromium` (once) and `npm run
+  test:e2e`. `PLAYWRIGHT_BASE_URL`/`PLAYWRIGHT_API_URL`/
+  `PLAYWRIGHT_MAILPIT_URL` override the default `localhost:3000`/`8000`/
+  `8025` if the stack is reachable elsewhere.
+- Runs sequentially (`workers: 1`, `fullyParallel: false`), deliberately —
+  the backend's own base rate limiter and deterministic abuse layer (ADR
+  0006) key partly by source IP, and every request in a Playwright run
+  shares one peer address; running specs in parallel (or firing many
+  full-suite runs back-to-back with no gap) risks a real, correctly-
+  functioning `429` unrelated to what any individual test checks. Each
+  spec is deliberately economical with `register`/`login`/
+  `forgot-password` calls for the same reason.
+
 ## CI/CD (implemented)
 
 - `.github/workflows/ci.yml` runs on pull requests and pushes to `main`:
@@ -56,6 +90,12 @@ committed; see `PROJECT_STATE.md` and `git status`.
     `ruff check`, `mypy`, `pytest` (via `uv`).
   - `frontend` job: `eslint`, `tsc --noEmit`, `vitest`, `next build` (via
     `npm ci`).
+  - `e2e` job (after both pass): provisions real Postgres/Redis/Mailpit
+    service containers, starts the real backend (`uvicorn`) and frontend
+    (`next dev`) processes, waits for both to report ready, then runs the
+    Playwright suite (`npm run test:e2e`). Uploads the HTML report (and,
+    on failure, the backend/frontend server logs) as build artifacts —
+    never secrets or runtime credentials.
   - `docker-build` job (after both pass): builds the backend and frontend
     images, and validates `docker compose config`.
 - CI is a required gate in the workflow defined in `AGENTS.md` §6
