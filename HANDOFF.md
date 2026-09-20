@@ -8,30 +8,35 @@ in-flight task — overwrite it as work progresses, don't append a history
 
 ## Current task
 
-**Everything through Redis Slices 1–3c and Playwright E2E is merged into
-`main`.** In order: Redis Slice 1 (foundation + token-bucket engine) —
-PR #11, squash commit `46ef03b`. Slice 2 (endpoint wiring) — PR #12,
-squash commit `5391a78`. Slice 3a (abuse-state Redis primitives) —
-PR #13, squash commit `026dcf3`. Slice 3b (decision engine + R1–R5
-endpoint wiring, plus a `tests/conftest.py` test-isolation fix) — PR #14,
-squash commit `42529e3`. Slice 3c (abuse-escalation audit emission) —
-PR #15, squash commit `75dd466`. Browser E2E (Playwright) for
-authentication/password-recovery — PR #16, squash commit `e1c4858`.
-**`main`/`origin/main` are at `e1c4858`.** Nothing is pending review,
-push, or merge for any of the above. Full per-item implementation detail
-is preserved below under its own "Completed work" section — not repeated
-here, per this file's own "don't append a history" instruction.
+**Everything through Redis Slices 1–3c, Playwright E2E, and Issue #3
+Slice 3.1 is merged into `main`.** In order: Redis Slice 1 (foundation +
+token-bucket engine) — PR #11, squash commit `46ef03b`. Slice 2 (endpoint
+wiring) — PR #12, squash commit `5391a78`. Slice 3a (abuse-state Redis
+primitives) — PR #13, squash commit `026dcf3`. Slice 3b (decision engine
++ R1–R5 endpoint wiring, plus a `tests/conftest.py` test-isolation fix)
+— PR #14, squash commit `42529e3`. Slice 3c (abuse-escalation audit
+emission) — PR #15, squash commit `75dd466`. Browser E2E (Playwright)
+for authentication/password-recovery — PR #16, squash commit `e1c4858`.
+Issue #3 Slice 3.1 (document data model + migration `0004`) — PR #17,
+squash commit `79d4787`, CI green (4/4 checks, including the first real
+Actions run of the `e2e` job). **`main`/`origin/main` are at `79d4787`.**
+Nothing is pending review, push, or merge for any of the above. Full
+per-item implementation detail is preserved below under its own
+"Completed work" section — not repeated here, per this file's own "don't
+append a history" instruction.
 
-**GitHub Issue #3 (Knowledge Ingestion), Slice 3.1 (document data model +
-migration) is now IMPLEMENTED, TESTED, COMMITTED, and PUSHED, on branch
-`issue-3-slice-3-1-document-schema`, opened as **PR #17**, awaiting
-review** — schema only (`documents`/`document_chunks` tables, migration
-`0004`); no upload API, storage, extraction, chunking, background
-processing, or embedding code. See "Completed work (Issue #3 — Slice 3.1:
-document data model + migration)" below for full detail, and "Exact next
-recommended action" at the end of this file for the branch/commit/PR
-identifiers. **Do not start Slice 3.2 or any later Issue #3 slice without
-an explicit go-ahead** — this slice's own scope stops at the schema.
+**GitHub Issue #3 (Knowledge Ingestion), Slice 3.2 (`StorageProvider`
+abstraction) is now IMPLEMENTED, TESTED, and COMMITTED as `91d98b7` on
+branch `issue-3-slice-3-2-storage-provider`** (cut from `79d4787`) —
+`backend/app/services/storage_provider.py`: a `Protocol` plus
+`LocalStorage`, path-traversal-safe, mirroring `EmailProvider`'s exact
+shape. No upload endpoint, extraction, chunking, background processing,
+or embedding code — nothing calls this yet. See "Completed work (Issue
+#3 — Slice 3.2: StorageProvider abstraction)" below for full detail, and
+"Exact next recommended action" at the end of this file for the
+branch/commit/PR identifiers once pushed. **Do not start Slice 3.3 or
+any later Issue #3 slice without an explicit go-ahead** — this slice's
+own scope stops at the storage abstraction; no endpoint consumes it.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -830,10 +835,15 @@ was not installed (only present transitively, unused, in
 
 ## Completed work (Issue #3 — Slice 3.1: document data model + migration)
 
-**Implemented, tested, committed, and pushed; PR open, not yet
-merged.** Schema only — per this slice's explicit scope, no upload API,
-storage abstraction, text extraction, chunking, background processing,
-or embedding code was added.
+**This work has since been committed, pushed, opened as PR #17, and
+merged into `main` as squash commit `79d4787`, with CI green (4/4
+checks).** The record below is kept as accurate history of the
+implementation/validation itself, not as current status — see "Current
+task" above.
+
+Schema only — per this slice's explicit scope, no upload API, storage
+abstraction, text extraction, chunking, background processing, or
+embedding code was added.
 
 - **`backend/app/models/document.py`** (new): `Document` model —
   `documents` table. `workspace_id` (`ON DELETE CASCADE`, indexed);
@@ -935,6 +945,92 @@ or embedding code was added.
   moved from "Unreleased — working tree" to "Unreleased — committed"
   with the real commit hash).
 
+## Completed work (Issue #3 — Slice 3.2: StorageProvider abstraction)
+
+**Implemented, tested, and committed as `91d98b7`; not yet pushed/PR'd
+as of this entry** — see "Exact next recommended action" below once
+that's done. Storage abstraction only — per this slice's explicit scope,
+no upload endpoint, text extraction, chunking, background processing, or
+embedding code was added; nothing in the codebase calls
+`get_storage_provider()` yet.
+
+- **`backend/app/services/storage_provider.py`** (new): mirrors
+  `EmailProvider`'s exact shape (`app/services/email_provider.py`) — a
+  `StorageProvider` `Protocol` (`save`/`read`/`delete`/`exists`, all
+  keyword-only) plus `LocalStorage`, a filesystem-backed implementation
+  for local dev/CI, and `get_storage_provider()`, a settings-driven
+  factory. `get_storage_provider()` has no branching yet (only "local"
+  exists) — it gains an `if`/`elif` when a second implementation is
+  actually added, matching how `get_email_provider()`'s own factory
+  evolved from one branch to two.
+  - **Path safety**: storage keys are always server-generated upstream
+    (never a user-supplied filename — `docs/SECURITY.md` "Upload &
+    document safety"), but `LocalStorage._resolve()` still rejects any
+    key that would resolve outside its configured root as defense in
+    depth: empty keys, keys starting with `/`, and any key containing a
+    `..` path segment are all rejected — checked both by string/parts
+    inspection *and* by resolving the candidate path and confirming it's
+    still relative to the root (`Path.relative_to()`, raising
+    `ValueError` — caught and re-raised as `StorageKeyError` — for
+    anything that escapes). Every one of the four operations
+    (`save`/`read`/`delete`/`exists`) calls `_resolve()` first, so the
+    check can't be bypassed by calling a different method.
+  - **Errors**: a dedicated `StorageError`/`StorageKeyError` hierarchy —
+    never a raw `OSError`/`FileNotFoundError` escaping this module, so a
+    future endpoint layer can map these to the shared `{"error": {...}}`
+    shape (`app/core/errors.py`) without needing to know filesystem
+    detail, matching this codebase's existing exception-boundary
+    convention.
+  - `save()` creates parent directories as needed
+    (`path.parent.mkdir(parents=True, exist_ok=True)`) — keys are
+    expected to be namespaced (e.g.
+    `{workspace_id}/{document_id}/{uuid}.pdf`), so this avoids requiring
+    every caller to pre-create directory structure.
+  - `delete()` of a nonexistent key is a no-op (`Path.unlink(missing_ok=True)`)
+    — deliberately, since a future delete endpoint calling this after
+    the database row is already gone (or never fully written) shouldn't
+    itself become a new failure mode.
+- **`backend/app/core/config.py`** (modified): `storage_provider` changed
+  from `str | None = None` to `Literal["local"] = "local"` (the only
+  implementation today, following `email_provider`'s
+  `Literal["console", "smtp"]` precedent); new `storage_local_root: str
+  = "./data/documents"`. `storage_bucket` stays reserved, unused, for a
+  future object-storage provider.
+- **`.env.example`** (modified): documents `STORAGE_PROVIDER`
+  (now defaulted to `local` rather than blank, since it's actually
+  consumed now) and the new `STORAGE_LOCAL_ROOT`.
+- **`.gitignore`** (modified): excludes `data/`/`backend/data/` (the
+  local storage root's default location) so dev/test uploads are never
+  committed — this slice's own tests use `tmp_path`, not this default
+  location, so this is precautionary for future manual/dev use, not
+  something this slice's own validation depended on.
+- **`docs/ARCHITECTURE.md`** (modified): the "Provider abstractions"
+  section's table now marks `StorageProvider` IMPLEMENTED with a short
+  description; every other provider interface remains PROPOSED,
+  unchanged.
+- **`backend/tests/test_storage_provider.py`** (new, 14 tests, against a
+  real filesystem via pytest's `tmp_path` — no mocks): save/read
+  round-trip; nested-parent-directory creation; `exists()` reflecting
+  save/delete; delete-of-nonexistent-key is a no-op; read-of-nonexistent-
+  key raises `StorageError`; five unsafe keys (`../escape.txt`,
+  `a/../../escape.txt`, `../../etc/passwd`, `/etc/passwd`, and an empty
+  string) each rejected on `save()`; the same unsafe key rejected on
+  `read()`/`exists()`/`delete()` too, not just `save()`; two different
+  keys don't collide; `get_storage_provider()` returns a `LocalStorage`
+  instance; the `storage_provider`/`storage_local_root` settings default
+  correctly.
+  - `ruff`/`mypy` clean (88 source files). **14/14 new tests passing**;
+    the complete backend suite **287/287 passing** (273 pre-existing +
+    14 new), **3 consecutive runs**, no flakiness, no regression in any
+    existing test (auth/workspace/rate-limit/abuse/document-schema all
+    unaffected). This slice touches no database/Redis state, so the
+    existing real-Postgres/real-Redis validation the rest of the suite
+    already provides is what confirms no regression — no new
+    Postgres/Redis-specific validation was needed for this slice's own
+    code.
+- **Docs updated this slice**: `docs/ARCHITECTURE.md` (as above),
+  `PROJECT_STATE.md`, `CHANGELOG.md`, this file.
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -948,13 +1044,15 @@ or embedding code was added.
   (Playwright E2E — authentication/password-recovery)" above. Covers
   only the authentication/password-recovery surface; no document/chat/
   search UI exists yet for E2E coverage to extend to.
-- **Issue #3 Slice 3.1 (document schema) is implemented, tested,
-  committed, and pushed — PR #17, not yet merged.** No upload
-  API, storage, extraction, chunking, background processing, or
-  embedding code exists. No document-access/ingestion audit events exist
-  yet either — `AuditEvent` still only covers auth/workspace/rate-limit/
-  abuse-escalation events; those land with a later Issue #3 slice (the
-  upload/delete API).
+- **Issue #3 Slice 3.1 (document schema) is merged** (`79d4787`,
+  PR #17). **Slice 3.2 (`StorageProvider` abstraction) is implemented,
+  tested, and committed (`91d98b7`) — not yet pushed/PR'd as of this
+  bullet.** No upload API, text extraction, chunking, background
+  processing, or embedding code exists; nothing calls
+  `get_storage_provider()` yet. No document-access/ingestion audit
+  events exist yet either — `AuditEvent` still only covers
+  auth/workspace/rate-limit/abuse-escalation events; those land with a
+  later Issue #3 slice (the upload/delete API).
 - **`client_ip()` (unconditional, no trusted-proxy handling) is still
   used elsewhere** — `app/api/v1/auth.py`'s audit/session IP recording
   and `app/core/dependencies.py`'s authorization-denial audit events
@@ -968,8 +1066,8 @@ or embedding code was added.
   whole ADR exists for (§2.1) has not been exercised with more than one
   backend process under real concurrent load, since no such deployment
   exists.
-- **Issue #3, Slices 3.2 onward (storage/upload/extraction/chunking/
-  background processing/embeddings)** — not started.
+- **Issue #3, Slice 3.3 onward (upload endpoint, extraction, chunking,
+  background processing, embeddings)** — not started.
 - **Later RAG retrieval/generation features (Issue #4 onward)** — not
   started.
 - **Endpoint-driven concurrency test under real HTTP load** — not added
@@ -985,7 +1083,7 @@ or embedding code was added.
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: GitHub Issue #3 (Knowledge Ingestion), Slice 3.2
+## Next major task: GitHub Issue #3 (Knowledge Ingestion), Slice 3.3
 
 **ADR 0006's deterministic abuse-protection layer is functionally
 complete end-to-end and fully merged (Slices 1–3c).** Nothing further is
@@ -995,22 +1093,25 @@ limitations" in the Slice 3c report above). Browser E2E coverage for the
 authentication/password-recovery flows is implemented, validated, and
 merged (PR #16, `e1c4858`).
 
-**GitHub Issue #3 (Knowledge Ingestion) has started: Slice 3.1 (document
-data model + migration) is implemented, tested, committed, and pushed —
-PR #17, not yet merged.** Per that slice's own explicit scope,
-it stops at the schema; no storage, upload API, extraction, chunking,
-background processing, or embedding code exists.
+**GitHub Issue #3 (Knowledge Ingestion): Slice 3.1 (document data model +
+migration) is merged** (PR #17, `79d4787`). **Slice 3.2 (`StorageProvider`
+abstraction) is implemented, tested, and committed** — no storage/upload
+API, extraction, chunking, background processing, or embedding code
+exists; nothing calls the new `StorageProvider` yet.
 
-**Before anything else starts**: get the Slice 3.1 PR reviewed and
-merged, per normal workflow — don't start Slice 3.2 on top of an
+**Before anything else starts**: get the Slice 3.2 PR reviewed and
+merged, per normal workflow — don't start Slice 3.3 on top of an
 unmerged prior slice.
 
 With an explicit go-ahead, the next work in this repository's own stated
 order (`PROJECT_STATE.md` "Immediate priorities") is:
 
-1. **GitHub Issue #3, Slice 3.2** — not started; not yet scoped in this
-   file. Do not assume its content without checking the Issue #3
-   implementation plan/architecture notes first.
+1. **GitHub Issue #3, Slice 3.3** — the document upload endpoint
+   (workspace-scoped, MIME/extension/size validation, using
+   `get_storage_provider()` to persist bytes under a server-generated
+   `storage_key`, creating a `documents` row at `UPLOADED`) — not started;
+   not yet scoped in this file beyond that sketch. Do not assume further
+   detail without checking the Issue #3 GitHub issue and this file first.
 
 ## Blockers
 
@@ -1214,25 +1315,35 @@ side.
   "Blockers" above; not a code defect. Schema/model/migration/tests
   committed as `36fe8b0`; documentation reconciliation as a second,
   separate commit — pushed on branch `issue-3-slice-3-1-document-schema`
-  (cut from `e1c4858`), opened as **PR #17**.
+  (cut from `e1c4858`), opened as PR #17, **since merged into `main` as
+  squash commit `79d4787`, CI green (4/4 checks).**
+- **Issue #3, Slice 3.2 (StorageProvider abstraction): `uv run ruff
+  check .`** (pass) and **`uv run mypy .`** (pass, 88 source files, no
+  new findings). **14 new tests (`tests/test_storage_provider.py`) —
+  14/14 passed**, against a real filesystem (`tmp_path`, no mocks) — no
+  test-design bugs found this time. **Complete backend suite: 287/287
+  passing** (273 pre-existing + 14 new), **3 consecutive runs**, no
+  regression in any existing test. This slice touches no
+  database/Redis state directly, so no dedicated Postgres/Redis
+  validation beyond the full suite's own existing real-Postgres/
+  real-Redis coverage was applicable. Committed as `91d98b7` on branch
+  `issue-3-slice-3-2-storage-provider`, cut from `79d4787`.
 
 ## Exact next recommended action
 
-Redis Slices 1/2/3a/3b/3c and Playwright E2E are all merged into `main`
-(`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14,
-`75dd466` PR #15, `e1c4858` PR #16) — nothing pending for any of them.
-**GitHub Issue #3, Slice 3.1 (document data model + migration) is
-implemented, tested, committed (`36fe8b0` + a docs commit), pushed, and
-opened as PR #17** on branch `issue-3-slice-3-1-document-schema` (cut
-from `e1c4858`) — see "Completed work (Issue #3 — Slice 3.1...)" and
-"Tests run" above. The next work, in order:
+Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slice 3.1 are all
+merged into `main` (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13,
+`42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17) —
+nothing pending for any of them. **GitHub Issue #3, Slice 3.2
+(`StorageProvider` abstraction) is implemented, tested, and committed as
+`91d98b7` on branch `issue-3-slice-3-2-storage-provider`** (cut from
+`79d4787`) — see "Completed work (Issue #3 — Slice 3.2...)" and "Tests
+run" above. The next work, in order:
 
-1. **Get PR #17 reviewed, confirm CI is green, and merge it** — this
-   slice's own real-Postgres validation (schema tests, full suite,
-   migration reversibility) is already done locally; what's left is
-   ordinary review plus confirming GitHub Actions CI passes on the PR
-   itself. Do not merge it without review.
+1. **Push the branch, open the PR, and confirm CI goes green** — this
+   slice's own real-filesystem validation (schema tests, full suite) is
+   already done locally. Do not merge it without review.
 2. **Once merged, with an explicit go-ahead:** scope and implement
-   GitHub Issue #3, Slice 3.2 — not yet defined in this file; check the
-   Issue #3 implementation plan/architecture notes first rather than
-   assuming its content.
+   GitHub Issue #3, Slice 3.3 (the document upload endpoint — see "Next
+   major task" above for the sketch already derived from the Issue #3
+   GitHub issue).
