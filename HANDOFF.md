@@ -26,9 +26,10 @@ per-item implementation detail is preserved below under its own
 append a history" instruction.
 
 **GitHub Issue #3 (Knowledge Ingestion), Slice 3.2 (`StorageProvider`
-abstraction) is now IMPLEMENTED, TESTED, and COMMITTED as `91d98b7` on
-branch `issue-3-slice-3-2-storage-provider`** (cut from `79d4787`) —
-`backend/app/services/storage_provider.py`: a `Protocol` plus
+abstraction) is now IMPLEMENTED, TESTED, COMMITTED, PUSHED, and opened
+as PR #18** on branch `issue-3-slice-3-2-storage-provider` (cut from
+`79d4787`) — `backend/app/services/storage_provider.py`: a `Protocol`
+plus
 `LocalStorage`, path-traversal-safe, mirroring `EmailProvider`'s exact
 shape. No upload endpoint, extraction, chunking, background processing,
 or embedding code — nothing calls this yet. See "Completed work (Issue
@@ -947,9 +948,8 @@ embedding code was added.
 
 ## Completed work (Issue #3 — Slice 3.2: StorageProvider abstraction)
 
-**Implemented, tested, and committed as `91d98b7`; not yet pushed/PR'd
-as of this entry** — see "Exact next recommended action" below once
-that's done. Storage abstraction only — per this slice's explicit scope,
+**Implemented, tested, committed as `91d98b7` (plus a docs commit,
+`d57ccdb`), pushed, and opened as PR #18 — not yet merged.** Storage abstraction only — per this slice's explicit scope,
 no upload endpoint, text extraction, chunking, background processing, or
 embedding code was added; nothing in the codebase calls
 `get_storage_provider()` yet.
@@ -1046,11 +1046,11 @@ embedding code was added; nothing in the codebase calls
   search UI exists yet for E2E coverage to extend to.
 - **Issue #3 Slice 3.1 (document schema) is merged** (`79d4787`,
   PR #17). **Slice 3.2 (`StorageProvider` abstraction) is implemented,
-  tested, and committed (`91d98b7`) — not yet pushed/PR'd as of this
-  bullet.** No upload API, text extraction, chunking, background
-  processing, or embedding code exists; nothing calls
-  `get_storage_provider()` yet. No document-access/ingestion audit
-  events exist yet either — `AuditEvent` still only covers
+  tested, committed, and pushed — PR #18, not yet merged.** No upload
+  API, text extraction, chunking, background processing, or embedding
+  code exists; nothing calls `get_storage_provider()` yet. No
+  document-access/ingestion audit events exist yet either —
+  `AuditEvent` still only covers
   auth/workspace/rate-limit/abuse-escalation events; those land with a
   later Issue #3 slice (the upload/delete API).
 - **`client_ip()` (unconditional, no trusted-proxy handling) is still
@@ -1326,8 +1326,9 @@ side.
   regression in any existing test. This slice touches no
   database/Redis state directly, so no dedicated Postgres/Redis
   validation beyond the full suite's own existing real-Postgres/
-  real-Redis coverage was applicable. Committed as `91d98b7` on branch
-  `issue-3-slice-3-2-storage-provider`, cut from `79d4787`.
+  real-Redis coverage was applicable. Committed as `91d98b7` + docs
+  commit `d57ccdb`, pushed on branch `issue-3-slice-3-2-storage-provider`
+  (cut from `79d4787`), opened as **PR #18**.
 
 ## Exact next recommended action
 
@@ -1335,13 +1336,14 @@ Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slice 3.1 are all
 merged into `main` (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13,
 `42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17) —
 nothing pending for any of them. **GitHub Issue #3, Slice 3.2
-(`StorageProvider` abstraction) is implemented, tested, and committed as
-`91d98b7` on branch `issue-3-slice-3-2-storage-provider`** (cut from
-`79d4787`) — see "Completed work (Issue #3 — Slice 3.2...)" and "Tests
-run" above. The next work, in order:
+(`StorageProvider` abstraction) is implemented, tested, committed
+(`91d98b7` + docs commit `d57ccdb`), pushed, and opened as PR #18** on
+branch `issue-3-slice-3-2-storage-provider` (cut from `79d4787`) — see
+"Completed work (Issue #3 — Slice 3.2...)" and "Tests run" above. The
+next work, in order:
 
-1. **Push the branch, open the PR, and confirm CI goes green** — this
-   slice's own real-filesystem validation (schema tests, full suite) is
+1. **Get PR #18 reviewed, confirm CI is green, and merge it** — this
+   slice's own real-filesystem validation (unit tests, full suite) is
    already done locally. Do not merge it without review.
 2. **Once merged, with an explicit go-ahead:** scope and implement
    GitHub Issue #3, Slice 3.3 (the document upload endpoint — see "Next
