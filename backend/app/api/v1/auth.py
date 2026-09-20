@@ -14,12 +14,22 @@ from __future__ import annotations
 
 import uuid
 
+import redis
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
+from app.core.abuse_decision import (
+    AbuseContext,
+    record_forgot_password_request,
+    record_login_failure,
+    record_login_success,
+    record_reset_validation_failure,
+)
+from app.core.config import get_settings
 from app.core.cookies import REFRESH_TOKEN_COOKIE, clear_auth_cookies, set_auth_cookies
 from app.core.db import get_db
 from app.core.dependencies import get_current_token_claims, get_current_user
+from app.core.ip_resolution import resolve_client_ip
 from app.core.rate_limit import (
     client_ip,
     enforce_forgot_password_rate_limit,
@@ -28,6 +38,8 @@ from app.core.rate_limit import (
     enforce_register_rate_limit,
     enforce_reset_password_rate_limit,
 )
+from app.core.redis_client import get_redis_client
+from app.core.redis_keys import hash_account_identifier
 from app.core.security import AccessTokenClaims
 from app.models.user import User
 from app.schemas.auth import (
@@ -40,6 +52,10 @@ from app.schemas.auth import (
     SessionRead,
 )
 from app.services import auth_service, password_reset_service
+
+_RESET_VALIDATION_FAILURE_CODES = frozenset(
+    {"reset_token_invalid", "reset_token_expired", "reset_token_already_used"}
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -94,15 +110,38 @@ def register(
     dependencies=[Depends(enforce_login_rate_limit)],
 )
 def login(
-    request: Request, response: Response, body: LoginRequest, db: Session = Depends(get_db)
+    request: Request,
+    response: Response,
+    body: LoginRequest,
+    db: Session = Depends(get_db),
+    redis_client: redis.Redis | None = Depends(get_redis_client),
 ) -> AuthResponse:
-    tokens = auth_service.login(
-        db,
-        email=body.email,
-        password=body.password,
-        device_label=_device_label(request),
-        ip_address=client_ip(request),
+    settings = get_settings()
+    abuse_context = AbuseContext(
+        operation="login",
+        ip=resolve_client_ip(request, settings.trusted_proxy_cidrs_list),
+        account_hash=hash_account_identifier(
+            body.email, key=settings.rate_limit_hash_key_resolved.encode("utf-8")
+        ),
     )
+
+    # Abuse-layer recording (ADR 0006 §11/§12, Slice 3b) happens only
+    # here, after auth_service.login()'s real outcome is known -- never
+    # in the pre-request enforce_login_rate_limit dependency, which
+    # necessarily runs before authentication is even attempted.
+    try:
+        tokens = auth_service.login(
+            db,
+            email=body.email,
+            password=body.password,
+            device_label=_device_label(request),
+            ip_address=client_ip(request),
+        )
+    except HTTPException:
+        record_login_failure(redis_client, abuse_context)
+        raise
+
+    record_login_success(redis_client, abuse_context)
     set_auth_cookies(
         response,
         access_token=tokens.access_token,
@@ -155,10 +194,27 @@ _GENERIC_FORGOT_PASSWORD_MESSAGE = (
     dependencies=[Depends(enforce_forgot_password_rate_limit)],
 )
 def forgot_password(
-    request: Request, body: ForgotPasswordRequest, db: Session = Depends(get_db)
+    request: Request,
+    body: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+    redis_client: redis.Redis | None = Depends(get_redis_client),
 ) -> MessageResponse:
+    settings = get_settings()
     password_reset_service.request_password_reset(
         db, email=body.email, ip_address=client_ip(request)
+    )
+    # R4 (ADR 0006 §11) counts *requests*, not failures -- recorded
+    # unconditionally, since this endpoint has no success/failure branch
+    # to key off (see password_reset_service's module docstring).
+    record_forgot_password_request(
+        redis_client,
+        AbuseContext(
+            operation="forgot-password",
+            ip=resolve_client_ip(request, settings.trusted_proxy_cidrs_list),
+            account_hash=hash_account_identifier(
+                body.email, key=settings.rate_limit_hash_key_resolved.encode("utf-8")
+            ),
+        ),
     )
     # Always the same response, same status code, regardless of whether
     # the email exists — see password_reset_service's module docstring.
@@ -171,14 +227,32 @@ def forgot_password(
     dependencies=[Depends(enforce_reset_password_rate_limit)],
 )
 def reset_password(
-    request: Request, body: ResetPasswordRequest, db: Session = Depends(get_db)
+    request: Request,
+    body: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+    redis_client: redis.Redis | None = Depends(get_redis_client),
 ) -> None:
-    password_reset_service.reset_password(
-        db,
-        raw_token=body.token,
-        new_password=body.new_password,
-        ip_address=client_ip(request),
+    settings = get_settings()
+    abuse_context = AbuseContext(
+        operation="reset-password",
+        ip=resolve_client_ip(request, settings.trusted_proxy_cidrs_list),
     )
+    try:
+        password_reset_service.reset_password(
+            db,
+            raw_token=body.token,
+            new_password=body.new_password,
+            ip_address=client_ip(request),
+        )
+    except HTTPException as exc:
+        # R5 (ADR 0006 §11) counts validation failures only -- a
+        # successful reset never reaches this branch, so it never
+        # records anything here.
+        detail = exc.detail
+        code = detail.get("code") if isinstance(detail, dict) else None
+        if code in _RESET_VALIDATION_FAILURE_CODES:
+            record_reset_validation_failure(redis_client, abuse_context)
+        raise
 
 
 @router.get("/sessions", response_model=list[SessionRead])

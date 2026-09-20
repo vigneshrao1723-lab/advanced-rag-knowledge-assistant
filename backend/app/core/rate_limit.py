@@ -14,12 +14,24 @@ key that operation has, evaluating every dimension before writing any of
 them, so a rejected request never partially consumes a dimension it
 happened to pass.
 
-**Slice 2 (this revision): the Redis engine is now wired into every
-`enforce_*_rate_limit` dependency**, per ADR 0006 §6's flow and §13's
-operation-aware failure policy — see `_check_or_fallback()` and each
-`enforce_*` function below for exactly how. The deterministic abuse layer
-(ADR 0006 §11/§12) is a separate, later slice and is not implemented
-here.
+**Slice 2: the Redis engine is wired into every `enforce_*_rate_limit`
+dependency**, per ADR 0006 §6's flow and §13's operation-aware failure
+policy — see `_check_or_fallback()` and each `enforce_*` function below
+for exactly how.
+
+**Slice 3b: the deterministic abuse-decision layer (ADR 0006 §11/§12,
+`app.core.abuse_decision`) is now also consulted, but only for `login`,
+`forgot-password`, and `reset-password`** — no rule targets `register`/
+`refresh`, so `enforce_register_rate_limit`/`enforce_refresh_rate_limit`
+are unchanged. For the three affected operations: an active
+`TEMPORARY_BLOCK` rejects the request before the base bucket is ever
+consulted; any active `STRICT_THROTTLE` dimension is folded into the
+*same* `check_all()` invocation as the base dimension(s), never a
+separate Redis round trip (see `abuse_decision.check()`'s own docstring
+for why that atomicity matters). Recording an outcome after the request
+completes is the endpoint layer's responsibility
+(`app/api/v1/auth.py`), not this module's — see that module for exactly
+when.
 
 **Failure-policy interpretation, recorded here because ADR 0006 §13
 explicitly left it open ("whether register should actually share Tier
@@ -45,21 +57,23 @@ ADR's own phrasing).
 from __future__ import annotations
 
 import logging
-import math
 import time
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 import redis
 from fastapi import Depends, HTTPException, Request, status
 
+from app.core.abuse_decision import AbuseContext
+from app.core.abuse_decision import check as abuse_check
 from app.core.config import get_settings
 from app.core.cookies import REFRESH_TOKEN_COOKIE
 from app.core.ip_resolution import resolve_client_ip
 from app.core.redis_client import RedisUnavailableError, get_redis_client
 from app.core.redis_keys import hash_account_identifier, rate_limit_key
 from app.core.security import parse_refresh_token
+from app.core.token_bucket_types import DimensionSpec as DimensionSpec
+from app.core.token_bucket_types import TokenBucketResult as TokenBucketResult
 
 logger = logging.getLogger("app.rate_limit")
 
@@ -202,45 +216,11 @@ end
 return {1, 0}
 """
 
-_TTL_SAFETY_FACTOR = 2.0
-
-
-@dataclass(frozen=True)
-class DimensionSpec:
-    """One dimension's bucket parameters for a single operation check.
-
-    `ttl_seconds`, if not given, is derived from `capacity`/`refill_rate`
-    (ADR 0006 §10: "comfortably longer than the time to fully refill from
-    empty") so every bucket key this design creates always has a finite
-    TTL — no immortal Redis keys.
-    """
-
-    key: str
-    capacity: float
-    refill_rate: float
-    cost: float = 1.0
-    ttl_seconds: int | None = None
-
-    def __post_init__(self) -> None:
-        if self.capacity <= 0:
-            raise ValueError(f"capacity must be > 0 for key {self.key!r}.")
-        if self.refill_rate <= 0:
-            raise ValueError(f"refill_rate must be > 0 for key {self.key!r}.")
-        if self.cost <= 0:
-            raise ValueError(f"cost must be > 0 for key {self.key!r}.")
-        if self.ttl_seconds is not None and self.ttl_seconds <= 0:
-            raise ValueError(f"ttl_seconds must be > 0 for key {self.key!r}.")
-
-    def resolved_ttl_seconds(self) -> int:
-        if self.ttl_seconds is not None:
-            return self.ttl_seconds
-        return max(1, math.ceil((self.capacity / self.refill_rate) * _TTL_SAFETY_FACTOR))
-
-
-@dataclass(frozen=True)
-class TokenBucketResult:
-    allowed: bool
-    retry_after_seconds: float
+# DimensionSpec/TokenBucketResult now live in `token_bucket_types.py`
+# (Slice 3b — breaks an import cycle with `abuse_state.py`/
+# `abuse_decision.py`, see that module's docstring). Re-exported here
+# unchanged so every existing `from app.core.rate_limit import
+# DimensionSpec` call site keeps working.
 
 
 class RedisTokenBucketLimiter:
@@ -416,17 +396,37 @@ async def enforce_login_rate_limit(
     redis_client: redis.Redis | None = Depends(get_redis_client),
 ) -> None:
     """Tier A (ADR 0006 §13). Dimensions per ADR §9: IP, and the
-    submitted email (keyed HMAC, §14) when it's extractable."""
+    submitted email (keyed HMAC, §14) when it's extractable.
+
+    Also consults the abuse-decision layer (ADR 0006 §11/§12, Slice 3b)
+    ahead of the base check: an active TEMPORARY_BLOCK (R3) rejects the
+    request outright; any active STRICT_THROTTLE dimension (R1/R2) is
+    folded into the same `check_all()` invocation as the base
+    dimensions, so strict-bucket consumption stays atomic with the base
+    bucket's own consumption.
+    """
     settings = get_settings()
     ip = resolve_client_ip(request, settings.trusted_proxy_cidrs_list)
     email = await _extract_email_from_json_body(request)
+    account_hash = (
+        hash_account_identifier(email, key=settings.rate_limit_hash_key_resolved.encode("utf-8"))
+        if email is not None
+        else None
+    )
+
+    decision = abuse_check(
+        redis_client, AbuseContext(operation="login", ip=ip, account_hash=account_hash)
+    )
+    if decision.temporary_blocked:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Try again later.",
+        )
 
     dimensions = [_dimension("login", "ip", ip, login_rate_limiter)]
-    if email is not None:
-        account_hash = hash_account_identifier(
-            email, key=settings.rate_limit_hash_key_resolved.encode("utf-8")
-        )
+    if account_hash is not None:
         dimensions.append(_dimension("login", "acct", account_hash, login_rate_limiter))
+    dimensions.extend(decision.strict_dimensions)
 
     _check_or_fallback(
         operation="login",
@@ -473,19 +473,35 @@ async def enforce_forgot_password_rate_limit(
     redis_client: redis.Redis | None = Depends(get_redis_client),
 ) -> None:
     """Tier A (ADR 0006 §13). Dimensions per ADR §9: IP, and the
-    submitted email (keyed HMAC, §14) when it's extractable."""
+    submitted email (keyed HMAC, §14) when it's extractable.
+
+    Also consults the abuse-decision layer (Slice 3b): no TEMPORARY_BLOCK
+    rule targets `forgot-password`, but an active STRICT_THROTTLE (R4) is
+    folded into the same `check_all()` invocation as the base dimensions.
+    """
     settings = get_settings()
     ip = resolve_client_ip(request, settings.trusted_proxy_cidrs_list)
     email = await _extract_email_from_json_body(request)
+    account_hash = (
+        hash_account_identifier(email, key=settings.rate_limit_hash_key_resolved.encode("utf-8"))
+        if email is not None
+        else None
+    )
+
+    decision = abuse_check(
+        redis_client, AbuseContext(operation="forgot-password", ip=ip, account_hash=account_hash)
+    )
+    # No TEMPORARY_BLOCK rule targets forgot-password (see
+    # abuse_decision._BLOCK_DIMENSIONS), so decision.temporary_blocked is
+    # always False here -- no rejection branch needed, only the strict
+    # dimension fold-in below.
 
     dimensions = [_dimension("forgot-password", "ip", ip, forgot_password_rate_limiter)]
-    if email is not None:
-        account_hash = hash_account_identifier(
-            email, key=settings.rate_limit_hash_key_resolved.encode("utf-8")
-        )
+    if account_hash is not None:
         dimensions.append(
             _dimension("forgot-password", "acct", account_hash, forgot_password_rate_limiter)
         )
+    dimensions.extend(decision.strict_dimensions)
 
     _check_or_fallback(
         operation="forgot-password",
@@ -503,9 +519,21 @@ def enforce_reset_password_rate_limit(
 ) -> None:
     """Tier A (ADR 0006 §13). IP only per ADR §9 — the reset token's own
     256-bit entropy is the real defense; see the ADR for why dimensioning
-    by token or account isn't used here."""
+    by token or account isn't used here.
+
+    Also consults the abuse-decision layer (Slice 3b): an active
+    TEMPORARY_BLOCK (R5) rejects the request outright. No STRICT_THROTTLE
+    rule targets `reset-password`.
+    """
     settings = get_settings()
     ip = resolve_client_ip(request, settings.trusted_proxy_cidrs_list)
+
+    decision = abuse_check(redis_client, AbuseContext(operation="reset-password", ip=ip))
+    if decision.temporary_blocked:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Try again later.",
+        )
 
     _check_or_fallback(
         operation="reset-password",

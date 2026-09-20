@@ -77,7 +77,15 @@ def _reset_rate_limiters() -> None:
     first (ADR 0006 §13, implementation slice 2), this must also clear
     the `rl:*` keys a real Redis accumulates across tests — resetting
     only the in-process `FixedWindowRateLimiter` instances is no longer
-    sufficient once Redis is reachable during the test run."""
+    sufficient once Redis is reachable during the test run.
+
+    Also clears `abuse:*` (ADR 0006 §11/§12, slices 3a/3b) for the same
+    reason: `login`/`forgot-password`/`reset-password` now write
+    failcount/HLL/strict-throttle/temporary-block state under that
+    namespace too, keyed partly by IP — and every `TestClient` request
+    shares the same fake peer IP, so without this sweep that state would
+    accumulate across unrelated tests exactly like the `rl:*` buckets
+    did before this fixture existed."""
     login_rate_limiter.reset()
     register_rate_limiter.reset()
     refresh_rate_limiter.reset()
@@ -87,8 +95,9 @@ def _reset_rate_limiters() -> None:
     redis_client = get_redis_client()
     if redis_client is not None:
         try:
-            for key in redis_client.scan_iter(match="rl:*"):
-                redis_client.delete(key)
+            for pattern in ("rl:*", "abuse:*"):
+                for key in redis_client.scan_iter(match=pattern):
+                    redis_client.delete(key)
         except redis.RedisError:
             # Redis is configured but unreachable during this test run —
             # every `enforce_*_rate_limit` dependency already falls back
