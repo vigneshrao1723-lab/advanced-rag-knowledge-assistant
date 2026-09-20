@@ -156,11 +156,25 @@ documented below rather than anticipated speculatively:
   request-derived value). Tested: 183 backend tests (119 pre-Redis + 51
   Slice 1 + 13 Slice 2), verified locally against real Postgres + real
   Redis and via GitHub Actions CI on PR #12 (backend/frontend/Docker-build
-  checks all passed). The deterministic abuse-detection layer (ADR §11)
-  does not exist yet — no `STRICT_THROTTLE`/`TEMPORARY_BLOCK` escalation
-  is possible. Redis's role remains strictly limited to ephemeral
-  rate-limit state; PostgreSQL remains the only durable datastore (ADR
-  0002) — Redis never becomes a second source of truth for users,
+  checks all passed). **The deterministic abuse-detection layer (ADR §11)
+  is now live**, merged in two further slices on top of the above: Slice
+  3a (`app/core/abuse_state.py`/`abuse_keys.py`, merged PR #13) added the
+  low-level Redis primitives; Slice 3b (`app/core/abuse_decision.py`,
+  merged PR #14) wires the R1–R5 rule table into `login`/
+  `forgot-password`/`reset-password` (not `register`/`refresh` — no rule
+  targets them) — a `TEMPORARY_BLOCK` (R3: 5 distinct source IPs against
+  one account; R5: 15 reset-password validation failures from one IP)
+  rejects outright before the base bucket is even consulted; a
+  `STRICT_THROTTLE` (R1/R2/R4) is enforced via a second, stricter token
+  bucket folded into the same atomic `check_all()` call as the base
+  bucket. A successful login resets the account-scoped failure counter
+  and distinct-IP signal (R2/R3) but never the IP-scoped counter (R1) or
+  an already-active escalation. Every threshold/window (§11) and the
+  strict/block bucket shapes (§12) are recorded, with rationale, in ADR
+  0006's "Resolved during the abuse-layer design/readiness review"
+  subsection. Redis's role remains strictly limited to ephemeral
+  rate-limit/abuse state; PostgreSQL remains the only durable datastore
+  (ADR 0002) — Redis never becomes a second source of truth for users,
   sessions, workspaces, or audit logs.
 
 ## Upload & document safety
@@ -202,18 +216,31 @@ inside retrieved content as inert.
 
 ## Audit logging
 
-**Implemented (Issue #2)** — `backend/app/core/audit.py` (`AuditEvent`
-constants, plain strings for extensibility) and
-`backend/app/repositories/audit_log_repository.py`. Captured today:
-registration, login success/failure, logout, session revocation, refresh-
-token reuse detection, password-reset request/success, workspace
-create/delete/membership changes, and authorization denials. Audit writes
-commit immediately and independently of the surrounding request's
-transaction, so a denial's audit record survives even when the request
-goes on to raise an error. `user_id`/`workspace_id` use `ON DELETE SET
-NULL` so the audit trail outlives the account/workspace it references.
-Document upload/delete audit events will be added when that surface exists
-(Issue #3).
+**Implemented (Issue #2, extended by Redis abuse-protection Slice 3c)** —
+`backend/app/core/audit.py` (`AuditEvent` constants, plain strings for
+extensibility) and `backend/app/repositories/audit_log_repository.py`.
+Captured today: registration, login success/failure, logout, session
+revocation, refresh-token reuse detection, password-reset
+request/success, workspace create/delete/membership changes,
+authorization denials, and (Slice 3c) abuse-layer escalations —
+`AuditEvent.RATE_LIMITED` on a `STRICT_THROTTLE` transition (R1/R2/R4)
+and `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` on a `TEMPORARY_BLOCK`
+transition (R3/R5), emitted exactly once per escalation (never on an
+already-escalated repeat) from `app/api/v1/auth.py`'s `login`/
+`forgot-password`/`reset-password` endpoints, after the real request
+outcome is known — never for an ordinary `ALLOW`, never for the base
+rate limiter's own ordinary throttling. Metadata is limited to the rule
+ID, operation, dimension, the already-HMAC-hashed account identifier
+(never a raw email) when the dimension is account-scoped, and the block
+TTL where applicable — never a raw password, token, or other secret.
+`user_id` is `None` for these two event types (the abuse layer never has
+a resolved user at the point it escalates). Audit writes commit
+immediately and independently of the surrounding request's transaction,
+so a denial's (or escalation's) audit record survives even when the
+request goes on to raise an error. `user_id`/`workspace_id` use `ON
+DELETE SET NULL` so the audit trail outlives the account/workspace it
+references. Document upload/delete audit events will be added when that
+surface exists (Issue #3).
 
 ## Security testing
 

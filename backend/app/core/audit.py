@@ -37,6 +37,7 @@ class AuditEvent:
     WORKSPACE_MEMBER_ROLE_CHANGED = "workspace_member_role_changed"
     AUTHORIZATION_DENIED = "authorization_denied"
     RATE_LIMITED = "rate_limited"
+    ABUSE_TEMPORARY_BLOCK_APPLIED = "abuse_temporary_block_applied"
 
 
 def record(
