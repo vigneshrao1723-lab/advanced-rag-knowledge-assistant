@@ -10,48 +10,54 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-20 — Browser E2E foundation: Playwright for authentication/password-recovery
+### 2026-09-20 — Document schema: `documents` + `document_chunks` (Issue #3, Slice 3.1)
 
-- **Not committed.** Introduces Playwright, previously absent from this
-  repository (`@playwright/test` existed only transitively, unused, in
-  `frontend/package-lock.json`'s dependency graph).
-- `frontend/playwright.config.ts` (new): Chromium, `baseURL` from
-  `PLAYWRIGHT_BASE_URL` (default `http://localhost:3000`), `workers: 1`/
-  `fullyParallel: false` deliberately — the backend's base rate limiter
-  and deterministic abuse layer (ADR 0006) both key partly by source IP,
-  and every request in a Playwright run shares one peer address.
-- `frontend/e2e/fixtures/`: `users.ts`, `mailpit.ts` (reads the
-  password-reset email through Mailpit's real REST API, not a mock of
-  the email provider), `auth-helpers.ts` (drives the real UI for
-  register/login/logout).
-- `frontend/e2e/app-availability.spec.ts` (3 tests), `auth.spec.ts` (9
-  tests — registration, session persistence/reload, logout,
-  protected-route redirects, and a genuine CSRF positive+negative case
-  through the real backend middleware), `password-recovery.spec.ts` (7
-  tests — the full forgot-password → Mailpit → reset-password →
-  post-reset login → session-revocation flow) — 19 tests total, run
-  against the real frontend/backend/PostgreSQL/Redis/Mailpit stack, no
-  mocks.
-- Three genuine findings from this validation, all fixed as test-code
-  corrections — no application/production code changed for any of them:
-  a locator strict-mode ambiguity (a created workspace's name correctly
-  renders in three places, not a bug); a direct refresh-revocation check
-  that initially forgot the CSRF header a state-changing endpoint
-  requires; and Chromium's own "Failed to load resource: 401" console
-  logging for the expected, already-handled anonymous-visitor
-  auth-bootstrap check.
-- `npx eslint e2e/ playwright.config.ts` / `npx tsc --noEmit -p .` both
-  clean. **19/19 passed, 3 consecutive clean runs** (properly spaced —
-  see `HANDOFF.md` for why 3 back-to-back runs with no gap hit a real,
-  correctly-working backend rate limit rather than a suite bug).
-  Existing 48 vitest tests and `npm run lint` unaffected.
-- `.github/workflows/ci.yml` gains a new `e2e` job (real service
-  containers, deterministic readiness waits, uploads the HTML report and
-  failure logs as artifacts) — not yet run on GitHub Actions as of this
-  entry.
-- Docs updated in the same working tree: `docs/DEPLOYMENT.md` (new
-  "Browser E2E (Playwright)" section, CI/CD section extended),
-  `PROJECT_STATE.md`, `HANDOFF.md`.
+- **Not committed.** GitHub Issue #3 (Knowledge Ingestion), Slice 3.1 —
+  schema only. No upload API, storage, extraction, chunking, embedding,
+  or frontend document UI is added — those are later slices.
+- `backend/app/models/document.py` (new): `documents` table — workspace
+  ownership (`workspace_id`, `ON DELETE CASCADE`), nullable uploader
+  (`uploaded_by`, `ON DELETE SET NULL`, matching `audit_logs.user_id`'s
+  precedent), server-generated `storage_key` (never the user-supplied
+  `filename`), `checksum_sha256`, and a native Postgres enum
+  `DocumentStatus` (`document_status`) mirroring the documented lifecycle
+  (`docs/REQUIREMENTS.md`/`docs/RAG_DESIGN.md`) exactly: `UPLOADED →
+  PROCESSING → PARSED → CLEANED → CHUNKED → EMBEDDED → INDEXED → READY /
+  FAILED`. A native enum was chosen over a plain string (unlike
+  `audit_logs.event_type`) because this lifecycle is a fixed, closed set
+  defined once, not an open-ended taxonomy — following `workspace_role`'s
+  convention instead.
+- `backend/app/models/document_chunk.py` (new): `document_chunks` table
+  — `document_id` (`ON DELETE CASCADE`), a deliberately denormalized
+  `workspace_id` (for workspace-scoped queries without a join, once
+  retrieval exists), `chunk_index`/`page`/`section`/`content`. No
+  embedding column yet — adding pgvector's `VECTOR(n)` now would lock the
+  schema to an embedding model/dimension before the provider abstraction
+  is designed; that's an additive migration for a later slice.
+- `backend/alembic/versions/0004_add_documents_and_document_chunks.py`
+  (new): reversible migration for both tables, following `0002`/`0003`'s
+  style. Constraints: `UNIQUE(storage_key)`,
+  `UNIQUE(workspace_id, checksum_sha256)` (duplicate-upload detection,
+  scoped per workspace),
+  `UNIQUE(document_id, chunk_index)`. Indexes on both tables'
+  `workspace_id`, and on `document_chunks.document_id`.
+- `backend/tests/test_document_schema.py` (new, 19 tests, real Postgres,
+  no mocks): table existence, FK validity/rejection (workspace, uploader,
+  document), both unique constraints (including that they're correctly
+  *not* global — same checksum across two workspaces, same chunk_index
+  across two documents, both allowed), cascade delete from `documents` to
+  `document_chunks`, nullable-field defaults, `DocumentStatus` persistence
+  and mutation, and database-assigned timestamps.
+- `ruff`/`mypy` clean (86 source files). **19/19 new tests passing**; the
+  complete backend suite **273/273 passing** (254 pre-existing + 19 new),
+  **3 consecutive runs**, real Postgres + real Redis — no regression in
+  any existing auth/workspace/rate-limit/abuse-protection test. Migration
+  `0004` verified reversible: `alembic downgrade 0003` removes both
+  tables and the `document_status` enum; `alembic upgrade head`
+  re-creates them identically.
+- `docs/DATA_MODEL.md` updated: `documents`/`document_chunks` moved from
+  PROPOSED to IMPLEMENTED (schema only) — retrieval, generation, and
+  every other proposed entity remain PROPOSED, unchanged.
 
 ### 2026-09-20 — Abuse-protection Slice 3c: escalation audit emission + HTTP-level tests
 
