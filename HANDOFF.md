@@ -8,34 +8,30 @@ in-flight task — overwrite it as work progresses, don't append a history
 
 ## Current task
 
-**Redis distributed rate limiting + the deterministic abuse-protection
-layer are fully merged into `main` — Slices 1 through 3c, all of ADR
-0006.** Issue #1 and Issue #2 are merged. In order: Slice 1 (foundation
-+ token-bucket engine) — PR #11, squash commit `46ef03b`. Slice 2
-(endpoint wiring) — PR #12, squash commit `5391a78`. Slice 3a (abuse-state
-Redis primitives) — PR #13, squash commit `026dcf3`. Slice 3b (decision
-engine + R1–R5 endpoint wiring, plus a `tests/conftest.py` test-isolation
-fix that slice's own validation surfaced) — PR #14, squash commit
-`42529e3`. Slice 3c (abuse-escalation audit emission —
-`AuditEvent.RATE_LIMITED`/`ABUSE_TEMPORARY_BLOCK_APPLIED` — plus 6
-HTTP-level tests) — PR #15, squash commit `75dd466`. **`main`/
-`origin/main` are at `75dd466`.** Nothing is pending review, push, or
-merge for any of them. Full per-slice implementation detail for each is
-preserved below under its own "Completed work" section — not repeated
+**Everything through Redis Slices 1–3c and Playwright E2E is merged into
+`main`.** In order: Redis Slice 1 (foundation + token-bucket engine) —
+PR #11, squash commit `46ef03b`. Slice 2 (endpoint wiring) — PR #12,
+squash commit `5391a78`. Slice 3a (abuse-state Redis primitives) —
+PR #13, squash commit `026dcf3`. Slice 3b (decision engine + R1–R5
+endpoint wiring, plus a `tests/conftest.py` test-isolation fix) — PR #14,
+squash commit `42529e3`. Slice 3c (abuse-escalation audit emission) —
+PR #15, squash commit `75dd466`. Browser E2E (Playwright) for
+authentication/password-recovery — PR #16, squash commit `e1c4858`.
+**`main`/`origin/main` are at `e1c4858`.** Nothing is pending review,
+push, or merge for any of the above. Full per-item implementation detail
+is preserved below under its own "Completed work" section — not repeated
 here, per this file's own "don't append a history" instruction.
 
-**Browser E2E coverage (Playwright) for the authentication/
-password-recovery flows has now been implemented and real-stack
-validated, but is still uncommitted, working-tree-only** —
-`frontend/playwright.config.ts` + `frontend/e2e/` (19 tests across 3
-spec files), run against the real frontend/backend/PostgreSQL/Redis/
-Mailpit stack, no mocks. **19/19 passed, 3 consecutive clean runs**
-(spaced to respect the backend's own real `register` rate-limit window —
-see "Completed work (Playwright E2E — authentication/password-recovery)"
-below for exactly why, and for two genuine findings this validation
-surfaced and fixed as test-code corrections, not application changes).
-Do not start Issue #3 without an explicit go-ahead. See "Next major
-task" below for what comes next.
+**GitHub Issue #3 (Knowledge Ingestion), Slice 3.1 (document data model +
+migration) is now IMPLEMENTED, TESTED, COMMITTED, and PUSHED, on branch
+`issue-3-slice-3-1-document-schema`, opened as **PR #17**, awaiting
+review** — schema only (`documents`/`document_chunks` tables, migration
+`0004`); no upload API, storage, extraction, chunking, background
+processing, or embedding code. See "Completed work (Issue #3 — Slice 3.1:
+document data model + migration)" below for full detail, and "Exact next
+recommended action" at the end of this file for the branch/commit/PR
+identifiers. **Do not start Slice 3.2 or any later Issue #3 slice without
+an explicit go-ahead** — this slice's own scope stops at the schema.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -721,10 +717,14 @@ abuse-decision code modified, only consumed.
 
 ## Completed work (Playwright E2E — authentication/password-recovery)
 
-**Uncommitted, working-tree-only.** No Playwright infrastructure existed
-before this — `@playwright/test` was not installed (only present
-transitively, unused, in `frontend/package-lock.json`'s dependency
-graph); introduced fresh.
+**This work has since been committed, pushed, opened as PR #16, and
+merged into `main` as squash commit `e1c4858`, with CI green.** The
+record below is kept as accurate history of the implementation/
+validation itself, not as current status — see "Current task" above.
+
+No Playwright infrastructure existed before this — `@playwright/test`
+was not installed (only present transitively, unused, in
+`frontend/package-lock.json`'s dependency graph); introduced fresh.
 
 - **`frontend/playwright.config.ts`** (new): `baseURL` from
   `PLAYWRIGHT_BASE_URL` (default `http://localhost:3000`); Chromium only,
@@ -828,6 +828,113 @@ graph); introduced fresh.
   in advance.
 - **This is not a production validation.**
 
+## Completed work (Issue #3 — Slice 3.1: document data model + migration)
+
+**Implemented, tested, committed, and pushed; PR open, not yet
+merged.** Schema only — per this slice's explicit scope, no upload API,
+storage abstraction, text extraction, chunking, background processing,
+or embedding code was added.
+
+- **`backend/app/models/document.py`** (new): `Document` model —
+  `documents` table. `workspace_id` (`ON DELETE CASCADE`, indexed);
+  `uploaded_by` nullable, `ON DELETE SET NULL` (matches `AuditLog.user_id`'s
+  precedent — a document should outlive the account that uploaded it,
+  not disappear when the account is removed); `filename`/`mime_type`/
+  `size_bytes`/`checksum_sha256`/`storage_key` (server-generated, unique
+  — never the user-supplied filename, per `docs/SECURITY.md` "Upload &
+  document safety"); `status` as a new `DocumentStatus` native Postgres
+  enum (`document_status`) matching the documented lifecycle exactly
+  (`docs/REQUIREMENTS.md`/`docs/RAG_DESIGN.md`): `UPLOADED → PROCESSING →
+  PARSED → CLEANED → CHUNKED → EMBEDDED → INDEXED → READY / FAILED`. A
+  native enum was chosen over a plain string (unlike `audit_logs.event_type`,
+  which is deliberately open-ended) because this lifecycle is a fixed,
+  closed set defined once by the project specification — following
+  `WorkspaceMember.role`'s (`workspace_role`) convention instead.
+  `failure_reason`/`page_count`/`processing_started_at`/
+  `processing_completed_at` all nullable. `UNIQUE(storage_key)` and
+  `UNIQUE(workspace_id, checksum_sha256)` (duplicate-upload detection,
+  scoped per workspace, not global — the same checksum in two different
+  workspaces is allowed).
+- **`backend/app/models/document_chunk.py`** (new): `DocumentChunk`
+  model — `document_chunks` table. `document_id` (`ON DELETE CASCADE`,
+  indexed); `workspace_id` deliberately denormalized (also indexed) —
+  every future workspace-scoped retrieval/security query needs to filter
+  chunks by workspace without an extra join; `chunk_index`/`page`/
+  `section`/`content`. `UNIQUE(document_id, chunk_index)`, scoped per
+  document, not global. **No embedding column** — see the next bullet.
+- **Deliberately no pgvector column yet**: choosing `VECTOR(n)` now would
+  lock the schema to an embedding model/dimension before the
+  `EmbeddingProvider` abstraction is designed in a later slice; adding it
+  is planned as a small additive migration once that choice is actually
+  made, not a breaking change to this one.
+- **`backend/alembic/versions/0004_add_documents_and_document_chunks.py`**
+  (new): reversible migration for both tables, following `0002`/`0003`'s
+  style (the `document_status` enum type is created by `create_table`'s
+  column type hook, matching how `0002` creates `workspace_role` — no
+  separate `.create()` call). `downgrade()` drops both tables' indexes,
+  both tables, then the enum type.
+- **`backend/app/models/__init__.py`** (modified): registers `Document`/
+  `DocumentChunk`/`DocumentStatus` on `Base.metadata` so Alembic
+  autogenerate and the test suite's session-scoped migration fixture see
+  them, matching every prior model's registration pattern.
+- **`backend/tests/test_document_schema.py`** (new, 19 tests, real
+  Postgres via `tests/conftest.py`'s `db_session` fixture, no mocks):
+  table existence; a document referencing an existing workspace/uploader;
+  `uploaded_by` nullability; invalid workspace FK rejected
+  (`IntegrityError`); the workspace+checksum unique constraint, and that
+  it's correctly *not* global (same checksum across two different
+  workspaces is allowed); the storage-key unique constraint; a chunk
+  referencing its document/workspace; invalid document FK on a chunk
+  rejected; the document+chunk_index unique constraint, and that it's
+  correctly *not* global (same `chunk_index` across two different
+  documents is allowed); cascade delete from `documents` to
+  `document_chunks`; nullable-metadata-field defaults; `DocumentStatus`
+  defaulting to `UPLOADED` and persisting a mutation; database-assigned
+  timestamps on both tables.
+  - **One genuine test-design bug found and fixed during this slice's
+    own validation** (not a schema/migration defect): the first version
+    of the cascade-delete test called `db_session.get(DocumentChunk,
+    chunk_id)` right after deleting the parent `document` and flushing —
+    `ON DELETE CASCADE` ran correctly in Postgres, but the SQLAlchemy
+    session's identity map still held the pre-delete `chunk` object
+    (the ORM was never told about the DB-level cascade), so `.get()`
+    returned the stale cached instance instead of re-querying and
+    getting `None`. Fixed by calling `db_session.expire_all()` before
+    the assertion.
+  - `ruff`/`mypy` clean (86 source files, only 2 mypy findings surfaced
+    along the way, both fixed: `sa.inspect(db_session.bind)` typed as
+    `Any | None` — switched to `sa.inspect(engine)`, the same real bind
+    `conftest.py` itself uses).
+  - **Real-Postgres validated**: **19/19 new tests passing**; the
+    complete backend suite **273/273 passing** (254 pre-existing + 19
+    new), **3 consecutive runs**, no flakiness, no regression in any
+    existing auth/workspace/rate-limit/abuse-protection test.
+  - **Migration `0004` explicitly verified reversible**, not just
+    assumed from the code: `alembic downgrade 0003` removes both tables
+    and the `document_status` enum (confirmed via `sqlalchemy.inspect`
+    against the real database); `alembic upgrade head` re-creates both
+    tables with the correct column set; the full suite re-run clean
+    afterward.
+  - This session hit a genuine environment interruption mid-task:
+    Docker Desktop's WSL integration dropped (the `docker` CLI briefly
+    reported "command could not be found in this WSL 2 distro" after
+    working moments earlier) and had to be restored on the Windows side
+    before any of the above could run — not a code or schema defect;
+    documented here per this project's established practice of recording
+    genuine Docker/WSL environment faults rather than silently working
+    around or omitting them.
+- **Docs updated this slice**: `docs/DATA_MODEL.md` (`documents`/
+  `document_chunks` moved PROPOSED → IMPLEMENTED, schema only; the chunk
+  metadata list annotated field-by-field; the embedding-column decision
+  documented explicitly), `PROJECT_STATE.md`, `CHANGELOG.md`, this file.
+  Also reconciled in the same pass, per explicit instruction: `PROJECT_STATE.md`/
+  `HANDOFF.md`/`CHANGELOG.md` still described the already-merged
+  Playwright E2E work (PR #16, `e1c4858`) as uncommitted — corrected
+  throughout all three files (see "Completed work (Playwright E2E...)"
+  above for its own updated status note, and the `CHANGELOG.md` entry
+  moved from "Unreleased — working tree" to "Unreleased — committed"
+  with the real commit hash).
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -837,14 +944,17 @@ graph); introduced fresh.
   throughout — never call it "AI" or claim ML/statistical evaluation
   unless an actual evaluated model backs that claim, per the ADR's
   explicit non-goal.
-- **Playwright E2E is implemented, real-stack validated, but
-  uncommitted, working-tree-only** — see "Completed work (Playwright E2E
-  — authentication/password-recovery)" above. Covers only the
-  authentication/password-recovery surface; no document/chat/search UI
-  exists yet for E2E coverage to extend to.
-- **Document-access/ingestion audit events (Issue #3) do not exist
-  yet** — `AuditEvent` still only covers auth/workspace/rate-limit/
-  abuse-escalation events.
+- **Playwright E2E is merged** (`e1c4858`, PR #16) — see "Completed work
+  (Playwright E2E — authentication/password-recovery)" above. Covers
+  only the authentication/password-recovery surface; no document/chat/
+  search UI exists yet for E2E coverage to extend to.
+- **Issue #3 Slice 3.1 (document schema) is implemented, tested,
+  committed, and pushed — PR #17, not yet merged.** No upload
+  API, storage, extraction, chunking, background processing, or
+  embedding code exists. No document-access/ingestion audit events exist
+  yet either — `AuditEvent` still only covers auth/workspace/rate-limit/
+  abuse-escalation events; those land with a later Issue #3 slice (the
+  upload/delete API).
 - **`client_ip()` (unconditional, no trusted-proxy handling) is still
   used elsewhere** — `app/api/v1/auth.py`'s audit/session IP recording
   and `app/core/dependencies.py`'s authorization-denial audit events
@@ -858,10 +968,10 @@ graph); introduced fresh.
   whole ADR exists for (§2.1) has not been exercised with more than one
   backend process under real concurrent load, since no such deployment
   exists.
-- **Playwright browser E2E** — not started. No config, no test files, no
-  dependency.
-- **Issue #3 (document ingestion)** — not started.
-- **Later RAG retrieval/generation features** — not started.
+- **Issue #3, Slices 3.2 onward (storage/upload/extraction/chunking/
+  background processing/embeddings)** — not started.
+- **Later RAG retrieval/generation features (Issue #4 onward)** — not
+  started.
 - **Endpoint-driven concurrency test under real HTTP load** — not added
   in the Slice 2 review-fix pass either; the property is proven at the
   engine level (`test_redis_rate_limiter.py`, merged with Slice 1) and
@@ -875,29 +985,44 @@ graph); introduced fresh.
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: GitHub Issue #3 (Knowledge Ingestion)
+## Next major task: GitHub Issue #3 (Knowledge Ingestion), Slice 3.2
 
 **ADR 0006's deterministic abuse-protection layer is functionally
 complete end-to-end and fully merged (Slices 1–3c).** Nothing further is
 planned under it unless a future decision proposes one (e.g. a
 `Retry-After` header, `Forwarded` header support — see "Known
 limitations" in the Slice 3c report above). Browser E2E coverage for the
-authentication/password-recovery flows is implemented and validated,
-awaiting its own commit/PR/merge.
+authentication/password-recovery flows is implemented, validated, and
+merged (PR #16, `e1c4858`).
 
-**Before anything else starts**: the Playwright E2E work needs its own
-commit/PR/merge, per normal workflow — don't start new feature work on
-top of an uncommitted E2E suite.
+**GitHub Issue #3 (Knowledge Ingestion) has started: Slice 3.1 (document
+data model + migration) is implemented, tested, committed, and pushed —
+PR #17, not yet merged.** Per that slice's own explicit scope,
+it stops at the schema; no storage, upload API, extraction, chunking,
+background processing, or embedding code exists.
 
-With an explicit go-ahead, the next work in this repository's own
-stated order (`PROJECT_STATE.md` "Immediate priorities") is:
+**Before anything else starts**: get the Slice 3.1 PR reviewed and
+merged, per normal workflow — don't start Slice 3.2 on top of an
+unmerged prior slice.
 
-1. **GitHub Issue #3 (Knowledge Ingestion)** — not started.
+With an explicit go-ahead, the next work in this repository's own stated
+order (`PROJECT_STATE.md` "Immediate priorities") is:
+
+1. **GitHub Issue #3, Slice 3.2** — not started; not yet scoped in this
+   file. Do not assume its content without checking the Issue #3
+   implementation plan/architecture notes first.
 
 ## Blockers
 
-None. Docker Compose, the local Postgres container, Mailpit, a local
-Redis, and `gh` CLI access are all confirmed working in this environment.
+None currently. Docker Compose, the local Postgres container, Mailpit, a
+local Redis, and `gh` CLI access are all confirmed working in this
+environment. **A transient one occurred and resolved during this
+session**: Docker Desktop's WSL integration dropped mid-task (the
+`docker` CLI briefly reported "command could not be found in this WSL 2
+distro" after working moments earlier) — required restoring the
+integration on the Windows side before real-database validation could
+run; not a code or environment-configuration defect on the repository
+side.
 
 ## Tests run
 
@@ -1066,21 +1191,48 @@ Redis, and `gh` CLI access are all confirmed working in this environment.
   from the backend's own `register` rate limiter (not flakiness — see
   "Completed work (Playwright E2E...)" for the exact mechanism and fix).
   Existing **48 vitest tests** and `npm run lint` confirmed unaffected.
+  **Since merged into `main` as squash commit `e1c4858` via PR #16.**
+- **Issue #3, Slice 3.1 (document schema): `uv run ruff check .`** (pass)
+  and **`uv run mypy .`** (pass, 86 source files — 2 findings surfaced
+  and fixed along the way: `sa.inspect(db_session.bind)` typed
+  `Any | None`, switched to `sa.inspect(engine)`). **19 new tests
+  (`tests/test_document_schema.py`) — 19/19 passed** (one test-design bug
+  found and fixed during validation, not a schema defect: a
+  cascade-delete assertion read a stale ORM identity-map object after a
+  DB-level `ON DELETE CASCADE`, before `db_session.expire_all()` was
+  added — see "Completed work (Issue #3 — Slice 3.1...)" above for the
+  full explanation). **Complete backend suite: 273/273 passing** (254
+  pre-existing + 19 new), **3 consecutive runs**, real Postgres + real
+  Redis, no regression in any existing auth/workspace/rate-limit/abuse
+  test. **Migration `0004` explicitly verified reversible**: `alembic
+  downgrade 0003` (both tables + the `document_status` enum removed,
+  confirmed via `sqlalchemy.inspect`) then `alembic upgrade head` (both
+  tables recreated with the correct columns), followed by a clean full
+  suite re-run. This session hit a genuine, resolved environment
+  interruption partway through (Docker Desktop's WSL integration
+  dropped, then was restored on the Windows side) — documented in
+  "Blockers" above; not a code defect. Schema/model/migration/tests
+  committed as `36fe8b0`; documentation reconciliation as a second,
+  separate commit — pushed on branch `issue-3-slice-3-1-document-schema`
+  (cut from `e1c4858`), opened as **PR #17**.
 
 ## Exact next recommended action
 
-Redis Slices 1/2/3a/3b/3c are merged into `main` (`46ef03b` PR #11,
-`5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14, `75dd466` PR #15) —
-nothing pending for any of them. **Playwright E2E for the authentication/
-password-recovery flows is implemented, real-stack validated (19/19, 3
-consecutive runs), but still uncommitted** — see "Completed work
-(Playwright E2E — authentication/password-recovery)" and "Tests run"
-above. The next work, in order:
+Redis Slices 1/2/3a/3b/3c and Playwright E2E are all merged into `main`
+(`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14,
+`75dd466` PR #15, `e1c4858` PR #16) — nothing pending for any of them.
+**GitHub Issue #3, Slice 3.1 (document data model + migration) is
+implemented, tested, committed (`36fe8b0` + a docs commit), pushed, and
+opened as PR #17** on branch `issue-3-slice-3-1-document-schema` (cut
+from `e1c4858`) — see "Completed work (Issue #3 — Slice 3.1...)" and
+"Tests run" above. The next work, in order:
 
-1. **Commit/push/PR/merge the Playwright E2E work on its own**, per
-   normal workflow, same as every prior slice — its real-stack
-   validation is done locally; what's left is the ordinary Git
-   finalization steps, plus confirming the new `e2e` CI job actually
-   goes green on GitHub Actions (not yet run there as of this entry).
-2. **Then, with an explicit go-ahead:** begin GitHub Issue #3 (Knowledge
-   Ingestion) — not started.
+1. **Get PR #17 reviewed, confirm CI is green, and merge it** — this
+   slice's own real-Postgres validation (schema tests, full suite,
+   migration reversibility) is already done locally; what's left is
+   ordinary review plus confirming GitHub Actions CI passes on the PR
+   itself. Do not merge it without review.
+2. **Once merged, with an explicit go-ahead:** scope and implement
+   GitHub Issue #3, Slice 3.2 — not yet defined in this file; check the
+   Issue #3 implementation plan/architecture notes first rather than
+   assuming its content.

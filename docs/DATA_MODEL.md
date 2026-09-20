@@ -3,10 +3,14 @@
 **Status:** PARTIALLY IMPLEMENTED — `users`, `workspaces`,
 `workspace_members`, `sessions` (migration `0002`), and
 `password_reset_tokens`/`audit_logs` (migration `0003`) exist as real
-tables (GitHub Issue #2 — Authentication & Workspaces); every other
-entity below remains PROPOSED. This document records the intended core
-entities so future implementation stays consistent; entities not marked
-implemented below are not evidence that they exist. See
+tables (GitHub Issue #2 — Authentication & Workspaces). `documents` and
+`document_chunks` (migration `0004`) also exist as real tables, but as
+**schema only** (GitHub Issue #3, Slice 3.1) — no upload API, storage,
+extraction, chunking, or embedding code exists yet, and
+`document_chunks` deliberately has no embedding column (see below). Every
+other entity below remains PROPOSED. This document records the intended
+core entities so future implementation stays consistent; entities not
+marked implemented below are not evidence that they exist. See
 [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 
 ## Core entities
@@ -18,8 +22,8 @@ implemented below are not evidence that they exist. See
 | `workspace_members` | Membership + role (`OWNER`/`ADMIN`/`MEMBER`/`VIEWER`) linking users to workspaces | IMPLEMENTED |
 | `sessions` | Server-tracked login/device session backing refresh-token issuance, listing, and revocation (see [ADR 0003](DECISIONS/0003-authentication-session-architecture.md)) | IMPLEMENTED |
 | `password_reset_tokens` | Hashed, expiring, single-use password-reset tokens (raw value never persisted — see [ADR 0005](DECISIONS/0005-httponly-cookie-csrf-authentication.md) and `docs/SECURITY.md`) | IMPLEMENTED |
-| `documents` | Uploaded source files and their processing status | PROPOSED |
-| `document_chunks` | Chunked, embedded units of a document, used for retrieval | PROPOSED |
+| `documents` | Uploaded source files and their processing status | IMPLEMENTED (schema only — migration `0004`; upload/storage/processing code lands in later Issue #3 slices) |
+| `document_chunks` | Chunked units of a document, used for retrieval once Issue #4 exists | IMPLEMENTED (schema only — migration `0004`; **no embedding column yet**, see below) |
 | `collections` | Logical grouping of documents within a workspace | PROPOSED |
 | `collection_documents` | Many-to-many link between collections and documents | PROPOSED |
 | `conversations` | A chat session within a workspace | PROPOSED |
@@ -68,13 +72,20 @@ schema is actually built.
 
 `document_chunks` rows are expected to carry at least:
 
-- `document_id`
-- `page`
-- `section`
-- `chunk_index`
-- `content`
-- embedding vector (pgvector column)
-- embedding model/version metadata (see
+- `document_id` — IMPLEMENTED (migration `0004`)
+- `workspace_id` — IMPLEMENTED (migration `0004`; denormalized from
+  `document_id` for workspace-scoped query safety, not in the original
+  list above, added during Slice 3.1's schema design)
+- `page` — IMPLEMENTED (migration `0004`)
+- `section` — IMPLEMENTED (migration `0004`)
+- `chunk_index` — IMPLEMENTED (migration `0004`)
+- `content` — IMPLEMENTED (migration `0004`)
+- embedding vector (pgvector column) — **PROPOSED, deliberately not yet
+  added.** Choosing a `VECTOR(n)` column now would lock the schema to an
+  embedding model/dimension before the `EmbeddingProvider` abstraction is
+  designed; adding it is planned as a small additive migration in a later
+  Issue #3 slice, once that choice is actually made.
+- embedding model/version metadata — PROPOSED, same reason as above (see
   [`docs/RAG_DESIGN.md`](RAG_DESIGN.md) §"Embeddings")
 
 ## Related documents
