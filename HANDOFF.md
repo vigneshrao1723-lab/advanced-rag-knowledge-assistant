@@ -24,7 +24,7 @@ here, per this file's own "don't append a history" instruction.
 
 **GitHub Issue #3 (Knowledge Ingestion), Slice 3.1 (document data model +
 migration) is now IMPLEMENTED, TESTED, COMMITTED, and PUSHED, on branch
-`issue-3-slice-3-1-document-schema`, with a PR open and awaiting
+`issue-3-slice-3-1-document-schema`, opened as **PR #17**, awaiting
 review** — schema only (`documents`/`document_chunks` tables, migration
 `0004`); no upload API, storage, extraction, chunking, background
 processing, or embedding code. See "Completed work (Issue #3 — Slice 3.1:
@@ -949,7 +949,7 @@ or embedding code was added.
   only the authentication/password-recovery surface; no document/chat/
   search UI exists yet for E2E coverage to extend to.
 - **Issue #3 Slice 3.1 (document schema) is implemented, tested,
-  committed, and pushed, with a PR open — not yet merged.** No upload
+  committed, and pushed — PR #17, not yet merged.** No upload
   API, storage, extraction, chunking, background processing, or
   embedding code exists. No document-access/ingestion audit events exist
   yet either — `AuditEvent` still only covers auth/workspace/rate-limit/
@@ -996,8 +996,8 @@ authentication/password-recovery flows is implemented, validated, and
 merged (PR #16, `e1c4858`).
 
 **GitHub Issue #3 (Knowledge Ingestion) has started: Slice 3.1 (document
-data model + migration) is implemented, tested, committed, and pushed,
-with a PR open — not yet merged.** Per that slice's own explicit scope,
+data model + migration) is implemented, tested, committed, and pushed —
+PR #17, not yet merged.** Per that slice's own explicit scope,
 it stops at the schema; no storage, upload API, extraction, chunking,
 background processing, or embedding code exists.
 
@@ -1211,8 +1211,10 @@ side.
   suite re-run. This session hit a genuine, resolved environment
   interruption partway through (Docker Desktop's WSL integration
   dropped, then was restored on the Windows side) — documented in
-  "Blockers" above; not a code defect. Committed as `36fe8b0` on branch
-  `issue-3-slice-3-1-document-schema`, cut from `e1c4858`.
+  "Blockers" above; not a code defect. Schema/model/migration/tests
+  committed as `36fe8b0`; documentation reconciliation as a second,
+  separate commit — pushed on branch `issue-3-slice-3-1-document-schema`
+  (cut from `e1c4858`), opened as **PR #17**.
 
 ## Exact next recommended action
 
@@ -1220,16 +1222,17 @@ Redis Slices 1/2/3a/3b/3c and Playwright E2E are all merged into `main`
 (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14,
 `75dd466` PR #15, `e1c4858` PR #16) — nothing pending for any of them.
 **GitHub Issue #3, Slice 3.1 (document data model + migration) is
-implemented, tested, and committed as `36fe8b0` on branch
-`issue-3-slice-3-1-document-schema`** (cut from `e1c4858`) — see
-"Completed work (Issue #3 — Slice 3.1...)" and "Tests run" above. The
-next work, in order:
+implemented, tested, committed (`36fe8b0` + a docs commit), pushed, and
+opened as PR #17** on branch `issue-3-slice-3-1-document-schema` (cut
+from `e1c4858`) — see "Completed work (Issue #3 — Slice 3.1...)" and
+"Tests run" above. The next work, in order:
 
-1. **Push the branch, open the PR, and confirm CI goes green** — the
-   ordinary Git finalization steps; this slice's own real-Postgres
-   validation is already done locally (see "Tests run" above). Do not
-   merge it without review.
-2. **Once that PR is merged, with an explicit go-ahead:** scope and
-   implement GitHub Issue #3, Slice 3.2 — not yet defined in this file;
-   check the Issue #3 implementation plan/architecture notes first
-   rather than assuming its content.
+1. **Get PR #17 reviewed, confirm CI is green, and merge it** — this
+   slice's own real-Postgres validation (schema tests, full suite,
+   migration reversibility) is already done locally; what's left is
+   ordinary review plus confirming GitHub Actions CI passes on the PR
+   itself. Do not merge it without review.
+2. **Once merged, with an explicit go-ahead:** scope and implement
+   GitHub Issue #3, Slice 3.2 — not yet defined in this file; check the
+   Issue #3 implementation plan/architecture notes first rather than
+   assuming its content.
