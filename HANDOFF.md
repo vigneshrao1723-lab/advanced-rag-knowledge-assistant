@@ -40,34 +40,41 @@ Slice 3a (low-level Redis primitives) was implemented, real-Redis
 validated (32/32, 3 consecutive runs), and merged into `main` as squash
 commit `026dcf3` (PR #13).** `main`/`origin/main` are at `026dcf3`.
 
-**Slice 3b (the decision engine + endpoint wiring) has now also been
-implemented and real-Redis validated, but is still uncommitted,
-working-tree-only** — `app/core/abuse_decision.py` (`check()`/
-`record_login_failure()`/`record_login_success()`/
+**Slice 3b (the decision engine + endpoint wiring) was implemented,
+real-Redis validated, had its own test-isolation-gap finding fixed, and
+merged into `main` as squash commit `42529e3` (PR #14).** `main`/
+`origin/main` are at `42529e3`. `app/core/abuse_decision.py`
+(`check()`/`record_login_failure()`/`record_login_success()`/
 `record_forgot_password_request()`/`record_reset_validation_failure()`,
-the R1–R5 rule table), one additive primitive in `abuse_state.py`
-(`temporary_block_ttl_seconds()`), a new `app/core/token_bucket_types.py`
-(extracted to break a genuine import cycle this slice's wiring
-introduced — see "Completed work (Redis abuse layer — Slice 3b)" below),
-and wiring into `rate_limit.py`'s `enforce_login_rate_limit`/
+the R1–R5 rule table), the additive `temporary_block_ttl_seconds()`
+primitive in `abuse_state.py`, `app/core/token_bucket_types.py`
+(extracted to break a real import cycle), and the wiring into
+`rate_limit.py`'s `enforce_login_rate_limit`/
 `enforce_forgot_password_rate_limit`/`enforce_reset_password_rate_limit`
 plus `app/api/v1/auth.py`'s `login`/`forgot-password`/`reset-password`
-endpoints (post-outcome recording only, never in the pre-request
-dependency — `register`/`refresh` untouched). 33 new tests
-(`tests/test_abuse_decision.py`) plus the unaffected 32 from Slice 3a —
-**65/65 passed 3 consecutive times against real Redis + real
-PostgreSQL**, run inside `compose-backend-1` (the host shell's own
-published-port path remained broken this session too). **A genuine
-test-infrastructure gap was found during validation and deliberately
-NOT fixed** (out of this slice's explicit scope): `tests/conftest.py`'s
-`_reset_rate_limiters` sweeps `rl:*` between tests but not the new
-`abuse:*` keys, so a full pre-existing-suite run can accumulate real R4
-state across the shared default test-client IP and fail 2 pre-existing
-`test_password_reset.py` tests — reproduced from a freshly flushed
-Redis, confirmed unrelated to this slice's own correctness. See
-"Completed work (Redis abuse layer — Slice 3b)" below for the full
-writeup. Do not start Slice 3c, Playwright, or Issue #3 without an
-explicit go-ahead. See "Next major task" below for what comes next.
+endpoints are **all now active in the committed codebase on `main`.**
+`tests/conftest.py`'s `_reset_rate_limiters` now also sweeps `abuse:*`
+between tests (the fix for the gap that slice's own validation found).
+
+**Slice 3c (abuse-escalation audit emission + HTTP-level test coverage)
+has now also been implemented and real-Redis validated, but is still
+uncommitted, working-tree-only** — `app/core/audit.py` gained one new
+constant (`ABUSE_TEMPORARY_BLOCK_APPLIED`); `app/api/v1/auth.py` gained
+a `_audit_abuse_escalation()` helper, called from `login`/
+`forgot-password`/`reset-password` right after each `record_*()` call,
+emitting `AuditEvent.RATE_LIMITED` (`STRICT_THROTTLE`) or
+`AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` (`TEMPORARY_BLOCK`) exactly
+once per escalation — never on an already-escalated repeat, never for
+an ordinary `ALLOW`. No abuse-decision production code was modified;
+this slice only consumes `AbuseRecordOutcome`'s existing return value.
+6 new HTTP-level tests (`tests/test_abuse_audit.py`) exercise the real
+endpoints end-to-end (real Redis, real PostgreSQL) — **6/6 passed, 3
+consecutive runs**, alongside the complete **254-test backend suite
+passing 254/254, 3 consecutive runs**. See "Completed work (Redis abuse
+layer — Slice 3c)" below for the full writeup, including two test-design
+bugs found and fixed during this slice's own validation (not production
+defects). Do not start Playwright or Issue #3 without an explicit
+go-ahead. See "Next major task" below for what comes next.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -500,7 +507,13 @@ committed and merged into `main` as squash commit `026dcf3` (PR #13).**
 
 ## Completed work (Redis abuse layer — Slice 3b: decision engine + endpoint wiring)
 
-**Uncommitted, working-tree-only.** Implements the deterministic
+**Superseded by the current-task summary above: Slice 3b has since been
+committed and merged into `main` as squash commit `42529e3` (PR #14),
+including the `tests/conftest.py` test-isolation fix.** The record below
+is kept as accurate history of that slice's own implementation/
+validation, not as the current status.
+
+Implements the deterministic
 decision layer on top of Slice 3a's primitives and wires it into the
 three operations R1–R5 actually target — `login`, `forgot-password`,
 `reset-password`. `register`/`refresh` are untouched (no rule in R1–R5
@@ -663,24 +676,102 @@ files — the fixture change touches only a test file).
   security posture, and Slice 3b is not committed — `main` genuinely
   still has zero reachable abuse escalation, so its "the deterministic
   abuse-detection layer does not exist yet" statement remains accurate.
-  **This will need updating the moment Slice 3b actually merges**, not
-  before.
+  **This will need updating the moment Slice 3b actually merges** — done,
+  see the Slice 3c entry below (`docs/SECURITY.md` was updated for both
+  Slice 3b's live escalation and Slice 3c's audit emission in the same
+  pass, once Slice 3b had actually merged).
+
+## Completed work (Redis abuse layer — Slice 3c: audit emission + HTTP-level tests)
+
+**Uncommitted, working-tree-only.** Adds abuse-escalation audit emission
+on top of Slice 3b's now-merged decision engine — no production
+abuse-decision code modified, only consumed.
+
+- **`app/core/audit.py`** (additive): one new constant,
+  `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` — no existing constant or
+  the `record()` function's signature changed.
+- **`app/api/v1/auth.py`** (modified): a new `_audit_abuse_escalation()`
+  helper, called from `login`/`forgot-password`/`reset-password` right
+  after each `record_login_failure()`/`record_forgot_password_request()`/
+  `record_reset_validation_failure()` call:
+  - Fires only when `outcome.newly_escalated` is `True` — never on an
+    already-escalated repeat, never for an ordinary `ALLOW` (this
+    function is only ever called with the result of a `record_*` call,
+    itself only reached after a real outcome is known).
+  - Event type: `AuditEvent.RATE_LIMITED` for `STRICT_THROTTLE`,
+    `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` for `TEMPORARY_BLOCK`.
+  - Metadata: `rule`/`operation`/`dimension` always; `account_hash`
+    (already HMAC-hashed, never raw) when the dimension is
+    account-scoped; `block_ttl_seconds` (600, from
+    `abuse_state.TEMPORARY_BLOCK_TTL_SECONDS`) for blocks. Never a raw
+    email, password, reset token, or refresh token.
+  - `user_id` is always `None` — none of the three call sites have a
+    resolved user at this point (a failed login never returns one;
+    forgot-password/reset-password never expose one to this layer) —
+    never invented.
+  - `ip_address` is the same trusted-proxy-resolved `AbuseContext.ip`
+    the abuse decision itself acted on, not the separate, unconditional
+    `client_ip()` used elsewhere for session/authorization audit rows.
+- **`tests/test_abuse_audit.py`** (new, 6 HTTP-level tests, real Redis +
+  real PostgreSQL, no mocks): repeated login failures → R1
+  `STRICT_THROTTLE` + exactly one `RATE_LIMITED` row + strict-bucket
+  consumption proof (2 allowed, 3rd rejected) + no duplicate rows;
+  account-scoped R2 through the endpoint + account isolation; 5 distinct
+  IPs against one account → R3 `TEMPORARY_BLOCK` + exactly one
+  `ABUSE_TEMPORARY_BLOCK_APPLIED` row with `block_ttl_seconds` + the
+  account rejected outright afterward, before `auth_service` ever runs;
+  R4 forgot-password strict-throttle with enumeration-resistant
+  responses intact throughout; R5 reset-password validation failures →
+  `TEMPORARY_BLOCK` + audit row + subsequent outright rejection;
+  successful login resetting R2/R3 but not R1, with zero abuse-audit
+  rows from an ordinary below-threshold sequence.
+  - **Two test-design bugs found and fixed during this slice's own
+    validation** (not production defects): (1) the initial approach
+    tried to pre-fill the *base* `rl:*` token bucket with an abundant
+    token count to reach abuse thresholds (10–15) faster than the base
+    bucket's own small capacity (5–10) would otherwise allow — this
+    doesn't work, because the Lua bucket script always clamps effective
+    tokens at the dimension's configured `capacity` regardless of what's
+    stored, so no amount of pre-written state lets more than `capacity`
+    real requests through in one window. Fixed by pre-seeding the
+    *abuse-layer's own* counters directly via the same production
+    `record_*` functions the endpoint itself calls (real code, not a
+    mock), reserving real HTTP calls for the actually-interesting final
+    transition and its surrounding assertions. (2) One assertion assumed
+    the shared, persistent `audit_logs` table would show zero
+    `LOGIN_SUCCEEDED` rows — wrong, since real historical rows already
+    existed from earlier manual verification sessions against the live
+    Docker stack (confirmed by direct query: 5 rows, all
+    `ip_address='172.18.0.1'`, dated 2026-09-14). Fixed by scoping the
+    assertion to the test's own unique IP instead of a bare global count.
+  - `ruff`/`mypy` clean. **6/6 passed, 3 consecutive runs**, alongside
+    the complete **254-test backend suite passing 254/254, 3 consecutive
+    runs** — all against real Redis and real PostgreSQL inside
+    `compose-backend-1` (the host shell's own published-port path
+    remained broken this session too, confirmed again before falling
+    back to the established container-based validation approach).
+- **Documentation updated this slice**: ADR 0006 (Implementation status
+  table updated for Slice 3b's merge and the new audit-emission row),
+  `docs/SECURITY.md` (the "Rate limiting" section's stale "abuse-
+  detection layer does not exist yet" statement corrected now that
+  Slice 3b has actually merged; the "Audit logging" section extended for
+  the two new event types and their metadata/`user_id` conventions),
+  `PROJECT_STATE.md`, this file.
 
 ## Explicitly NOT done (do not assume otherwise)
 
-- **Audit emission for abuse escalations (Slice 3c)** — not started.
-  Slice 3b (above) wires `STRICT_THROTTLE`/`TEMPORARY_BLOCK` escalation
-  into real requests (`login`/`forgot-password`/`reset-password`), but
-  nothing calls `app.core.audit` from the abuse-decision layer or its
-  callers yet — no `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` constant
-  exists, and `AuditEvent.RATE_LIMITED` is still never emitted anywhere
-  (a pre-existing gap since Slice 2). This remains deterministic,
-  rule-based logic throughout — never call it "AI" or claim ML/
-  statistical evaluation unless an actual evaluated model backs that
-  claim, per the ADR's explicit non-goal.
-- **Slice 3b is uncommitted, working-tree-only** — see "Completed work
-  (Redis abuse layer — Slice 3b)" above for its exact real-Redis
-  validation status.
+- **Slice 3c (audit emission + HTTP-level tests) is implemented,
+  real-Redis validated, but uncommitted, working-tree-only** — see
+  "Completed work (Redis abuse layer — Slice 3c)" above. `AuditEvent.RATE_LIMITED`
+  and the new `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` are now both
+  emitted, exactly once per escalation, from `login`/`forgot-password`/
+  `reset-password`. This remains deterministic, rule-based logic
+  throughout — never call it "AI" or claim ML/statistical evaluation
+  unless an actual evaluated model backs that claim, per the ADR's
+  explicit non-goal.
+- **Document-access/ingestion audit events (Issue #3) do not exist
+  yet** — `AuditEvent` still only covers auth/workspace/rate-limit/
+  abuse-escalation events.
 - **`client_ip()` (unconditional, no trusted-proxy handling) is still
   used elsewhere** — `app/api/v1/auth.py`'s audit/session IP recording
   and `app/core/dependencies.py`'s authorization-denial audit events
@@ -711,41 +802,26 @@ files — the fixture change touches only a test file).
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: abuse-detection Slice 3c (audit emission + HTTP-level tests)
+## Next major task: Playwright E2E, then GitHub Issue #3
 
-**Slice 3b (decision engine + endpoint wiring, see "Completed work"
-above) is implemented and real-Redis validated (65/65, 3 consecutive
-runs), but still uncommitted — it should be committed (per normal
-workflow: commit/push/PR/merge on its own) before Slice 3c begins**, and
-Slice 3c itself still requires its own explicit go-ahead before any code
-is written, same as every other unit of work in this repository
-(`AGENTS.md` §6). Recorded here so the plan stays visible, not as a
-standing instruction to start it.
+**ADR 0006's deterministic abuse-protection layer is now functionally
+complete end-to-end — primitives (Slice 3a, merged), decision engine +
+endpoint wiring (Slice 3b, merged), and audit emission (Slice 3c,
+implemented + real-Redis validated, awaiting its own commit/PR/merge).**
+Nothing further is planned under ADR 0006 unless a future decision
+proposes one (e.g. a `Retry-After` header, `Forwarded` header support —
+see "Known limitations" in the Slice 3c report below).
 
-- **Audit emission (§15)**: `AuditEvent.RATE_LIMITED` (still never
-  emitted anywhere, a pre-existing gap since Slice 2) should fire for
-  `STRICT_THROTTLE` transitions, and a new `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED`
-  constant (not yet added — Slice 3b deliberately left `app/core/audit.py`
-  untouched, since nothing in Slice 3b's own code needed it) for
-  `TEMPORARY_BLOCK` transitions. `abuse_decision.py`'s `record_*()`
-  functions already return an `AbuseRecordOutcome` with exactly the
-  fields (`rule_id`/`action`/`newly_escalated`/`operation`/`dimension`)
-  a Slice 3c audit call site needs — only fire on `newly_escalated=True`,
-  never on a repeat already-escalated call.
-- **HTTP-level test coverage**: `429` response assertions, `Retry-After`
-  header (not currently emitted by any endpoint, base limiter included —
-  see "Known limitations" in the Slice 3b report), and audit-row
-  assertions through `TestClient`. Deliberately not added in Slice 3b,
-  per that slice's own readiness review.
-- **The `tests/conftest.py` `abuse:*` sweep gap has been fixed** (commit
-  `46a2860`, same branch) — `_reset_rate_limiters` now sweeps `abuse:*`
-  alongside its existing `rl:*` pattern, and the complete 248-test suite
-  passes cleanly, 3 consecutive runs. No longer a blocker for anything.
-- **Before Slice 3c starts**: Slice 3b needs its own commit/PR/merge,
-  per normal workflow — don't build Slice 3c on top of an uncommitted
-  Slice 3b.
+**Before anything else starts**: Slice 3c needs its own commit/PR/merge,
+per normal workflow — don't start new feature work on top of an
+uncommitted Slice 3c.
 
-After that: Playwright E2E, then GitHub Issue #3 — neither started.
+With an explicit go-ahead, the next work in this repository's own
+stated order (`PROJECT_STATE.md` "Immediate priorities") is:
+
+1. **Playwright browser E2E** for the authentication/password-recovery
+   flows — not started. No config, no test files, no dependency.
+2. **GitHub Issue #3 (Knowledge Ingestion)** — not started.
 
 ## Blockers
 
@@ -888,25 +964,36 @@ Redis, and `gh` CLI access are all confirmed working in this environment.
   changes don't add tests, they just fix isolation) passed 248/248, 3
   consecutive runs**, real Postgres + real Redis. `ruff check .`/`mypy .`
   both clean after the fix too (81 source files — the fixture change is
-  test-only).
+  test-only). **Slice 3b subsequently merged into `main` as `42529e3`
+  (PR #14) with CI green (3/3 checks).**
+- **Slice 3c (this checkpoint, uncommitted): `uv run ruff check .`**
+  (pass, 82 files) and **`uv run mypy .`** (pass, 82 source files) both
+  clean, host and container. **`tests/test_abuse_audit.py` (6 new
+  HTTP-level tests) — 6/6 passed, 3 consecutive runs**, plus every
+  related focused suite (`test_abuse_state.py`, `test_abuse_decision.py`,
+  `test_auth.py`, `test_rate_limit_wiring.py`, `test_redis_rate_limiter.py`,
+  `test_password_reset.py` — 138/138 combined) and the **complete
+  254-test backend suite passing 254/254, 3 consecutive runs**, all
+  against real Redis + real PostgreSQL inside `compose-backend-1` (the
+  host shell's own published-port path was tested again this session and
+  remained broken, same symptom as every prior session). Two test-design
+  bugs (not implementation bugs) were found and fixed during this
+  validation — see "Completed work (Redis abuse layer — Slice 3c)" for
+  exactly what and why.
 
 ## Exact next recommended action
 
-Redis Slices 1/2/3a are merged into `main` (`46ef03b` PR #11, `5391a78`
-PR #12, `026dcf3` PR #13) — nothing pending for any of them. **Slice 3b
-(decision engine + endpoint wiring) is implemented, real-Redis validated
-(65/65, 3 consecutive runs), the test-isolation gap it surfaced is fixed
-(commit `46a2860`), and the complete 248-test suite passes cleanly (3
-consecutive runs) — but PR #14 is still open, uncommitted to `main`,
-awaiting human merge** — see "Completed work (Redis abuse layer — Slice
-3b)" and "Tests run" above. The next work, in order:
+Redis Slices 1/2/3a/3b are merged into `main` (`46ef03b` PR #11,
+`5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14) — nothing pending
+for any of them. **Slice 3c (audit emission + HTTP-level tests) is
+implemented, real-Redis validated (6/6, 3 consecutive runs; complete
+254-test suite, 3 consecutive runs), but still uncommitted** — see
+"Completed work (Redis abuse layer — Slice 3c)" and "Tests run" above.
+The next work, in order:
 
-1. **Human review and merge of PR #14** — implementation, real-Redis
-   validation, test-isolation fix, and complete-suite validation are all
-   done; this agent does not merge PRs itself.
-2. **Then, with an explicit go-ahead: Slice 3c** — audit emission
-   (`AuditEvent.RATE_LIMITED`/`ABUSE_TEMPORARY_BLOCK_APPLIED`) and
-   HTTP-level test coverage. See "Next major task" above. Not started.
-3. **Then:** Playwright browser E2E for the authentication/
-   password-recovery flows — not started.
-4. **Then:** begin GitHub Issue #3 (Knowledge Ingestion) — not started.
+1. **Commit/push/PR/merge Slice 3c on its own**, per normal workflow,
+   same as every prior slice — its real-Redis validation is done; what's
+   left is the ordinary Git finalization steps.
+2. **Then, with an explicit go-ahead:** Playwright browser E2E for the
+   authentication/password-recovery flows — not started.
+3. **Then:** begin GitHub Issue #3 (Knowledge Ingestion) — not started.

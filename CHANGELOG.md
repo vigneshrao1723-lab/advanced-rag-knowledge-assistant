@@ -10,6 +10,60 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
+### 2026-09-20 — Abuse-protection Slice 3c: escalation audit emission + HTTP-level tests
+
+- **Not committed.** Adds abuse-escalation audit emission on top of
+  Slice 3b's now-merged decision engine (`42529e3`, PR #14) — no
+  production abuse-decision code modified, only consumed via
+  `AbuseRecordOutcome`'s existing return value.
+- `backend/app/core/audit.py`: one additive constant,
+  `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` — no existing constant or
+  the `record()` function's signature changed.
+- `backend/app/api/v1/auth.py`: a new `_audit_abuse_escalation()` helper
+  called from `login`/`forgot-password`/`reset-password` right after
+  each `record_login_failure()`/`record_forgot_password_request()`/
+  `record_reset_validation_failure()` call. Fires exactly once per
+  escalation (`outcome.newly_escalated`) — never on an already-escalated
+  repeat, never for an ordinary `ALLOW`. Emits `AuditEvent.RATE_LIMITED`
+  for a `STRICT_THROTTLE` transition or `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED`
+  for a `TEMPORARY_BLOCK` transition, with metadata limited to
+  `rule`/`operation`/`dimension`, the already-HMAC-hashed `account_hash`
+  when account-scoped, and `block_ttl_seconds` for blocks — never a raw
+  email, password, or token. `user_id` is always `None` (genuinely
+  unavailable at this layer in all three call sites, never invented).
+  `ip_address` is the same trusted-proxy-resolved value the abuse
+  decision itself acted on.
+- `backend/tests/test_abuse_audit.py` (new, 6 HTTP-level tests, real
+  Redis + real PostgreSQL, no mocks): R1 strict-throttle with exactly
+  one audit row and strict-bucket consumption proof; account-scoped R2
+  through the endpoint with isolation; R3's 5-distinct-IP temporary
+  block with audit row, TTL metadata, and outright post-block rejection;
+  R4 forgot-password strict-throttle with enumeration resistance intact;
+  R5 reset-password validation-failure block; successful-login reset
+  behavior with zero abuse-audit rows from an ordinary sequence. Two
+  test-design bugs (not production defects) were found and fixed during
+  this slice's own validation: an initial attempt to pre-fill the base
+  `rl:*` bucket with abundant tokens doesn't work (the Lua script always
+  clamps effective tokens at the dimension's configured capacity,
+  regardless of stored value) — fixed by pre-seeding the abuse layer's
+  own counters directly via the same production `record_*` functions;
+  and an assertion wrongly assumed a globally-empty `audit_logs` table
+  for `LOGIN_SUCCEEDED`, when 5 real historical rows already existed
+  from earlier manual verification sessions against the live stack —
+  fixed by scoping the assertion to the test's own unique IP.
+- `ruff`/`mypy` clean (82 source files). **6/6 new tests passed, 3
+  consecutive times**, alongside the complete **254-test backend suite
+  passing 254/254, 3 consecutive runs**, against real Redis and real
+  PostgreSQL inside `compose-backend-1` (the host shell's own
+  published-port path remained broken this session too).
+- Docs updated in the same working tree: ADR 0006 (Implementation status
+  table updated for Slice 3b's merge and the new audit-emission row),
+  `docs/SECURITY.md` (the "Rate limiting" section's stale
+  "abuse-detection layer does not exist yet" statement corrected now
+  that Slice 3b has actually merged; "Audit logging" extended for the
+  two new event types and their metadata/`user_id` conventions),
+  `PROJECT_STATE.md`, `HANDOFF.md`.
+
 ### 2026-09-19 — Test-isolation fix: sweep `abuse:*` Redis keys between tests
 
 - **Not committed to `main`** (commit on the still-open PR #14 branch,
@@ -277,6 +331,34 @@ with invented history of either kind.
   task.
 
 ## [Unreleased — committed]
+
+### 2026-09-20 — `feat: add abuse-decision engine and wire R1-R5 into auth endpoints` (906e2f9) + `test: clear abuse:* Redis keys between tests alongside rl:*` (46a2860) + docs (2896b1d), merged as `42529e3`
+
+*(Branch `issue-redis-rate-limiting-slice-3b`, on top of the merged
+Slice 3a (`026dcf3`, PR #13). Opened as **PR #14**, iterated once after
+CI caught a real test-isolation gap, verified green on GitHub Actions CI
+(3/3 checks) on the final push, merged into `main` as squash commit
+`42529e3`.)*
+
+Adds `backend/app/core/abuse_decision.py` (the deterministic R1–R5 rule
+table, `check()`/four explicitly-named `record_*()` functions), one
+additive primitive in `backend/app/core/abuse_state.py`
+(`temporary_block_ttl_seconds()`), and `backend/app/core/token_bucket_types.py`
+(`DimensionSpec`/`TokenBucketResult`, extracted from `rate_limit.py` to
+break a real circular import this slice's wiring introduced —
+`rate_limit.py` re-exports both names unchanged). Wires the engine into
+`enforce_login_rate_limit`/`enforce_forgot_password_rate_limit`/
+`enforce_reset_password_rate_limit` (`backend/app/core/rate_limit.py`)
+and post-outcome recording into `login`/`forgot-password`/
+`reset-password` (`backend/app/api/v1/auth.py`) — `register`/`refresh`
+untouched. 33 tests (`backend/tests/test_abuse_decision.py`), real-Redis
+validated (65/65 combined with the unaffected Slice 3a suite, 3
+consecutive runs) before this PR was opened. A genuine test-isolation
+gap in `backend/tests/conftest.py` (`_reset_rate_limiters` not sweeping
+the new `abuse:*` keys) was found during validation, confirmed by CI
+itself failing 3/248 on the first push, and fixed with a single-file,
+minimal change before the final green push — the complete 248-test
+backend suite passed 248/248, 3 consecutive runs, after the fix.
 
 ### 2026-09-19 — `feat: add Redis abuse state primitives` (676d7e5), merged as `026dcf3`
 

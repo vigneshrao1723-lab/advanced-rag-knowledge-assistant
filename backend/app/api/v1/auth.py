@@ -20,11 +20,15 @@ from sqlalchemy.orm import Session
 
 from app.core.abuse_decision import (
     AbuseContext,
+    AbuseRecordOutcome,
     record_forgot_password_request,
     record_login_failure,
     record_login_success,
     record_reset_validation_failure,
 )
+from app.core.abuse_state import TEMPORARY_BLOCK_TTL_SECONDS
+from app.core.audit import AuditEvent
+from app.core.audit import record as record_audit_event
 from app.core.config import get_settings
 from app.core.cookies import REFRESH_TOKEN_COOKIE, clear_auth_cookies, set_auth_cookies
 from app.core.db import get_db
@@ -67,6 +71,58 @@ def _device_label(request: Request) -> str | None:
     if not user_agent:
         return None
     return user_agent[:_DEVICE_LABEL_MAX_LENGTH]
+
+
+def _audit_abuse_escalation(
+    db: Session, *, context: AbuseContext, outcome: AbuseRecordOutcome
+) -> None:
+    """Emits exactly one audit row on the transition into STRICT_THROTTLE
+    or TEMPORARY_BLOCK (ADR 0006 §11/§12/§15, Slice 3c) — never on an
+    already-escalated repeat (`outcome.newly_escalated` is only True on
+    the exact call that crossed the threshold; see its own docstring in
+    `abuse_decision.py`), and never for an ordinary ALLOW or an ordinary
+    base-bucket THROTTLE, since this function is only ever called with
+    the result of a `record_*` call, which itself is only reached after
+    a real login/forgot-password/reset-password outcome is known.
+
+    `user_id` is deliberately always `None` here: none of the three
+    call sites below have a resolved user at this point (a failed login
+    never returns one; forgot-password/reset-password never expose one
+    to this layer) — never invented. `ip_address` is `context.ip`, the
+    same trusted-proxy-resolved value the abuse decision itself acted
+    on (not `client_ip()`, which is a different, unconditional value
+    used elsewhere for session/authorization audit rows — see
+    `app/core/ip_resolution.py`'s module docstring for that distinction).
+    """
+    if not outcome.newly_escalated:
+        return
+
+    event_type = (
+        AuditEvent.RATE_LIMITED
+        if outcome.action == "STRICT_THROTTLE"
+        else AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED
+    )
+    metadata: dict[str, object] = {
+        "rule": outcome.rule_id,
+        "operation": outcome.operation,
+        "dimension": outcome.dimension,
+    }
+    # The account dimension's value is already an HMAC identifier, never
+    # a raw email (see AbuseContext's own docstring) — safe to record.
+    # The IP dimension's value is already the audit row's own
+    # `ip_address` column; not duplicated into metadata.
+    if outcome.dimension == "acct" and context.account_hash is not None:
+        metadata["account_hash"] = context.account_hash
+    if outcome.action == "TEMPORARY_BLOCK":
+        metadata["block_ttl_seconds"] = TEMPORARY_BLOCK_TTL_SECONDS
+
+    record_audit_event(
+        db,
+        event_type=event_type,
+        user_id=None,
+        ip_address=context.ip,
+        metadata=metadata,
+    )
 
 
 @router.get("/csrf", status_code=status.HTTP_204_NO_CONTENT)
@@ -138,7 +194,8 @@ def login(
             ip_address=client_ip(request),
         )
     except HTTPException:
-        record_login_failure(redis_client, abuse_context)
+        outcome = record_login_failure(redis_client, abuse_context)
+        _audit_abuse_escalation(db, context=abuse_context, outcome=outcome)
         raise
 
     record_login_success(redis_client, abuse_context)
@@ -206,16 +263,15 @@ def forgot_password(
     # R4 (ADR 0006 §11) counts *requests*, not failures -- recorded
     # unconditionally, since this endpoint has no success/failure branch
     # to key off (see password_reset_service's module docstring).
-    record_forgot_password_request(
-        redis_client,
-        AbuseContext(
-            operation="forgot-password",
-            ip=resolve_client_ip(request, settings.trusted_proxy_cidrs_list),
-            account_hash=hash_account_identifier(
-                body.email, key=settings.rate_limit_hash_key_resolved.encode("utf-8")
-            ),
+    abuse_context = AbuseContext(
+        operation="forgot-password",
+        ip=resolve_client_ip(request, settings.trusted_proxy_cidrs_list),
+        account_hash=hash_account_identifier(
+            body.email, key=settings.rate_limit_hash_key_resolved.encode("utf-8")
         ),
     )
+    outcome = record_forgot_password_request(redis_client, abuse_context)
+    _audit_abuse_escalation(db, context=abuse_context, outcome=outcome)
     # Always the same response, same status code, regardless of whether
     # the email exists — see password_reset_service's module docstring.
     return MessageResponse(message=_GENERIC_FORGOT_PASSWORD_MESSAGE)
@@ -251,7 +307,8 @@ def reset_password(
         detail = exc.detail
         code = detail.get("code") if isinstance(detail, dict) else None
         if code in _RESET_VALIDATION_FAILURE_CODES:
-            record_reset_validation_failure(redis_client, abuse_context)
+            outcome = record_reset_validation_failure(redis_client, abuse_context)
+            _audit_abuse_escalation(db, context=abuse_context, outcome=outcome)
         raise
 
 

@@ -1420,17 +1420,19 @@ exact method and evidence), and merged into `main`** as squash commit
 `app/core/abuse_decision.py`, the R1–R5 rule table, and its wiring into
 `enforce_login_rate_limit`/`enforce_forgot_password_rate_limit`/
 `enforce_reset_password_rate_limit` and `app/api/v1/auth.py`'s
-`login`/`forgot-password`/`reset-password` endpoints) is **implemented
-and real-Redis validated (65/65 combined `tests/test_abuse_decision.py`
-+ `tests/test_abuse_state.py`, 3 consecutive runs), but still
-uncommitted, working-tree-only** — see `HANDOFF.md` for the exact
-validation record, including a genuine test-infrastructure finding this
-slice surfaced (not fixed here — flagged for a separate decision).
-Neither is a clean host-side run of the current test suite, and neither
-is a production validation. No `AbuseDecisionEngine` audit emission and
-no rule-table-driven endpoint behavior existed before this slice; Slice
-3c (audit emission) has still not started. The table below is now
-per-component, not a single status for the whole ADR:
+`login`/`forgot-password`/`reset-password` endpoints) is **implemented,
+real-Redis validated, the test-isolation gap it surfaced is fixed, and
+merged into `main`** as squash commit `42529e3` (PR #14). **Slice 3c**
+(abuse-escalation audit emission — `AuditEvent.RATE_LIMITED` on a
+`STRICT_THROTTLE` transition, the new `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED`
+on a `TEMPORARY_BLOCK` transition, plus HTTP-level test coverage through
+the real endpoints) is **implemented and real-Redis validated
+(6 new `tests/test_abuse_audit.py` HTTP-level tests, plus the complete
+254-test backend suite, 3 consecutive runs), but still uncommitted,
+working-tree-only** — see `HANDOFF.md` for the exact validation record.
+This is not a production validation. No document-audit events (Issue #3)
+exist yet. The table below is now per-component, not a single status for
+the whole ADR:
 
 | State | Meaning |
 |---|---|
@@ -1452,13 +1454,13 @@ per-component, not a single status for the whole ADR:
 | Redis failure policy in the actual request path (§13's Tier A/B fallback logic, `_check_or_fallback()`) | Yes — with one sub-decision resolved during implementation, see below | **Yes** (slice 2) | **Yes** — unit-level via dependency override, and live against the real Docker Compose stack (Redis stopped mid-session, both tiers verified, then Redis restarted and enforcement resumed without a restart) | **Yes** — merged (`5391a78`) | No |
 | Redis-failure fallback observability (§13's "Mechanics common to both tiers" logging requirement) | Yes | **Yes** (slice 2 review-fix pass) — `_log_redis_fallback()` in `app/core/rate_limit.py`, `app.rate_limit` logger, `operation`/`policy` fields only | **Yes** — implicitly exercised by the existing Tier A/B fallback tests; no dedicated log-content assertion test exists | **Yes** — merged (`5391a78`) | No |
 | Abuse key builders (`app/core/abuse_keys.py`) | Yes | **Yes** (slice 3a) | **Yes** — real-Redis, 32/32 `tests/test_abuse_state.py`, 3 consecutive runs | **Yes** — merged (`026dcf3`, PR #13) | No |
-| Atomic record primitives (`app/core/abuse_state.py`: `record_login_failure`, `record_ip_failure`, `reset_account_state`, one Lua invocation per multi-signal event, plus `temporary_block_ttl_seconds` added in slice 3b) | Yes | **Yes** (slice 3a; TTL primitive added slice 3b) | **Yes** — same real-Redis validation, plus live key/TTL inspection confirming atomic multi-signal writes | **Yes** (slice 3a portion) — merged (`026dcf3`); TTL primitive uncommitted | No |
+| Atomic record primitives (`app/core/abuse_state.py`: `record_login_failure`, `record_ip_failure`, `reset_account_state`, one Lua invocation per multi-signal event, plus `temporary_block_ttl_seconds` added in slice 3b) | Yes | **Yes** (slice 3a; TTL primitive added slice 3b) | **Yes** — same real-Redis validation, plus live key/TTL inspection confirming atomic multi-signal writes | **Yes** — merged (`42529e3`, PR #14, which included the additive TTL primitive) | No |
 | HyperLogLog lifecycle for R3 (`PFADD`/`PFCOUNT`, TTL, account-scoped reset) | Yes | **Yes** (slice 3a) | **Yes** — same real-Redis validation | **Yes** — merged (`026dcf3`) | No |
 | Strict-throttle primitive (approved capacity=2/refill=2/600s, reuses `DimensionSpec`/`RedisTokenBucketLimiter`, no new bucket engine) | Yes | **Yes** (slice 3a) | **Yes** — same real-Redis validation | **Yes** — merged (`026dcf3`) | No |
 | Temporary-block primitive (fixed 600s TTL, never refreshed by a later crossing — see §22) | Yes | **Yes** (slice 3a) | **Yes** — same real-Redis validation | **Yes** — merged (`026dcf3`) | No |
-| Abuse-decision layer (`app/core/abuse_decision.py`: `check()`/`record_*()`, R1–R5 rule table, `AbuseContext`/`AbuseDecision`/`AbuseRecordOutcome`) | Yes | **Yes** (slice 3b) | **Yes** — real-Redis, 33/33 `tests/test_abuse_decision.py` (plus 32/32 `test_abuse_state.py` unaffected), 3 consecutive runs, including precedence/concurrency/atomicity-with-base-dimension coverage | **No** — uncommitted, working-tree-only | No |
-| Endpoint wiring for the abuse-decision layer (`enforce_login_rate_limit`/`enforce_forgot_password_rate_limit`/`enforce_reset_password_rate_limit` in `app/core/rate_limit.py`; post-outcome `record_*()` calls in `app/api/v1/auth.py`'s `login`/`forgot-password`/`reset-password`) | Yes | **Yes** (slice 3b) | **Partial** — the abuse-decision layer's own module-level tests pass; a genuine test-infrastructure gap was found (see `HANDOFF.md`): `tests/conftest.py`'s `_reset_rate_limiters` sweeps `rl:*` between tests but not `abuse:*`, so a sufficiently long full-suite run can accumulate real R4 (`forgot-password`) state across the shared default test-client IP and affect 2 pre-existing `test_password_reset.py` tests — not fixed in this slice (conftest.py changes were explicitly out of scope) | **No** — uncommitted | No |
-| `AuditEvent.RATE_LIMITED` / abuse-escalation audit emission (§15), `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` | Yes | **No** (Slice 3c) | No | No | No |
+| Abuse-decision layer (`app/core/abuse_decision.py`: `check()`/`record_*()`, R1–R5 rule table, `AbuseContext`/`AbuseDecision`/`AbuseRecordOutcome`) | Yes | **Yes** (slice 3b) | **Yes** — real-Redis, 33/33 `tests/test_abuse_decision.py` (plus 32/32 `test_abuse_state.py` unaffected), 3 consecutive runs, including precedence/concurrency/atomicity-with-base-dimension coverage | **Yes** — merged (`42529e3`, PR #14) | No |
+| Endpoint wiring for the abuse-decision layer (`enforce_login_rate_limit`/`enforce_forgot_password_rate_limit`/`enforce_reset_password_rate_limit` in `app/core/rate_limit.py`; post-outcome `record_*()` calls in `app/api/v1/auth.py`'s `login`/`forgot-password`/`reset-password`) | Yes | **Yes** (slice 3b) | **Yes** — the test-infrastructure gap found during slice 3b's own validation (`tests/conftest.py`'s `_reset_rate_limiters` not sweeping `abuse:*`) was fixed in the same PR; the complete backend suite (248 tests at that point) passed 248/248, 3 consecutive runs, and CI confirmed green | **Yes** — merged (`42529e3`, PR #14) | No |
+| Abuse-escalation audit emission (§15, `app/api/v1/auth.py`'s `_audit_abuse_escalation()`): `AuditEvent.RATE_LIMITED` on a `STRICT_THROTTLE` transition, new `AuditEvent.ABUSE_TEMPORARY_BLOCK_APPLIED` on a `TEMPORARY_BLOCK` transition, emitted exactly once per escalation from `login`/`forgot-password`/`reset-password`, after the real outcome is known | Yes | **Yes** (slice 3c) | **Yes** — 6 new HTTP-level tests (`tests/test_abuse_audit.py`) through the real endpoints, covering all of R1–R5, precedence, no-duplicate-rows, no-audit-for-ordinary-ALLOW, safe metadata (rule/operation/dimension/HMAC account hash/block TTL — never a raw email/password/token), and successful-login reset behavior; the complete 254-test backend suite passed 254/254, 3 consecutive runs | **No** — uncommitted, working-tree-only | No |
 
 **§13's Tier B sub-decision, resolved during slice 2 (recorded here per
 §22's instruction that open decisions get their rationale recorded
