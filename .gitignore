@@ -20,4 +20,9 @@ htmlcov/
 dist/
 build/
 
+# Local document storage (Issue #3, Slice 3.2 — STORAGE_LOCAL_ROOT default).
+# Never committed: dev/test uploads, not source.
+backend/data/
+data/
+
 .DS_Store

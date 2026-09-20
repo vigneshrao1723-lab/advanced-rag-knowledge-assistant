@@ -170,12 +170,19 @@ class Settings(BaseSettings):
     def rate_limit_hash_key_resolved(self) -> str:
         return self.rate_limit_hash_key or self.secret_key
 
+    # Document storage (Issue #3, Slice 3.2 — `StorageProvider` abstraction,
+    # app/services/storage_provider.py). "local" is the only implementation
+    # today — a filesystem directory, for local dev/CI. `storage_bucket`
+    # stays reserved for a future object-storage provider; never hardcode a
+    # specific vendor, matching `email_provider`'s pattern.
+    storage_provider: Literal["local"] = "local"
+    storage_local_root: str = "./data/documents"
+    storage_bucket: str | None = None
+
     # Reserved for future issues — not consumed by any code path yet.
     llm_api_key: str | None = None
     embedding_api_key: str | None = None
     reranker_api_key: str | None = None
-    storage_provider: str | None = None
-    storage_bucket: str | None = None
     stt_api_key: str | None = None
     tts_api_key: str | None = None
 

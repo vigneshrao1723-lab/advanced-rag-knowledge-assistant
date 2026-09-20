@@ -202,17 +202,24 @@ chat, search, switch workspace, evaluations, settings.
 
 ## Provider abstractions
 
-Interfaces to be defined in `backend/app/services/` (or a dedicated
-`providers/` module, to be decided when implementation starts):
+Interfaces defined (or to be defined) in `backend/app/services/`:
 
-- `EmbeddingProvider`
-- `Reranker`
-- `LLMProvider`
-- `SpeechToTextProvider`
-- `TextToSpeechProvider`
-- `StorageProvider`
+- `EmbeddingProvider` — PROPOSED
+- `Reranker` — PROPOSED
+- `LLMProvider` — PROPOSED
+- `SpeechToTextProvider` — PROPOSED
+- `TextToSpeechProvider` — PROPOSED
+- `StorageProvider` — **IMPLEMENTED** (Issue #3, Slice 3.2):
+  `backend/app/services/storage_provider.py`. A `Protocol` plus one real
+  implementation today, `LocalStorage` (filesystem-backed, for local
+  dev/CI), selected via the `storage_provider` setting (`Literal["local"]`
+  — a second value/branch is added only once a second implementation
+  actually exists, matching `EmailProvider`'s own `console`/`smtp`
+  precedent). No upload endpoint consumes it yet — that is a later Issue
+  #3 slice.
 
-No commercial vendor is selected for any of these yet. A selection becomes
+No commercial vendor is selected for any of these yet (including for a
+future non-local `StorageProvider` implementation). A selection becomes
 real only once recorded as an ADR in `docs/DECISIONS/`. Development tooling
 (e.g. Claude Code) is not the application's runtime LLM provider — the two
 are unrelated.
