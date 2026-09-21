@@ -7,6 +7,8 @@ established no-mock-for-real-infrastructure convention.
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,13 @@ from app.services.storage_provider import (
     StorageKeyError,
     get_storage_provider,
 )
+
+# Permission-based tests are meaningless (and would fail) running as root,
+# since root bypasses filesystem permission checks entirely — both this
+# host environment and the CI runner (a GitHub-hosted `ubuntu-latest` VM,
+# not a container) run as a non-root user, but this guard makes that an
+# explicit, checked assumption rather than a silent one.
+_RUNNING_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 
 
 def _storage(tmp_path: Path) -> LocalStorage:
@@ -93,6 +102,127 @@ def test_two_different_keys_do_not_collide(tmp_path: Path) -> None:
 
     assert storage.read(key="ws-a/doc.txt") == b"a"
     assert storage.read(key="ws-b/doc.txt") == b"b"
+
+
+def test_symlink_inside_root_escaping_it_is_rejected(tmp_path: Path) -> None:
+    # A literal ".." in the key is already rejected by _resolve()'s parts
+    # check before any filesystem access — this proves the *other* path
+    # to escaping the root (a symlink planted inside it, no ".." in the
+    # key at all) is independently caught by the relative_to() check
+    # running on the fully *resolved* (symlink-followed) path.
+    outside = tmp_path.parent / f"outside-{tmp_path.name}"
+    outside.mkdir()
+    (outside / "secret.txt").write_bytes(b"outside root")
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "escape-link").symlink_to(outside)
+    storage = LocalStorage(root=str(root))
+
+    with pytest.raises(StorageKeyError):
+        storage.read(key="escape-link/secret.txt")
+
+
+@pytest.mark.skipif(_RUNNING_AS_ROOT, reason="root bypasses filesystem permissions")
+def test_save_permission_denied_raises_storage_error_not_os_error(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    readonly_dir = tmp_path / "readonly"
+    readonly_dir.mkdir()
+    readonly_dir.chmod(stat.S_IREAD | stat.S_IEXEC)  # no write permission
+    try:
+        with pytest.raises(StorageError) as exc_info:
+            storage.save(key="readonly/file.txt", content=b"x")
+        assert not isinstance(exc_info.value, StorageKeyError)
+        assert str(tmp_path) not in str(exc_info.value)
+    finally:
+        readonly_dir.chmod(stat.S_IRWXU)  # restore so tmp_path cleanup can remove it
+
+
+@pytest.mark.skipif(_RUNNING_AS_ROOT, reason="root bypasses filesystem permissions")
+def test_read_permission_denied_raises_storage_error_not_os_error(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    storage.save(key="secret.txt", content=b"top secret")
+    target = tmp_path / "secret.txt"
+    target.chmod(0o000)  # no read permission
+    try:
+        with pytest.raises(StorageError) as exc_info:
+            storage.read(key="secret.txt")
+        assert not isinstance(exc_info.value, StorageKeyError)
+        assert str(tmp_path) not in str(exc_info.value)
+    finally:
+        target.chmod(stat.S_IRWXU)  # restore so tmp_path cleanup can remove it
+
+
+@pytest.mark.skipif(_RUNNING_AS_ROOT, reason="root bypasses filesystem permissions")
+def test_delete_permission_denied_raises_storage_error_not_os_error(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    locked_dir = tmp_path / "locked"
+    locked_dir.mkdir()
+    (locked_dir / "file.txt").write_bytes(b"x")
+    locked_dir.chmod(stat.S_IREAD | stat.S_IEXEC)  # no write permission on the dir itself
+    try:
+        with pytest.raises(StorageError) as exc_info:
+            storage.delete(key="locked/file.txt")
+        assert not isinstance(exc_info.value, StorageKeyError)
+        assert str(tmp_path) not in str(exc_info.value)
+    finally:
+        locked_dir.chmod(stat.S_IRWXU)  # restore so tmp_path cleanup can remove it
+
+
+@pytest.mark.skipif(_RUNNING_AS_ROOT, reason="root bypasses filesystem permissions")
+def test_exists_raises_storage_error_not_os_error_on_permission_denied(
+    tmp_path: Path,
+) -> None:
+    # Empirically (not assumed), Path.resolve() does not itself raise for
+    # a blocked containing directory on this project's Python version —
+    # resolution succeeds lexically, and the actual PermissionError
+    # surfaces later, from is_file()'s own stat() call, which does *not*
+    # swallow it (contrary to what earlier stdlib-docs-based reasoning
+    # assumed). exists() must therefore guard that call itself, exactly
+    # like save/read/delete guard theirs.
+    storage = _storage(tmp_path)
+    locked_dir = tmp_path / "locked"
+    locked_dir.mkdir()
+    (locked_dir / "file.txt").write_bytes(b"x")
+    locked_dir.chmod(0o000)  # no execute (search) permission on the dir
+    try:
+        with pytest.raises(StorageError) as exc_info:
+            storage.exists(key="locked/file.txt")
+        assert not isinstance(exc_info.value, StorageKeyError)
+        assert str(tmp_path) not in str(exc_info.value)
+    finally:
+        locked_dir.chmod(stat.S_IRWXU)  # restore so tmp_path cleanup can remove it
+
+
+def test_exists_returns_true_when_only_the_files_own_permissions_are_restricted(
+    tmp_path: Path,
+) -> None:
+    # Restricting the file's own permission bits (not its containing
+    # directory) doesn't block stat() — only content access (read()/
+    # write()) needs those — so exists() correctly still reports True.
+    # No root-permission skip needed: this isn't a permission-*denied*
+    # case at all, it's proving a case that must keep working regardless.
+    storage = _storage(tmp_path)
+    storage.save(key="file.txt", content=b"x")
+    target = tmp_path / "file.txt"
+    target.chmod(0o000)
+    try:
+        assert storage.exists(key="file.txt") is True
+    finally:
+        target.chmod(stat.S_IRWXU)  # restore so tmp_path cleanup can remove it
+
+
+def test_no_error_message_contains_the_configured_storage_root(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    root_str = str(tmp_path)
+
+    with pytest.raises(StorageKeyError) as key_exc:
+        storage.save(key="../escape.txt", content=b"x")
+    assert root_str not in str(key_exc.value)
+
+    with pytest.raises(StorageError) as missing_exc:
+        storage.read(key="missing.txt")
+    assert root_str not in str(missing_exc.value)
 
 
 def test_get_storage_provider_returns_local_storage_by_default() -> None:

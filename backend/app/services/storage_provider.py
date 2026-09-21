@@ -54,7 +54,24 @@ class LocalStorage:
     def _resolve(self, key: str) -> Path:
         if not key or key.startswith("/") or ".." in Path(key).parts:
             raise StorageKeyError(f"Rejected unsafe storage key: {key!r}")
-        candidate = (self._root / key).resolve()
+        try:
+            # .resolve() follows symlinks, so a symlink planted inside the
+            # root that points outside it still lands on the
+            # relative_to() check below rather than silently escaping —
+            # this is what makes the traversal check effective against
+            # symlinks, not just literal ".." segments. Empirically (not
+            # just assumed), a blocked-permission directory along the way
+            # does *not* make .resolve() itself raise on this project's
+            # Python version — the actual I/O failure surfaces later, at
+            # each operation's own read_bytes()/write_bytes()/unlink()/
+            # is_file() call, all of which have their own try/except
+            # below. This catch is retained as defense-in-depth against
+            # a genuine resolution-time OSError this runtime doesn't
+            # happen to produce for the scenarios tested (e.g. a stale
+            # network-mount handle) — not proven reachable by a test.
+            candidate = (self._root / key).resolve()
+        except OSError as exc:
+            raise StorageError(f"Failed to resolve storage key: {key!r}") from exc
         try:
             candidate.relative_to(self._root)
         except ValueError:
@@ -63,21 +80,40 @@ class LocalStorage:
 
     def save(self, *, key: str, content: bytes) -> None:
         path = self._resolve(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        except OSError as exc:
+            raise StorageError(f"Failed to save storage key: {key!r}") from exc
 
     def read(self, *, key: str) -> bytes:
         path = self._resolve(key)
         try:
             return path.read_bytes()
-        except FileNotFoundError:
-            raise StorageError(f"Storage key not found: {key!r}") from None
+        except FileNotFoundError as exc:
+            raise StorageError(f"Storage key not found: {key!r}") from exc
+        except OSError as exc:
+            raise StorageError(f"Failed to read storage key: {key!r}") from exc
 
     def delete(self, *, key: str) -> None:
-        self._resolve(key).unlink(missing_ok=True)
+        path = self._resolve(key)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise StorageError(f"Failed to delete storage key: {key!r}") from exc
 
     def exists(self, *, key: str) -> bool:
-        return self._resolve(key).is_file()
+        path = self._resolve(key)
+        try:
+            return path.is_file()
+        except OSError as exc:
+            # `Path.is_file()` does *not* swallow a permission failure on
+            # this project's actual Python version — verified empirically
+            # (not assumed from the stdlib docs, which describe behavior
+            # that turned out not to hold here): it calls `stat()`
+            # directly and lets a `PermissionError` propagate raw. Must
+            # not leak past this module, same as save/read/delete.
+            raise StorageError(f"Failed to check storage key: {key!r}") from exc
 
 
 def get_storage_provider() -> StorageProvider:
