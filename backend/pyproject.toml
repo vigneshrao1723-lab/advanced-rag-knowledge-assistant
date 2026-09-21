@@ -15,6 +15,7 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "pyjwt>=2.14.0",
     "redis>=8.1.0",
+    "python-multipart>=0.0.32",
 ]
 
 [dependency-groups]
