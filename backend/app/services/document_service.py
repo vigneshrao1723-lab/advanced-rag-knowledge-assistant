@@ -28,7 +28,7 @@ from app.core.audit import record as record_audit_event
 from app.models.document import Document
 from app.repositories import document_repository
 from app.schemas.document import DocumentRead
-from app.services.storage_provider import StorageError, StorageProvider
+from app.services.storage_provider import StorageProvider
 
 logger = logging.getLogger("app.documents")
 
@@ -160,10 +160,20 @@ def _cleanup_orphaned_storage_object(storage: StorageProvider, *, storage_key: s
     the database insert did not commit. Never raises -- a cleanup failure
     must not mask the original error being propagated to the caller; it's
     logged (identifiers only, no filesystem path) so an operator can find
-    and remove the orphan later."""
+    and remove the orphan later.
+
+    Catches `Exception`, not just `StorageError`: `StorageProvider` is a
+    `Protocol`, not an enforced base class, so nothing guarantees a given
+    implementation's `delete()` only ever raises `StorageError` (today's
+    `LocalStorage` does, by its own Slice 3.2 contract, but this function
+    must not depend on every future implementation honoring that). A
+    narrower catch here would let a cleanup-time failure of any other
+    type propagate and silently replace the real error this whole
+    function exists to avoid masking.
+    """
     try:
         storage.delete(key=storage_key)
-    except StorageError:
+    except Exception:
         logger.warning(
             "document_upload_storage_cleanup_failed",
             extra={"storage_key": storage_key},

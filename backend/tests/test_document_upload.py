@@ -160,6 +160,31 @@ class _DeleteFailsStorage:
         return self._inner.exists(key=key)
 
 
+class _DeleteFailsWithNonStorageErrorStorage:
+    """Like `_DeleteFailsStorage`, but delete() raises something other
+    than `StorageError` -- `StorageProvider` is a `Protocol`, not an
+    enforced base class, so nothing guarantees every implementation's
+    delete() only ever raises `StorageError`. Proves the compensating-
+    cleanup handler doesn't depend on that guarantee: the *original*
+    error must still surface, never replaced by whatever the cleanup
+    attempt itself raised."""
+
+    def __init__(self, inner: StorageProvider) -> None:
+        self._inner = inner
+
+    def save(self, *, key: str, content: bytes) -> None:
+        self._inner.save(key=key, content=content)
+
+    def read(self, *, key: str) -> bytes:
+        return self._inner.read(key=key)
+
+    def delete(self, *, key: str) -> None:
+        raise RuntimeError("cleanup blew up with an unrelated exception type")
+
+    def exists(self, *, key: str) -> bool:
+        return self._inner.exists(key=key)
+
+
 @pytest.fixture
 def unreachable_redis_client() -> Iterator[redis.Redis]:
     client = build_redis_client(
@@ -599,6 +624,61 @@ def test_race_lost_duplicate_insert_translates_to_409_not_500(
     # The losing request's own storage write was cleaned up...
     assert storage.exists(key=racing_key) is False
     # ...but the original, winning document is untouched.
+    original = db_session.get(Document, uuid.UUID(first_id))
+    assert original is not None
+
+
+def test_cleanup_failure_of_any_exception_type_never_masks_the_original_error(
+    client: TestClient, db_session: DbSession, storage_root: Path
+) -> None:
+    """Regression test: _cleanup_orphaned_storage_object() must catch any
+    exception from delete(), not just StorageError -- StorageProvider is
+    a Protocol, not an enforced base class. Forces the race-lost-duplicate
+    path (a real IntegrityError) with a storage stand-in whose delete()
+    raises a plain RuntimeError, and proves the client still sees the
+    original 409, never a 500 or the RuntimeError itself."""
+    from app.services import document_service
+
+    _register(client)
+    workspace = _create_workspace(client)
+    workspace_id = uuid.UUID(workspace["id"])
+    checksum = hashlib.sha256(_PDF_BYTES).hexdigest()
+
+    first = _upload(client, workspace["id"])
+    assert first.status_code == 201
+    first_id = first.json()["id"]
+
+    real_storage = LocalStorage(root=str(storage_root))
+    broken_cleanup_storage = _DeleteFailsWithNonStorageErrorStorage(real_storage)
+    racing_document_id = uuid.uuid4()
+    racing_key = f"{workspace_id}/{racing_document_id}.pdf"
+    real_storage.save(key=racing_key, content=_PDF_BYTES)
+
+    with pytest.raises(Exception) as exc_info:
+        document_service._persist_document(
+            db_session,
+            document_id=racing_document_id,
+            storage=broken_cleanup_storage,
+            storage_key=racing_key,
+            workspace_id=workspace_id,
+            uploaded_by=uuid.uuid4(),
+            filename="report.pdf",
+            mime_type="application/pdf",
+            size_bytes=len(_PDF_BYTES),
+            checksum_sha256=checksum,
+            ip_address=None,
+        )
+    # The original IntegrityError-derived 409 must still surface --
+    # never the cleanup's own RuntimeError.
+    assert exc_info.value.status_code == 409  # type: ignore[attr-defined]
+    assert first_id in exc_info.value.detail["message"]  # type: ignore[attr-defined]
+    assert not isinstance(exc_info.value, RuntimeError)
+
+    db_session.rollback()
+    # Cleanup itself failed (by design), so the orphaned object from the
+    # losing request is still present -- expected and logged, not silently
+    # lost track of. The original winning document is untouched either way.
+    assert real_storage.exists(key=racing_key) is True
     original = db_session.get(Document, uuid.UUID(first_id))
     assert original is not None
 
