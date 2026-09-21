@@ -1298,6 +1298,74 @@ chunking, embedding, or background processing.
   previous "not implemented yet" state), `PROJECT_STATE.md`,
   `CHANGELOG.md`, this file.
 
+### Pre-merge correctness review, and the fix it produced
+
+A dedicated review of the above, still on PR #20 before merge, traced
+the full upload sequence's failure paths explicitly (storage failure,
+DB failure after a successful storage write, a race-lost duplicate
+insert, and — the one that surfaced a genuine gap — a *compensating
+cleanup* failure) and found one real issue:
+
+- **`_cleanup_orphaned_storage_object()` only caught `StorageError`.**
+  `StorageProvider` is a `Protocol`, not an enforced base class — nothing
+  guarantees every implementation's `delete()` only ever raises
+  `StorageError` (today's `LocalStorage` does, by its own Slice 3.2
+  contract, but this function shouldn't depend on that holding for every
+  future implementation). A cleanup-time failure of any other exception
+  type would have propagated uncaught out of the `except` block that
+  calls it, silently replacing the real error (e.g. a genuine
+  race-lost-duplicate `409`) with whatever the cleanup attempt itself
+  raised — exactly the "cleanup failure masks the original error"
+  failure mode this function's own docstring already said must never
+  happen, just not fully guarded against.
+- **Fixed**: broadened the `except StorageError` to `except Exception` —
+  still never re-raises, still only logs (`storage_key` only, never a
+  path), so the calling code's original exception is always what
+  actually propagates.
+- **New regression test**
+  (`test_cleanup_failure_of_any_exception_type_never_masks_the_original_error`,
+  `tests/test_document_upload.py`): a storage stand-in whose `delete()`
+  raises a plain `RuntimeError` (not `StorageError`), forcing the
+  race-lost-duplicate path against real Postgres. Confirms the client
+  still sees the original `409` referencing the winning document's id —
+  never the `RuntimeError`, never a `500`.
+- **Also verified and confirmed correct, no change needed** (per the
+  review's own explicit checklist): the audit-commit atomicity claim —
+  traced `document_repository.create()` (`add()`+`flush()`, no commit)
+  →  `record_audit_event()` → `audit_log_repository.create()`'s own
+  `db.commit()`, confirming it commits on the *same* `Session`, so the
+  already-flushed document row and the new audit row land in one
+  Postgres transaction, exactly as previously documented — not merely
+  re-asserted, actually re-traced line by line this pass; the
+  `client_ip()`/`resolve_client_ip()` split (audit vs. rate-limit
+  dimensions) matches the codebase's own existing, deliberate
+  convention; five additional path-traversal-style filenames
+  (`..\..\secret.pdf`, an absolute Unix path, a Windows-style path, and
+  a repeated-dot-slash pattern, beyond the one already covered) all
+  reduce to just the extension, the same as the original case, since
+  `_normalize_extension()` has no special-casing for path separators at
+  all; the streamed size-limit check depends only on bytes actually
+  read via `.read()`, never any length hint, so a missing or misleading
+  `Content-Length` cannot bypass it (verified with a 1-byte-at-a-time
+  fake reader, the worst case for that assumption).
+- **Two new boundary-precision tests**
+  (`tests/test_document_service.py`): content of exactly
+  `max_size_bytes` succeeds (the check is `> max`, not `>= max` — an
+  off-by-one here would have wrongly rejected a file of exactly the
+  configured maximum); content one byte over is rejected.
+- `ruff`/`mypy` clean (94 source files, no new findings). **9 new
+  tests, 67 → 76** (46 unit + 30 HTTP-level — the unit count includes
+  the parametrized 5-filename case as 5 collected tests). **76/76
+  passing.** Complete backend suite: **370/370 passing** (361
+  pre-review + 9 new), **3 consecutive runs**, no regression in any
+  existing test. Frontend re-confirmed unaffected (48/48 vitest,
+  lint/typecheck clean — no frontend file changed). Docker Compose
+  services confirmed healthy and reachable (`compose-backend-1` still
+  the image rebuilt during the prior checkpoint); this specific fix was
+  validated through the automated test suite against real Postgres, not
+  through a fresh manual smoke test against the container — stated
+  explicitly rather than implied.
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -1656,6 +1724,21 @@ at the correct, expected path inside the container's own filesystem via
   container at the expected, correctly-generated path. Committed as
   `b81b7d2` (implementation) + `b3cf3cf` (docs), pushed, and opened as
   **PR #20**.
+- **Pre-merge correctness review of Slice 3.3 (same PR #20)**: `uv run
+  ruff check .`/`uv run mypy .` both clean (94 source files, no new
+  findings) after the fix. **9 new tests, 67 → 76 — 76/76 passed**
+  (46 unit in `tests/test_document_service.py` + 30 HTTP-level in
+  `tests/test_document_upload.py`), real Postgres for the one
+  regression test that needed it (a genuine race-lost duplicate insert
+  with a deliberately broken compensating-cleanup delegate). See
+  "Completed work (Issue #3 — Slice 3.3...)" → "Pre-merge correctness
+  review" above for the finding. **Complete backend suite: 370/370
+  passing** (361 pre-review + 9 new), **3 consecutive runs**, no
+  regression in any existing test. Frontend re-confirmed unaffected
+  (48/48 vitest, lint/typecheck clean). Docker Compose services
+  confirmed healthy and reachable; this specific fix was validated
+  through the automated suite against real Postgres, not a fresh manual
+  container smoke test. Committed as `1cc760f` on the same branch.
 
 ## Exact next recommended action
 
@@ -1664,16 +1747,18 @@ Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.2
 `main` (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3`
 PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7`
 PR #18, `5e6fdc2` PR #19) — nothing pending for any of them. **GitHub
-Issue #3, Slice 3.3 (document upload API) is implemented, tested,
-committed, pushed, and opened as PR #20** on
+Issue #3, Slice 3.3 (document upload API), including a pre-merge
+correctness-review fix, is implemented, tested, committed
+(`b81b7d2`/`b3cf3cf`/`1cc760f`), pushed, and open as PR #20** on
 branch `issue-3-slice-3-3-document-upload-api` (cut from `5e6fdc2`) —
 not yet merged. See "Completed work (Issue #3 — Slice 3.3...)" and
 "Tests run" above. The next work, in order:
 
 1. **Get PR #20 reviewed, confirm CI is green, and merge it** — this
-   slice's own real-stack validation (67 focused tests, full 361-test
-   suite × 3 runs, a live Docker Compose smoke test) is already done
-   locally. Do not merge it without review.
+   slice's own real-stack validation (76 focused tests, full 370-test
+   suite × 3 runs, a live Docker Compose smoke test from the initial
+   implementation) is already done locally. Do not merge it without
+   review.
 2. **Once merged, with an explicit go-ahead:** scope and implement
    GitHub Issue #3, Slice 3.4 (text extraction — see "Next
    major task" above for the sketch already derived from the Issue #3

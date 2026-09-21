@@ -403,6 +403,23 @@ create workspace → upload a real PDF) succeeded end-to-end, including
 verifying the file landed at the correct path inside the running
 container.
 
+**Pre-merge correctness review (same PR #20, commit `1cc760f`)**: found
+that `_cleanup_orphaned_storage_object()` only caught `StorageError`,
+but `StorageProvider` is an unenforced `Protocol` — a cleanup-time
+failure of any other exception type would have propagated uncaught,
+masking the original error (e.g. a genuine race-lost-duplicate `409`)
+with whatever the cleanup attempt itself raised. Fixed: broadened to
+catch `Exception`, still never re-raising, still only logging
+identifiers, never a path. New regression test proves the original
+`409` still surfaces when the compensating delete itself fails with an
+unrelated exception type. Also added: boundary-precision tests for the
+streaming size limit (exactly at the limit succeeds; one byte over is
+rejected; the check depends only on bytes actually read, never a
+length hint) and four additional path-traversal-style filename
+patterns beyond the one already covered. `ruff`/`mypy` clean. 9 new
+tests, 67 → 76, 76/76 passing. Complete backend suite: 370/370 passing
+(361 pre-review + 9 new), 3 consecutive runs.
+
 ### 2026-09-21 — `feat: add StorageProvider abstraction (Issue #3, Slice 3.2)` (91d98b7) + docs (d57ccdb, 044c54f), merged as `941c1a7`
 
 *(Branch `issue-3-slice-3-2-storage-provider`, cut from the merged Slice
