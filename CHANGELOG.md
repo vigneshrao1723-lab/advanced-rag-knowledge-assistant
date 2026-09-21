@@ -12,9 +12,9 @@ with invented history of either kind.
 
 ### 2026-09-21 — StorageProvider error-handling fix (Issue #3, Slice 3.2 follow-up)
 
-- **Committed locally as `6e96481`/`d950d4e` on a new branch,
+- **Committed as `6e96481`/`d950d4e` on branch
   `issue-3-slice-3-2-storage-error-handling-fix`, cut from the merged
-  `941c1a7` — not yet pushed/PR'd; see `HANDOFF.md` for exact status.**
+  `941c1a7`, pushed, and opened as PR #19 — not yet merged.**
   A correctness/security review of the already-merged Slice 3.2
   (`941c1a7`, PR #18) found that `save()`/`delete()`/`exists()` had no
   filesystem-error handling at all, and `read()` only handled the "not

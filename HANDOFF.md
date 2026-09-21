@@ -38,10 +38,10 @@ merged** (merged by the repository owner directly, not by this session,
 at 2026-09-21T13:38:20Z) **— so the fix could not land inside PR #18 and
 is instead on a new, separate branch,
 `issue-3-slice-3-2-storage-error-handling-fix`, cut from the now-merged
-`941c1a7`.** It is implemented, tested, and committed
+`941c1a7`.** It is implemented, tested, committed
 (`6e96481`/`d950d4e`, cherry-picked from the original fix commits
-`050b185`/`03c870e`) — not yet pushed/PR'd as of this line. See
-"Completed work (Issue #3 — Slice 3.2...)" → "Pre-merge correctness/
+`050b185`/`03c870e`), pushed, and opened as **PR #19** — not yet merged.
+See "Completed work (Issue #3 — Slice 3.2...)" → "Correctness/
 security review" below for the full finding, including two stdlib
 behavior assumptions that turned out to be wrong on this project's
 actual Python version. No upload endpoint, extraction, chunking,
@@ -1154,8 +1154,8 @@ as its own small follow-up rather than being lost or silently dropped.
 - **Issue #3 Slice 3.1 (document schema) is merged** (`79d4787`,
   PR #17). **Slice 3.2 (`StorageProvider` abstraction) is also merged**
   (`941c1a7`, PR #18). **A correctness/security review's own fix is
-  implemented, tested, and committed on a new branch,
-  `issue-3-slice-3-2-storage-error-handling-fix` — not yet pushed/PR'd.**
+  implemented, tested, committed, pushed, and opened as PR #19 — not
+  yet merged.**
   No upload API, text extraction, chunking, background processing, or
   embedding code exists; nothing calls `get_storage_provider()` yet. No
   document-access/ingestion audit events exist yet either —
@@ -1207,13 +1207,13 @@ migration) is merged** (PR #17, `79d4787`). **Slice 3.2 (`StorageProvider`
 abstraction) is also merged** (PR #18, `941c1a7`) — no storage/upload
 API, extraction, chunking, background processing, or embedding code
 exists; nothing calls `StorageProvider` yet. **A correctness/security
-review's own follow-up fix is implemented, tested, and committed on
-branch `issue-3-slice-3-2-storage-error-handling-fix` — not yet
-pushed/PR'd.**
+review's own follow-up fix is implemented, tested, committed, pushed,
+and opened as PR #19** on branch
+`issue-3-slice-3-2-storage-error-handling-fix` — not yet merged.
 
-**Before anything else starts**: push that fix branch, open its PR, get
-it reviewed and merged, per normal workflow — don't start Slice 3.3 on
-top of an unmerged fix to the prior slice.
+**Before anything else starts**: get PR #19 reviewed and merged, per
+normal workflow — don't start Slice 3.3 on top of an unmerged fix to
+the prior slice.
 
 With an explicit go-ahead, the next work in this repository's own stated
 order (`PROJECT_STATE.md` "Immediate priorities") is:
@@ -1458,8 +1458,9 @@ side.
   pre-fix tree and merged `main`'s tree for both changed files) as
   `6e96481`/`d950d4e` onto a fresh branch,
   `issue-3-slice-3-2-storage-error-handling-fix`, cut from the merged
-  `941c1a7`** — re-validated in full on that branch (ruff/mypy/21
-  focused tests/294-test suite × 3 runs, all as reported above).
+  `941c1a7`, pushed, and opened as PR #19** — re-validated in full on
+  that branch (ruff/mypy/21 focused tests/294-test suite × 3 runs, all
+  as reported above).
 
 ## Exact next recommended action
 
@@ -1468,16 +1469,16 @@ are all merged into `main` (`46ef03b` PR #11, `5391a78` PR #12,
 `026dcf3` PR #13, `42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16,
 `79d4787` PR #17, `941c1a7` PR #18) — nothing pending for any of them.
 **A correctness/security review's fix for Slice 3.2 is implemented,
-tested, and committed (`6e96481`/`d950d4e`) on branch
-`issue-3-slice-3-2-storage-error-handling-fix`** (cut from `941c1a7`) —
-see "Completed work (Issue #3 — Slice 3.2...)" → "Correctness/security
-review" and "Tests run" above. The next work, in order:
+tested, committed (`6e96481`/`d950d4e`), pushed, and opened as PR #19**
+on branch `issue-3-slice-3-2-storage-error-handling-fix` (cut from
+`941c1a7`) — see "Completed work (Issue #3 — Slice 3.2...)" →
+"Correctness/security review" and "Tests run" above. The next work, in
+order:
 
-1. **Push the fix branch, open its PR, confirm CI goes green, get it
-   reviewed, and merge it** — this fix's own real-filesystem validation
-   (21 focused tests, full 294-test suite × 3 runs) is already done
-   locally, re-verified against the actual merged `main`. Do not merge
-   it without review.
+1. **Get PR #19 reviewed, confirm CI is green, and merge it** — this
+   fix's own real-filesystem validation (21 focused tests, full
+   294-test suite × 3 runs) is already done locally, re-verified
+   against the actual merged `main`. Do not merge it without review.
 2. **Once merged, with an explicit go-ahead:** scope and implement
    GitHub Issue #3, Slice 3.3 (the document upload endpoint — see "Next
    major task" above for the sketch already derived from the Issue #3
