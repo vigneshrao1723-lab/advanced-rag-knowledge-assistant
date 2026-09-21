@@ -10,57 +10,43 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-20 — StorageProvider abstraction (Issue #3, Slice 3.2)
+### 2026-09-21 — StorageProvider error-handling fix (Issue #3, Slice 3.2 follow-up)
 
-- **Not committed at the time this entry was written — committed as
-  `91d98b7` on branch `issue-3-slice-3-2-storage-provider` shortly
-  after; see `HANDOFF.md` for exact push/PR status.** No upload
-  endpoint, extraction, chunking, background processing, or embedding
-  code is added — nothing calls this yet.
-- `backend/app/services/storage_provider.py` (new): a `StorageProvider`
-  `Protocol` (`save`/`read`/`delete`/`exists`) plus `LocalStorage`, a
-  filesystem-backed implementation for local dev/CI, mirroring
-  `EmailProvider`'s exact shape. Storage keys are always
-  server-generated upstream (never a user-supplied filename —
-  `docs/SECURITY.md`), but `LocalStorage` still rejects any key that
-  would resolve outside its configured root as defense in depth — empty
-  keys, absolute paths, and `..` segments are rejected on every
-  operation, not just `save()`. A dedicated `StorageError`/
-  `StorageKeyError` hierarchy avoids a raw `OSError` escaping the
-  module.
-- `backend/app/core/config.py`: `storage_provider` changed from
-  `str | None = None` to `Literal["local"] = "local"` (the only
-  implementation today); new `storage_local_root` setting.
-  `storage_bucket` stays reserved for a future object-storage provider.
-- `.env.example`, `.gitignore` updated for the new setting and to keep
-  dev/test uploads out of version control.
-- `docs/ARCHITECTURE.md`: `StorageProvider` marked IMPLEMENTED in the
-  provider-abstractions table; every other provider interface remains
-  PROPOSED.
-- `backend/tests/test_storage_provider.py` (new, 14 tests, real
-  filesystem via `tmp_path`, no mocks): save/read round-trip, nested
-  directory creation, exists/delete behavior, delete-of-nonexistent-key
-  as a no-op, read-of-nonexistent-key raising `StorageError`, five
-  unsafe keys rejected on every operation, non-colliding keys, and the
-  factory/settings defaults.
-- `ruff`/`mypy` clean (88 source files). **14/14 new tests passing**;
-  the complete backend suite **287/287 passing** (273 pre-existing + 14
-  new), **3 consecutive runs** — no regression in any existing test.
-- **Pre-merge correctness/security review (same PR, commit `050b185`)**:
-  found that `save()`/`delete()`/`exists()` had no filesystem-error
-  handling at all, and `read()` only handled the "not found" case — a
-  raw `PermissionError`/`OSError` (whose message includes the absolute
-  filesystem path) could have escaped the module, contradicting its own
-  documented contract. Fixed: every operation now guards its own
-  filesystem calls, raising `StorageError` referencing only the
-  caller-supplied key, never the resolved path. Two stdlib-behavior
-  assumptions were empirically disproven along the way (not just
-  inspected) — `Path.is_file()` does not swallow `OSError` on this
-  project's Python version, contrary to the original implementation's
-  comment. 7 new tests (14 → 21): a symlink escaping the root, and
-  permission-denied `save`/`read`/`delete`/`exists` each raising
-  `StorageError` with no path leak. `ruff`/`mypy` clean; complete backend
-  suite **294/294 passing**, 3 consecutive runs.
+- **Committed locally as `6e96481`/`d950d4e` on a new branch,
+  `issue-3-slice-3-2-storage-error-handling-fix`, cut from the merged
+  `941c1a7` — not yet pushed/PR'd; see `HANDOFF.md` for exact status.**
+  A correctness/security review of the already-merged Slice 3.2
+  (`941c1a7`, PR #18) found that `save()`/`delete()`/`exists()` had no
+  filesystem-error handling at all, and `read()` only handled the "not
+  found" case — a raw `PermissionError`/`OSError` (whose message
+  includes the absolute filesystem path) could have escaped the module,
+  contradicting its own documented "never leaks a raw filesystem path"
+  contract. The review ran concurrently with PR #18's own merge, so the
+  fix landed too late to be included in it — it ships as this separate,
+  small follow-up instead.
+- Fixed: every operation (`save`/`read`/`delete`/`exists`) now guards
+  its own filesystem calls, raising `StorageError` referencing only the
+  caller-supplied key, never the resolved absolute path. Two
+  stdlib-behavior assumptions from the original implementation were
+  empirically disproven along the way (not just inspected) —
+  `Path.is_file()` does not swallow `OSError` on this project's actual
+  Python version (3.13.15), contrary to what the original code's own
+  comment claimed.
+- 7 new tests (`backend/tests/test_storage_provider.py`, 14 → 21): a
+  symlink planted inside the storage root that would resolve outside
+  it (rejected, proving the traversal check works against symlinks, not
+  just literal `".."` segments); permission-denied
+  `save`/`read`/`delete`/`exists` each raising `StorageError` — never a
+  raw `OSError` — with no error message containing the configured
+  storage root; `exists()` still correctly returning `True` when only a
+  file's own permissions (not its containing directory) are restricted.
+- `docs/SECURITY.md`: a new "Implemented" paragraph under "Upload &
+  document safety" documenting the enforced path-traversal/generated-
+  identifier requirement and the error contract.
+- `ruff`/`mypy` clean (88 source files, no new findings). **21/21
+  storage tests passing**; the complete backend suite **294/294
+  passing** (273 pre-existing + 21 new), **3 consecutive runs**, no
+  regression in any existing test.
 
 ### 2026-09-20 — Abuse-protection Slice 3c: escalation audit emission + HTTP-level tests
 
@@ -383,6 +369,31 @@ with invented history of either kind.
   task.
 
 ## [Unreleased — committed]
+
+### 2026-09-21 — `feat: add StorageProvider abstraction (Issue #3, Slice 3.2)` (91d98b7) + docs (d57ccdb, 044c54f), merged as `941c1a7`
+
+*(Branch `issue-3-slice-3-2-storage-provider`, cut from the merged Slice
+3.1 (`79d4787`, PR #17). Opened as **PR #18**, verified green on GitHub
+Actions CI (4/4 checks), merged into `main` as squash commit `941c1a7`.
+Note: this merge happened before a concurrent correctness/security
+review of the same slice had finished — that review's own fix (below,
+"StorageProvider error-handling fix") landed as a separate follow-up
+instead of inside this PR.)*
+
+Adds the `StorageProvider` abstraction — a `Protocol`
+(`save`/`read`/`delete`/`exists`) plus `LocalStorage`, a filesystem-
+backed implementation for local dev/CI, mirroring `EmailProvider`'s
+exact shape (`backend/app/services/storage_provider.py`). Storage keys
+are always server-generated upstream (never a user-supplied filename —
+`docs/SECURITY.md`), but `LocalStorage` also rejects any key that would
+resolve outside its configured root as defense in depth. New settings:
+`storage_provider` (`Literal["local"]`, the only implementation today)
+and `storage_local_root`; `storage_bucket` stays reserved for a future
+object-storage provider. 14 new tests
+(`backend/tests/test_storage_provider.py`), real filesystem, no mocks.
+`ruff`/`mypy` clean. Full backend suite: 287/287 passing (273 existing +
+14 new), 3 consecutive runs. No upload endpoint, extraction, chunking,
+background processing, or embedding code — nothing calls this yet.
 
 ### 2026-09-20 — `feat: add document and document_chunk schema (Issue #3, Slice 3.1)` (36fe8b0) + docs (301f8a2, e73c883), merged as `79d4787`
 

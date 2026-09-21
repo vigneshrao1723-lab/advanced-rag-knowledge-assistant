@@ -9,40 +9,46 @@ in-flight task — overwrite it as work progresses, don't append a history
 ## Current task
 
 **Everything through Redis Slices 1–3c, Playwright E2E, and Issue #3
-Slice 3.1 is merged into `main`.** In order: Redis Slice 1 (foundation +
-token-bucket engine) — PR #11, squash commit `46ef03b`. Slice 2 (endpoint
-wiring) — PR #12, squash commit `5391a78`. Slice 3a (abuse-state Redis
-primitives) — PR #13, squash commit `026dcf3`. Slice 3b (decision engine
-+ R1–R5 endpoint wiring, plus a `tests/conftest.py` test-isolation fix)
-— PR #14, squash commit `42529e3`. Slice 3c (abuse-escalation audit
-emission) — PR #15, squash commit `75dd466`. Browser E2E (Playwright)
-for authentication/password-recovery — PR #16, squash commit `e1c4858`.
-Issue #3 Slice 3.1 (document data model + migration `0004`) — PR #17,
-squash commit `79d4787`, CI green (4/4 checks, including the first real
-Actions run of the `e2e` job). **`main`/`origin/main` are at `79d4787`.**
-Nothing is pending review, push, or merge for any of the above. Full
-per-item implementation detail is preserved below under its own
-"Completed work" section — not repeated here, per this file's own "don't
-append a history" instruction.
+Slices 3.1–3.2 is merged into `main`.** In order: Redis Slice 1
+(foundation + token-bucket engine) — PR #11, squash commit `46ef03b`.
+Slice 2 (endpoint wiring) — PR #12, squash commit `5391a78`. Slice 3a
+(abuse-state Redis primitives) — PR #13, squash commit `026dcf3`. Slice
+3b (decision engine + R1–R5 endpoint wiring, plus a `tests/conftest.py`
+test-isolation fix) — PR #14, squash commit `42529e3`. Slice 3c
+(abuse-escalation audit emission) — PR #15, squash commit `75dd466`.
+Browser E2E (Playwright) for authentication/password-recovery — PR #16,
+squash commit `e1c4858`. Issue #3 Slice 3.1 (document data model +
+migration `0004`) — PR #17, squash commit `79d4787`, CI green (4/4
+checks, including the first real Actions run of the `e2e` job). Issue #3
+Slice 3.2 (`StorageProvider` abstraction) — PR #18, squash commit
+`941c1a7`, CI green (4/4 checks). **`main`/`origin/main` are at
+`941c1a7`.** Nothing is pending review, push, or merge for any of the
+above. Full per-item implementation detail is preserved below under its
+own "Completed work" section — not repeated here, per this file's own
+"don't append a history" instruction.
 
-**GitHub Issue #3 (Knowledge Ingestion), Slice 3.2 (`StorageProvider`
-abstraction) is IMPLEMENTED, TESTED, COMMITTED, PUSHED, and open as
-PR #18** on branch `issue-3-slice-3-2-storage-provider` (cut from
-`79d4787`) — `backend/app/services/storage_provider.py`: a `Protocol`
-plus `LocalStorage`, path-traversal-safe, mirroring `EmailProvider`'s
-exact shape. **A pre-merge correctness/security review found and fixed a
-genuine gap**: `save()`/`delete()`/`exists()` had no filesystem-error
-handling at all, and `read()` only handled the "not found" case — a raw
+**A pre-merge correctness/security review of Slice 3.2 found and fixed a
+genuine gap** in `backend/app/services/storage_provider.py`:
+`save()`/`delete()`/`exists()` had no filesystem-error handling at all,
+and `read()` only handled the "not found" case — a raw
 `PermissionError`/`OSError` (whose own message includes the absolute
 filesystem path) could have escaped the module, contradicting its
-documented contract. Now fixed and empirically verified (not just
-assumed) — see "Completed work (Issue #3 — Slice 3.2...)" → "Pre-merge
-correctness/security review" below for the full finding, including two
-stdlib behavior assumptions that turned out to be wrong on this
-project's actual Python version. No upload endpoint, extraction,
-chunking, background processing, or embedding code — nothing calls this
-yet. See "Exact next recommended action" at the end of this file for the
-exact commit identifiers. **Do not start Slice 3.3 or
+documented contract. **The review wasn't finished before PR #18 was
+merged** (merged by the repository owner directly, not by this session,
+at 2026-09-21T13:38:20Z) **— so the fix could not land inside PR #18 and
+is instead on a new, separate branch,
+`issue-3-slice-3-2-storage-error-handling-fix`, cut from the now-merged
+`941c1a7`.** It is implemented, tested, and committed
+(`6e96481`/`d950d4e`, cherry-picked from the original fix commits
+`050b185`/`03c870e`) — not yet pushed/PR'd as of this line. See
+"Completed work (Issue #3 — Slice 3.2...)" → "Pre-merge correctness/
+security review" below for the full finding, including two stdlib
+behavior assumptions that turned out to be wrong on this project's
+actual Python version. No upload endpoint, extraction, chunking,
+background processing, or embedding code exists anywhere in Issue #3 yet
+— nothing calls `get_storage_provider()`. See "Exact next recommended
+action" at the end of this file for what's left. **Do not start Slice
+3.3 or
 any later Issue #3 slice without an explicit go-ahead** — this slice's
 own scope stops at the storage abstraction; no endpoint consumes it.
 
@@ -956,7 +962,10 @@ embedding code was added.
 ## Completed work (Issue #3 — Slice 3.2: StorageProvider abstraction)
 
 **Implemented, tested, committed as `91d98b7` (plus a docs commit,
-`d57ccdb`), pushed, and opened as PR #18 — not yet merged.** Storage abstraction only — per this slice's explicit scope,
+`d57ccdb`), pushed, opened as PR #18, and since merged into `main` as
+squash commit `941c1a7` — a pre-merge correctness/security review's own
+fix (below) landed too late to be included in that PR; see "Current
+task" above and the new fix branch it describes.** Storage abstraction only — per this slice's explicit scope,
 no upload endpoint, text extraction, chunking, background processing, or
 embedding code was added; nothing in the codebase calls
 `get_storage_provider()` yet.
@@ -1036,17 +1045,25 @@ embedding code was added; nothing in the codebase calls
     Postgres/Redis-specific validation was needed for this slice's own
     code.
 
-### Pre-merge correctness/security review, and the fix it produced
+### Correctness/security review, and the fix it produced
 
-A dedicated review of the above, before PR #18's merge, found one
-genuine gap: `LocalStorage.read()` translated only `FileNotFoundError`
-to `StorageError`; `save()`/`delete()`/`exists()` had no filesystem-error
-handling at all. A `PermissionError` (or any other `OSError` — disk
-full, etc.) would escape the module raw — and Python's own `OSError`
-message includes the absolute path of the operation that failed, which
-would have leaked the configured storage root, directly contradicting
-this module's own documented "never leaks a raw filesystem path"
-contract.
+A dedicated review of the above, intended as a final pre-merge check on
+Slice 3.2, found one genuine gap: `LocalStorage.read()` translated only
+`FileNotFoundError` to `StorageError`; `save()`/`delete()`/`exists()`
+had no filesystem-error handling at all. A `PermissionError` (or any
+other `OSError` — disk full, etc.) would escape the module raw — and
+Python's own `OSError` message includes the absolute path of the
+operation that failed, which would have leaked the configured storage
+root, directly contradicting this module's own documented "never leaks
+a raw filesystem path" contract.
+
+**The review ran concurrently with PR #18 actually being merged** (by
+the repository owner directly, independent of this review) **— so by
+the time the fix was ready, PR #18 was already closed and could not
+receive more commits.** The fix (originally committed as `050b185`/
+`03c870e` on the now-merged branch) was cherry-picked as `6e96481`/
+`d950d4e` onto a fresh branch cut from the merged `941c1a7`, so it ships
+as its own small follow-up rather than being lost or silently dropped.
 
 - **Fixed**: `save()`/`delete()` now each wrap their filesystem calls in
   `try/except OSError`, raising `StorageError` with a message built only
@@ -1135,10 +1152,12 @@ contract.
   only the authentication/password-recovery surface; no document/chat/
   search UI exists yet for E2E coverage to extend to.
 - **Issue #3 Slice 3.1 (document schema) is merged** (`79d4787`,
-  PR #17). **Slice 3.2 (`StorageProvider` abstraction) is implemented,
-  tested, committed, and pushed — PR #18, not yet merged.** No upload
-  API, text extraction, chunking, background processing, or embedding
-  code exists; nothing calls `get_storage_provider()` yet. No
+  PR #17). **Slice 3.2 (`StorageProvider` abstraction) is also merged**
+  (`941c1a7`, PR #18). **A correctness/security review's own fix is
+  implemented, tested, and committed on a new branch,
+  `issue-3-slice-3-2-storage-error-handling-fix` — not yet pushed/PR'd.**
+  No upload API, text extraction, chunking, background processing, or
+  embedding code exists; nothing calls `get_storage_provider()` yet. No
   document-access/ingestion audit events exist yet either —
   `AuditEvent` still only covers
   auth/workspace/rate-limit/abuse-escalation events; those land with a
@@ -1185,13 +1204,16 @@ merged (PR #16, `e1c4858`).
 
 **GitHub Issue #3 (Knowledge Ingestion): Slice 3.1 (document data model +
 migration) is merged** (PR #17, `79d4787`). **Slice 3.2 (`StorageProvider`
-abstraction) is implemented, tested, and committed** — no storage/upload
+abstraction) is also merged** (PR #18, `941c1a7`) — no storage/upload
 API, extraction, chunking, background processing, or embedding code
-exists; nothing calls the new `StorageProvider` yet.
+exists; nothing calls `StorageProvider` yet. **A correctness/security
+review's own follow-up fix is implemented, tested, and committed on
+branch `issue-3-slice-3-2-storage-error-handling-fix` — not yet
+pushed/PR'd.**
 
-**Before anything else starts**: get the Slice 3.2 PR reviewed and
-merged, per normal workflow — don't start Slice 3.3 on top of an
-unmerged prior slice.
+**Before anything else starts**: push that fix branch, open its PR, get
+it reviewed and merged, per normal workflow — don't start Slice 3.3 on
+top of an unmerged fix to the prior slice.
 
 With an explicit go-ahead, the next work in this repository's own stated
 order (`PROJECT_STATE.md` "Immediate priorities") is:
@@ -1418,36 +1440,44 @@ side.
   validation beyond the full suite's own existing real-Postgres/
   real-Redis coverage was applicable. Committed as `91d98b7` + docs
   commit `d57ccdb`, pushed on branch `issue-3-slice-3-2-storage-provider`
-  (cut from `79d4787`), opened as **PR #18**.
-- **Pre-merge correctness/security review of Slice 3.2, on the same
-  branch/PR**: `uv run ruff check .`/`uv run mypy .` both clean (88
-  source files, no new findings) after the fix. **7 new tests, 14 → 21
-  in `tests/test_storage_provider.py` — 21/21 passed**, against a real
-  filesystem (permission bits via `chmod`, a real symlink escaping the
-  root) — no mocks. Two stdlib-behavior assumptions from the original
-  implementation were empirically disproven this pass (see "Pre-merge
-  correctness/security review" above for detail) — a genuine, useful
-  correction, not a test-design bug. **Complete backend suite: 294/294
-  passing** (273 pre-existing + 21 new), **3 consecutive runs**, no
-  regression in any existing test. Committed as `050b185` on the same
-  branch, on top of `91d98b7`/`d57ccdb`.
+  (cut from `79d4787`), opened as PR #18, **since merged into `main` as
+  squash commit `941c1a7`, CI green (4/4 checks).**
+- **Correctness/security review of Slice 3.2**: `uv run ruff
+  check .`/`uv run mypy .` both clean (88 source files, no new findings)
+  after the fix. **7 new tests, 14 → 21 in `tests/test_storage_provider.py`
+  — 21/21 passed**, against a real filesystem (permission bits via
+  `chmod`, a real symlink escaping the root) — no mocks. Two
+  stdlib-behavior assumptions from the original implementation were
+  empirically disproven this pass (see "Correctness/security review"
+  above for detail) — a genuine, useful correction, not a test-design
+  bug. **Complete backend suite: 294/294 passing** (273 pre-existing +
+  21 new), **3 consecutive runs**, no regression in any existing test.
+  Originally committed as `050b185`/`03c870e` on the now-merged Slice
+  3.2 branch (too late to land in PR #18 — see "Current task" above for
+  why); **cherry-picked cleanly (verified: zero diff between the
+  pre-fix tree and merged `main`'s tree for both changed files) as
+  `6e96481`/`d950d4e` onto a fresh branch,
+  `issue-3-slice-3-2-storage-error-handling-fix`, cut from the merged
+  `941c1a7`** — re-validated in full on that branch (ruff/mypy/21
+  focused tests/294-test suite × 3 runs, all as reported above).
 
 ## Exact next recommended action
 
-Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slice 3.1 are all
-merged into `main` (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13,
-`42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17) —
-nothing pending for any of them. **GitHub Issue #3, Slice 3.2
-(`StorageProvider` abstraction) is implemented, tested, committed
-(`91d98b7` + docs `d57ccdb` + correctness-fix `050b185`), pushed, and
-open as PR #18** on branch `issue-3-slice-3-2-storage-provider` (cut
-from `79d4787`) — see "Completed work (Issue #3 — Slice 3.2...)" and
-"Tests run" above. The next work, in order:
+Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.2
+are all merged into `main` (`46ef03b` PR #11, `5391a78` PR #12,
+`026dcf3` PR #13, `42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16,
+`79d4787` PR #17, `941c1a7` PR #18) — nothing pending for any of them.
+**A correctness/security review's fix for Slice 3.2 is implemented,
+tested, and committed (`6e96481`/`d950d4e`) on branch
+`issue-3-slice-3-2-storage-error-handling-fix`** (cut from `941c1a7`) —
+see "Completed work (Issue #3 — Slice 3.2...)" → "Correctness/security
+review" and "Tests run" above. The next work, in order:
 
-1. **Get PR #18 reviewed, confirm CI is green, and merge it** — this
-   slice's own real-filesystem validation (unit tests, full suite,
-   including the pre-merge correctness/security review) is already done
-   locally. Do not merge it without review.
+1. **Push the fix branch, open its PR, confirm CI goes green, get it
+   reviewed, and merge it** — this fix's own real-filesystem validation
+   (21 focused tests, full 294-test suite × 3 runs) is already done
+   locally, re-verified against the actual merged `main`. Do not merge
+   it without review.
 2. **Once merged, with an explicit go-ahead:** scope and implement
    GitHub Issue #3, Slice 3.3 (the document upload endpoint — see "Next
    major task" above for the sketch already derived from the Issue #3
