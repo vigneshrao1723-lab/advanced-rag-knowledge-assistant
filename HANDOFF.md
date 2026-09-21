@@ -1135,8 +1135,8 @@ as its own small follow-up rather than being lost or silently dropped.
 
 ## Completed work (Issue #3 — Slice 3.3: document upload API)
 
-**Implemented and tested; not yet committed as of this entry** — see
-"Exact next recommended action" for the plan once it is. Adds exactly
+**Implemented, tested, committed, pushed, and opened as PR #20 — not
+yet merged.** Adds exactly
 one capability: `POST /api/v1/workspaces/{workspace_id}/documents`
 (`multipart/form-data`, field `file`). A successful upload authenticates,
 authorizes (MEMBER), rate-limits, validates, checksums, checks for a
@@ -1313,7 +1313,8 @@ chunking, embedding, or background processing.
   search UI exists yet for E2E coverage to extend to.
 - **Issue #3 Slices 3.1–3.2 are merged** (`79d4787` PR #17, `941c1a7`
   PR #18, correctness-fix `5e6fdc2` PR #19). **Slice 3.3 (document
-  upload API) is implemented and tested, PR not yet opened.** No text
+  upload API) is implemented, tested, committed, and open as PR #20 —
+  not yet merged.** No text
   extraction, chunking, background processing, or embedding code
   exists — documents reach `UPLOADED` and stop there.
   `AuditEvent.DOCUMENT_UPLOADED` is now implemented (Slice 3.3) — the
@@ -1362,13 +1363,13 @@ merged (PR #16, `e1c4858`).
 **GitHub Issue #3 (Knowledge Ingestion): Slices 3.1 and 3.2 (including
 Slice 3.2's own correctness-review fix) are merged** (PR #17 `79d4787`,
 PR #18 `941c1a7`, PR #19 `5e6fdc2`). **Slice 3.3 (document upload API,
-`POST /api/v1/workspaces/{workspace_id}/documents`) is implemented and
-tested** on branch `issue-3-slice-3-3-document-upload-api` — PR not yet
-opened.
+`POST /api/v1/workspaces/{workspace_id}/documents`) is implemented,
+tested, and open as PR #20** on branch
+`issue-3-slice-3-3-document-upload-api` — not yet merged.
 
-**Before anything else starts**: get the Slice 3.3 PR opened, reviewed,
-and merged, per normal workflow — don't start Slice 3.4 on top of an
-unmerged prior slice.
+**Before anything else starts**: get PR #20 reviewed and merged, per
+normal workflow — don't start Slice 3.4 on top of an unmerged prior
+slice.
 
 With an explicit go-ahead, the next work in this repository's own stated
 order (`PROJECT_STATE.md` "Immediate priorities") is:
@@ -1652,8 +1653,9 @@ at the correct, expected path inside the container's own filesystem via
   up healthy, and a full manual smoke test against the real running
   stack (register → create workspace → upload a real PDF via `curl`)
   succeeded end-to-end, with the file verified on disk inside the
-  container at the expected, correctly-generated path. Not yet
-  committed as of this entry.
+  container at the expected, correctly-generated path. Committed as
+  `b81b7d2` (implementation) + `b3cf3cf` (docs), pushed, and opened as
+  **PR #20**.
 
 ## Exact next recommended action
 
@@ -1662,15 +1664,16 @@ Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.2
 `main` (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3`
 PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7`
 PR #18, `5e6fdc2` PR #19) — nothing pending for any of them. **GitHub
-Issue #3, Slice 3.3 (document upload API) is implemented and tested** on
+Issue #3, Slice 3.3 (document upload API) is implemented, tested,
+committed, pushed, and opened as PR #20** on
 branch `issue-3-slice-3-3-document-upload-api` (cut from `5e6fdc2`) —
-not yet committed. See "Completed work (Issue #3 — Slice 3.3...)" and
+not yet merged. See "Completed work (Issue #3 — Slice 3.3...)" and
 "Tests run" above. The next work, in order:
 
-1. **Commit, push, open the PR, confirm CI is green, and get it
-   reviewed** — this slice's own real-stack validation (67 focused
-   tests, full 361-test suite × 3 runs, a live Docker Compose smoke
-   test) is already done locally. Do not merge it without review.
+1. **Get PR #20 reviewed, confirm CI is green, and merge it** — this
+   slice's own real-stack validation (67 focused tests, full 361-test
+   suite × 3 runs, a live Docker Compose smoke test) is already done
+   locally. Do not merge it without review.
 2. **Once merged, with an explicit go-ahead:** scope and implement
    GitHub Issue #3, Slice 3.4 (text extraction — see "Next
    major task" above for the sketch already derived from the Issue #3

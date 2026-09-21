@@ -10,69 +10,6 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-21 — Document upload API (Issue #3, Slice 3.3)
-
-- **Not committed.** `POST /api/v1/workspaces/{workspace_id}/documents`
-  (`multipart/form-data`, field `file`) — authenticate, authorize
-  (MEMBER, via the existing `require_workspace_role`), rate-limit,
-  validate, checksum, check for a workspace-scoped duplicate, write to
-  `StorageProvider`, create the `documents` row, emit the audit event,
-  commit, return `201`. The document stays in `UPLOADED` — no
-  extraction, chunking, embedding, or background processing.
-- `backend/app/services/document_service.py` (new): validation
-  (extension allowlist, MIME allowlist including named browser variants
-  for `.md`/`.csv`, a magic-byte signature check for PDF/DOCX — no
-  reliable signature exists for the plain-text formats, a documented
-  gap, not a hidden one); a streamed, chunked checksum/size-limit reader
-  that aborts before buffering an oversized payload; storage-key
-  generation from trusted identifiers only, never the client filename.
-  Storage-then-database ordering: the file always durably exists before
-  any DB row is attempted; if the insert then fails for any reason
-  (including a race-lost duplicate-checksum insert the pre-check missed),
-  a best-effort compensating `storage.delete()` runs, logged if it also
-  fails, never masking the original error. Duplicate uploads in the same
-  workspace return `409` referencing the existing document's id; the
-  same checksum in a different workspace is unaffected.
-- `backend/app/repositories/document_repository.py`,
-  `backend/app/schemas/document.py` (new, small, following the existing
-  patterns exactly — `DocumentRead` never includes `storage_key`).
-- `backend/app/core/audit.py`: additive `AuditEvent.DOCUMENT_UPLOADED`.
-- `backend/app/core/rate_limit.py`: additive `document_upload` operation
-  (IP + authenticated user ID, 20/60s, Tier A — falls back on a Redis
-  outage, never fails open; the R1–R5 abuse-decision layer is not
-  consulted, since its rule table targets a different threat model).
-- `backend/app/core/config.py`: additive `max_upload_size_bytes`
-  (default 50 MiB). New dependency: `python-multipart` (required by
-  FastAPI for any file-upload route).
-- `backend/app/api/v1/documents.py` (new) + router registration.
-- `backend/tests/test_document_service.py` (new, 37 unit tests, no
-  database) and `backend/tests/test_document_upload.py` (new, 30
-  HTTP-level tests, real Postgres/Redis/filesystem, no mocks) — covering
-  authentication/authorization/cross-workspace isolation, every
-  supported format, unsupported extension/MIME/signature mismatches,
-  the size limit, checksum correctness, path-traversal-filename safety,
-  the audit event, duplicate-checksum handling (same and different
-  workspace), a genuine storage failure, a genuine database failure
-  (FK violation) after a successful storage write with compensating
-  cleanup, a genuine race-lost duplicate insert, cleanup-failure
-  path-leak safety, malformed multipart input, and real-Redis rate-limit
-  key creation/enforcement/fallback.
-- `docs/API_CONTRACT.md`: the `/api/v1/workspaces/{workspace_id}/documents`
-  contract filled in (correcting the "Target namespaces" table's earlier
-  flat, non-binding `/api/v1/documents` sketch to the nested path
-  actually used, matching `/members`/`/audit-logs`'s existing
-  convention). `docs/SECURITY.md`: "Upload & document safety" extended;
-  "Audit logging" and "Security testing" bullets updated from their
-  previous "not implemented yet" state.
-- `ruff`/`mypy` clean (94 source files). **67/67 new tests passing**;
-  the complete backend suite **361/361 passing** (294 pre-existing + 67
-  new), **3 consecutive runs**, no regression in any existing test.
-  Frontend re-confirmed unaffected (48/48 vitest, lint/typecheck clean).
-  A full manual smoke test against the real Docker Compose stack
-  (register → create workspace → upload a real PDF) succeeded
-  end-to-end, including verifying the file landed at the correct path
-  inside the running container.
-
 ### 2026-09-20 — Abuse-protection Slice 3c: escalation audit emission + HTTP-level tests
 
 - **Not committed.** Adds abuse-escalation audit emission on top of
@@ -394,6 +331,77 @@ with invented history of either kind.
   task.
 
 ## [Unreleased — committed]
+
+### 2026-09-21 — `feat: add document upload API (Issue #3, Slice 3.3)` (b81b7d2) + docs (b3cf3cf), opened as PR #20
+
+*(Branch `issue-3-slice-3-3-document-upload-api`, cut from the merged
+Slice 3.2 fix (`5e6fdc2`, PR #19). Opened as **PR #20** — CI status and
+merge not yet confirmed as of this entry; not yet part of a tagged
+release either way.)*
+
+`POST /api/v1/workspaces/{workspace_id}/documents`
+(`multipart/form-data`, field `file`) — authenticate, authorize
+(MEMBER, via the existing `require_workspace_role`), rate-limit,
+validate, checksum, check for a workspace-scoped duplicate, write to
+`StorageProvider`, create the `documents` row, emit the audit event,
+commit, return `201`. The document stays in `UPLOADED` — no
+extraction, chunking, embedding, or background processing.
+
+`backend/app/services/document_service.py` (new): validation (extension
+allowlist, MIME allowlist including named browser variants for
+`.md`/`.csv`, a magic-byte signature check for PDF/DOCX — no reliable
+signature exists for the plain-text formats, a documented gap, not a
+hidden one); a streamed, chunked checksum/size-limit reader that aborts
+before buffering an oversized payload; storage-key generation from
+trusted identifiers only, never the client filename. Storage-then-
+database ordering: the file always durably exists before any DB row is
+attempted; if the insert then fails for any reason (including a
+race-lost duplicate-checksum insert the pre-check missed), a
+best-effort compensating `storage.delete()` runs, logged if it also
+fails, never masking the original error. Duplicate uploads in the same
+workspace return `409` referencing the existing document's id; the same
+checksum in a different workspace is unaffected.
+
+`backend/app/repositories/document_repository.py`,
+`backend/app/schemas/document.py` (new, small, following the existing
+patterns exactly — `DocumentRead` never includes `storage_key`).
+`backend/app/core/audit.py`: additive `AuditEvent.DOCUMENT_UPLOADED`.
+`backend/app/core/rate_limit.py`: additive `document_upload` operation
+(IP + authenticated user ID, 20/60s, Tier A — falls back on a Redis
+outage, never fails open; the R1–R5 abuse-decision layer is not
+consulted, since its rule table targets a different threat model).
+`backend/app/core/config.py`: additive `max_upload_size_bytes` (default
+50 MiB). New dependency: `python-multipart`. `backend/app/api/v1/documents.py`
+(new) + router registration.
+
+`backend/tests/test_document_service.py` (new, 37 unit tests, no
+database) and `backend/tests/test_document_upload.py` (new, 30
+HTTP-level tests, real Postgres/Redis/filesystem, no mocks) — covering
+authentication/authorization/cross-workspace isolation, every supported
+format, unsupported extension/MIME/signature mismatches, the size
+limit, checksum correctness, path-traversal-filename safety, the audit
+event, duplicate-checksum handling (same and different workspace), a
+genuine storage failure, a genuine database failure (FK violation)
+after a successful storage write with compensating cleanup, a genuine
+race-lost duplicate insert, cleanup-failure path-leak safety, malformed
+multipart input, and real-Redis rate-limit key creation/enforcement/
+fallback.
+
+`docs/API_CONTRACT.md`: the `/api/v1/workspaces/{workspace_id}/documents`
+contract filled in (correcting the "Target namespaces" table's earlier
+flat, non-binding `/api/v1/documents` sketch to the nested path
+actually used). `docs/SECURITY.md`: "Upload & document safety"
+extended; "Audit logging" and "Security testing" bullets updated from
+their previous "not implemented yet" state.
+
+`ruff`/`mypy` clean (94 source files). 67/67 new tests passing; the
+complete backend suite 361/361 passing (294 pre-existing + 67 new), 3
+consecutive runs, no regression in any existing test. Frontend
+re-confirmed unaffected (48/48 vitest, lint/typecheck clean). A full
+manual smoke test against the real Docker Compose stack (register →
+create workspace → upload a real PDF) succeeded end-to-end, including
+verifying the file landed at the correct path inside the running
+container.
 
 ### 2026-09-21 — `feat: add StorageProvider abstraction (Issue #3, Slice 3.2)` (91d98b7) + docs (d57ccdb, 044c54f), merged as `941c1a7`
 
