@@ -187,6 +187,19 @@ documented below rather than anticipated speculatively:
 - Apply resource and time limits to parsing/processing to bound the impact
   of a pathological file.
 
+**Implemented (Issue #3, Slice 3.2 — storage layer only; no upload
+surface exists yet):** the generated-identifier/path-traversal
+requirement above is enforced by `StorageProvider`/`LocalStorage`
+(`backend/app/services/storage_provider.py`) — every key is checked
+against escaping the configured storage root (rejecting empty keys,
+absolute paths, `..` segments, and symlink-based escapes, since
+`relative_to()` runs against the fully symlink-resolved candidate path).
+Every operation (`save`/`read`/`delete`/`exists`) also guards its own
+filesystem calls: a raw `OSError`/`PermissionError` — including the
+absolute configured storage root that would otherwise appear in its
+message — never escapes the module; it's translated to `StorageError`
+(unsafe key: `StorageKeyError`) referencing only the caller-supplied key.
+
 ## Prompt injection defense
 
 Because retrieved chunks are untrusted, the generation layer's design must

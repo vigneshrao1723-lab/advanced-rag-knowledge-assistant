@@ -46,6 +46,21 @@ with invented history of either kind.
 - `ruff`/`mypy` clean (88 source files). **14/14 new tests passing**;
   the complete backend suite **287/287 passing** (273 pre-existing + 14
   new), **3 consecutive runs** — no regression in any existing test.
+- **Pre-merge correctness/security review (same PR, commit `050b185`)**:
+  found that `save()`/`delete()`/`exists()` had no filesystem-error
+  handling at all, and `read()` only handled the "not found" case — a
+  raw `PermissionError`/`OSError` (whose message includes the absolute
+  filesystem path) could have escaped the module, contradicting its own
+  documented contract. Fixed: every operation now guards its own
+  filesystem calls, raising `StorageError` referencing only the
+  caller-supplied key, never the resolved path. Two stdlib-behavior
+  assumptions were empirically disproven along the way (not just
+  inspected) — `Path.is_file()` does not swallow `OSError` on this
+  project's Python version, contrary to the original implementation's
+  comment. 7 new tests (14 → 21): a symlink escaping the root, and
+  permission-denied `save`/`read`/`delete`/`exists` each raising
+  `StorageError` with no path leak. `ruff`/`mypy` clean; complete backend
+  suite **294/294 passing**, 3 consecutive runs.
 
 ### 2026-09-20 — Abuse-protection Slice 3c: escalation audit emission + HTTP-level tests
 
