@@ -26,16 +26,23 @@ per-item implementation detail is preserved below under its own
 append a history" instruction.
 
 **GitHub Issue #3 (Knowledge Ingestion), Slice 3.2 (`StorageProvider`
-abstraction) is now IMPLEMENTED, TESTED, COMMITTED, PUSHED, and opened
-as PR #18** on branch `issue-3-slice-3-2-storage-provider` (cut from
+abstraction) is IMPLEMENTED, TESTED, COMMITTED, PUSHED, and open as
+PR #18** on branch `issue-3-slice-3-2-storage-provider` (cut from
 `79d4787`) — `backend/app/services/storage_provider.py`: a `Protocol`
-plus
-`LocalStorage`, path-traversal-safe, mirroring `EmailProvider`'s exact
-shape. No upload endpoint, extraction, chunking, background processing,
-or embedding code — nothing calls this yet. See "Completed work (Issue
-#3 — Slice 3.2: StorageProvider abstraction)" below for full detail, and
-"Exact next recommended action" at the end of this file for the
-branch/commit/PR identifiers once pushed. **Do not start Slice 3.3 or
+plus `LocalStorage`, path-traversal-safe, mirroring `EmailProvider`'s
+exact shape. **A pre-merge correctness/security review found and fixed a
+genuine gap**: `save()`/`delete()`/`exists()` had no filesystem-error
+handling at all, and `read()` only handled the "not found" case — a raw
+`PermissionError`/`OSError` (whose own message includes the absolute
+filesystem path) could have escaped the module, contradicting its
+documented contract. Now fixed and empirically verified (not just
+assumed) — see "Completed work (Issue #3 — Slice 3.2...)" → "Pre-merge
+correctness/security review" below for the full finding, including two
+stdlib behavior assumptions that turned out to be wrong on this
+project's actual Python version. No upload endpoint, extraction,
+chunking, background processing, or embedding code — nothing calls this
+yet. See "Exact next recommended action" at the end of this file for the
+exact commit identifiers. **Do not start Slice 3.3 or
 any later Issue #3 slice without an explicit go-ahead** — this slice's
 own scope stops at the storage abstraction; no endpoint consumes it.
 
@@ -1028,6 +1035,89 @@ embedding code was added; nothing in the codebase calls
     already provides is what confirms no regression — no new
     Postgres/Redis-specific validation was needed for this slice's own
     code.
+
+### Pre-merge correctness/security review, and the fix it produced
+
+A dedicated review of the above, before PR #18's merge, found one
+genuine gap: `LocalStorage.read()` translated only `FileNotFoundError`
+to `StorageError`; `save()`/`delete()`/`exists()` had no filesystem-error
+handling at all. A `PermissionError` (or any other `OSError` — disk
+full, etc.) would escape the module raw — and Python's own `OSError`
+message includes the absolute path of the operation that failed, which
+would have leaked the configured storage root, directly contradicting
+this module's own documented "never leaks a raw filesystem path"
+contract.
+
+- **Fixed**: `save()`/`delete()` now each wrap their filesystem calls in
+  `try/except OSError`, raising `StorageError` with a message built only
+  from the caller-supplied `key` — never the resolved absolute path.
+  `read()` keeps its existing `FileNotFoundError` → "not found" `StorageError`
+  for that specific case, with a second, broader `except OSError` beneath
+  it for anything else. `_resolve()`'s own `.resolve()` call is now
+  wrapped too, as defense-in-depth against a resolution-time `OSError`
+  (e.g. a stale network-mount handle) — see the finding below on why this
+  branch isn't provably reachable by a test, kept anyway since it's cheap
+  and correct.
+- **A second, related gap found empirically, not by inspection**: the
+  original code assumed (and said in a comment) that `Path.is_file()`
+  swallows `OSError` internally, so `exists()` needed no guard of its
+  own. Actually running a permission-denied test against this project's
+  real Python version (3.13.15) disproved that — `is_file()` calls
+  `stat()` directly and lets `PermissionError` propagate raw. `exists()`
+  now has its own `try/except OSError` too, exactly like the other three
+  methods; the comment that had claimed otherwise is corrected.
+- **What was empirically disproven along the way** (recorded so a future
+  session doesn't re-assume it): neither `Path.resolve()` nor
+  `Path.is_file()` reliably swallow `OSError` on this runtime for a
+  blocked-containing-directory scenario — `resolve()` succeeds lexically
+  regardless (even across a symlink inside a directory with no execute
+  permission), and `is_file()`'s failure surfaces only when it actually
+  calls `stat()` on the final path. The one place a permission problem
+  reliably raises is at each operation's own terminal filesystem call —
+  which is exactly where each method's own guard now sits.
+- **7 new tests** (`tests/test_storage_provider.py`, 14 → 21): a symlink
+  planted inside the root that would resolve outside it (`StorageKeyError`,
+  proving the traversal check works against symlinks, not just literal
+  `".."` segments — separately from the existing literal-`".."` cases);
+  permission-denied `save()`/`read()`/`delete()`/`exists()` each raising
+  `StorageError`, never a raw `OSError`/`PermissionError`, and never
+  containing the configured `tmp_path` root in the message; `exists()`
+  still correctly returning `True` when only a *file's own* permission
+  bits (not its containing directory) are restricted, since that doesn't
+  block `stat()` the way it blocks `read()`. Permission-based tests are
+  skipped under `os.geteuid() == 0` (root bypasses filesystem permissions
+  entirely, which would make them fail or test nothing meaningful) —
+  both this environment and the CI runner (a GitHub-hosted `ubuntu-latest`
+  VM, not a container) run as non-root, so none of the 7 new tests were
+  actually skipped this session; the guard exists for robustness, not
+  because it was needed here.
+- Also reviewed and confirmed already correct, no change needed: unsafe
+  keys are rejected on every operation, not just `save()` (already
+  covered by the pre-existing
+  `test_unsafe_key_rejected_on_read_exists_and_delete_too`); storage keys
+  remain always server-generated upstream, never a user-supplied
+  filename (no code path in this module accepts one); no upload endpoint
+  exists yet, so no HTTP surface/authentication/rate-limiting/workspace-
+  authorization is applicable to add; no secrets or file contents are
+  logged anywhere in this module (it has no logging at all).
+- **`get_storage_provider()`'s factory test reviewed for determinism**
+  (the review specifically asked whether it might accidentally depend on
+  an already-cached global `Settings` instance): confirmed already
+  deterministic and left unchanged — `storage_provider` is
+  `Literal["local"]`, the only legal value, and no other test in the
+  suite touches `STORAGE_PROVIDER`/`STORAGE_LOCAL_ROOT`, so
+  `get_storage_provider()` returns a `LocalStorage` instance regardless
+  of process-wide cache state or test execution order; there is no
+  second branch for a differently-configured cache to select.
+- `ruff`/`mypy` clean (88 source files, no new findings). **21/21 storage
+  tests passing**; the complete backend suite **294/294 passing** (273
+  pre-existing + 21 new), **3 consecutive runs**, no regression in any
+  existing test.
+- **Docs updated this pass**: `docs/SECURITY.md` ("Upload & document
+  safety" — a new "Implemented" paragraph documenting the enforced
+  generated-identifier/path-traversal requirement and the error
+  contract), `PROJECT_STATE.md`, `CHANGELOG.md`, this file.
+
 - **Docs updated this slice**: `docs/ARCHITECTURE.md` (as above),
   `PROJECT_STATE.md`, `CHANGELOG.md`, this file.
 
@@ -1329,6 +1419,18 @@ side.
   real-Redis coverage was applicable. Committed as `91d98b7` + docs
   commit `d57ccdb`, pushed on branch `issue-3-slice-3-2-storage-provider`
   (cut from `79d4787`), opened as **PR #18**.
+- **Pre-merge correctness/security review of Slice 3.2, on the same
+  branch/PR**: `uv run ruff check .`/`uv run mypy .` both clean (88
+  source files, no new findings) after the fix. **7 new tests, 14 → 21
+  in `tests/test_storage_provider.py` — 21/21 passed**, against a real
+  filesystem (permission bits via `chmod`, a real symlink escaping the
+  root) — no mocks. Two stdlib-behavior assumptions from the original
+  implementation were empirically disproven this pass (see "Pre-merge
+  correctness/security review" above for detail) — a genuine, useful
+  correction, not a test-design bug. **Complete backend suite: 294/294
+  passing** (273 pre-existing + 21 new), **3 consecutive runs**, no
+  regression in any existing test. Committed as `050b185` on the same
+  branch, on top of `91d98b7`/`d57ccdb`.
 
 ## Exact next recommended action
 
@@ -1337,14 +1439,15 @@ merged into `main` (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13,
 `42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17) —
 nothing pending for any of them. **GitHub Issue #3, Slice 3.2
 (`StorageProvider` abstraction) is implemented, tested, committed
-(`91d98b7` + docs commit `d57ccdb`), pushed, and opened as PR #18** on
-branch `issue-3-slice-3-2-storage-provider` (cut from `79d4787`) — see
-"Completed work (Issue #3 — Slice 3.2...)" and "Tests run" above. The
-next work, in order:
+(`91d98b7` + docs `d57ccdb` + correctness-fix `050b185`), pushed, and
+open as PR #18** on branch `issue-3-slice-3-2-storage-provider` (cut
+from `79d4787`) — see "Completed work (Issue #3 — Slice 3.2...)" and
+"Tests run" above. The next work, in order:
 
 1. **Get PR #18 reviewed, confirm CI is green, and merge it** — this
-   slice's own real-filesystem validation (unit tests, full suite) is
-   already done locally. Do not merge it without review.
+   slice's own real-filesystem validation (unit tests, full suite,
+   including the pre-merge correctness/security review) is already done
+   locally. Do not merge it without review.
 2. **Once merged, with an explicit go-ahead:** scope and implement
    GitHub Issue #3, Slice 3.3 (the document upload endpoint — see "Next
    major task" above for the sketch already derived from the Issue #3
