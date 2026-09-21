@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from collections import defaultdict
 from collections.abc import Sequence
 
@@ -123,6 +124,11 @@ register_rate_limiter = FixedWindowRateLimiter(limit=5, window_seconds=60)
 refresh_rate_limiter = FixedWindowRateLimiter(limit=20, window_seconds=60)
 forgot_password_rate_limiter = FixedWindowRateLimiter(limit=5, window_seconds=60)
 reset_password_rate_limiter = FixedWindowRateLimiter(limit=10, window_seconds=60)
+# Issue #3, Slice 3.3 — document upload. Authenticated and materially more
+# expensive (disk I/O + DB write) than register/login, so it gets Tier A
+# semantics (falls back on a Redis outage, never fails open) rather than
+# register's Tier B — see enforce_document_upload_rate_limit() below.
+upload_rate_limiter = FixedWindowRateLimiter(limit=20, window_seconds=60)
 
 
 def client_ip(request: Request) -> str:
@@ -541,5 +547,48 @@ def enforce_reset_password_rate_limit(
         redis_client=redis_client,
         fallback=reset_password_rate_limiter,
         fallback_key=ip,
+        fail_open_on_redis_error=False,
+    )
+
+
+def enforce_document_upload_rate_limit(
+    request: Request,
+    *,
+    user_id: uuid.UUID,
+    redis_client: redis.Redis | None,
+) -> None:
+    """Tier A (ADR 0006 §13) — IP + authenticated user ID.
+
+    Deliberately a plain function, not itself a `Depends()`-shaped FastAPI
+    dependency: it needs the authenticated caller's ID, which is only
+    available after `require_workspace_role` has already run. Importing
+    `get_current_user` here to make this self-contained would create a
+    circular import (`app.core.dependencies` already imports `client_ip`
+    from this module) — the same class of cycle `token_bucket_types.py`
+    was extracted to solve for the abuse layer. The route calls this
+    explicitly, after its own `WorkspaceContext` dependency has resolved,
+    passing `redis_client` through from its own `Depends(get_redis_client)`
+    parameter so tests can override it exactly like every other
+    `enforce_*` function here.
+
+    No abuse-decision-layer consultation — R1–R5 target the
+    login/forgot-password/reset-password credential-stuffing threat model
+    specifically; uploading a file doesn't fit it, and extending that
+    closed rule table isn't warranted for this operation.
+    """
+    settings = get_settings()
+    ip = resolve_client_ip(request, settings.trusted_proxy_cidrs_list)
+
+    dimensions = [
+        _dimension("document_upload", "ip", ip, upload_rate_limiter),
+        _dimension("document_upload", "user", str(user_id), upload_rate_limiter),
+    ]
+
+    _check_or_fallback(
+        operation="document_upload",
+        dimensions=dimensions,
+        redis_client=redis_client,
+        fallback=upload_rate_limiter,
+        fallback_key=str(user_id),
         fail_open_on_redis_error=False,
     )

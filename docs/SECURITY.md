@@ -187,18 +187,62 @@ documented below rather than anticipated speculatively:
 - Apply resource and time limits to parsing/processing to bound the impact
   of a pathological file.
 
-**Implemented (Issue #3, Slice 3.2 — storage layer only; no upload
-surface exists yet):** the generated-identifier/path-traversal
-requirement above is enforced by `StorageProvider`/`LocalStorage`
-(`backend/app/services/storage_provider.py`) — every key is checked
-against escaping the configured storage root (rejecting empty keys,
-absolute paths, `..` segments, and symlink-based escapes, since
-`relative_to()` runs against the fully symlink-resolved candidate path).
-Every operation (`save`/`read`/`delete`/`exists`) also guards its own
-filesystem calls: a raw `OSError`/`PermissionError` — including the
-absolute configured storage root that would otherwise appear in its
-message — never escapes the module; it's translated to `StorageError`
-(unsafe key: `StorageKeyError`) referencing only the caller-supplied key.
+**Implemented (Issue #3, Slice 3.2 — storage layer):** the
+generated-identifier/path-traversal requirement above is enforced by
+`StorageProvider`/`LocalStorage` (`backend/app/services/storage_provider.py`)
+— every key is checked against escaping the configured storage root
+(rejecting empty keys, absolute paths, `..` segments, and symlink-based
+escapes, since `relative_to()` runs against the fully symlink-resolved
+candidate path). Every operation (`save`/`read`/`delete`/`exists`) also
+guards its own filesystem calls: a raw `OSError`/`PermissionError` —
+including the absolute configured storage root that would otherwise
+appear in its message — never escapes the module; it's translated to
+`StorageError` (unsafe key: `StorageKeyError`) referencing only the
+caller-supplied key.
+
+**Implemented (Issue #3, Slice 3.3 — the upload endpoint itself,**
+`POST /api/v1/workspaces/{workspace_id}/documents`,
+`backend/app/services/document_service.py`**):**
+
+- MIME/extension validation, per docs/API_CONTRACT.md's exact allowlist
+  (PDF/DOCX/TXT/Markdown/CSV) — plus a magic-byte signature check for
+  the two binary formats with a real, stable signature (PDF, DOCX);
+  plain-text formats have none, and this is documented as a real gap,
+  not silently pretended away. None of these three signals individually
+  or together prove the file is well-formed or safe to parse — only
+  that it's consistent with the claimed type; genuine malformed-content
+  handling is a later slice's job (the extraction step).
+- Size enforced by `max_upload_size_bytes` (default 50 MiB) while
+  *streaming* the upload — a running total checked chunk by chunk,
+  never a full buffer-then-check.
+- The client-supplied filename is used only for display and to pick
+  which validator applies — never as, or as part of, a storage path.
+  The generated storage key is built only from the workspace ID,
+  document ID, and the validated (not raw) extension.
+- Storage always succeeds before any database row is created. A
+  database failure after a successful storage write (including a
+  duplicate-checksum race the pre-check didn't catch) triggers a
+  best-effort compensating delete of the just-written object; the
+  document row is never committed unless the file write already durably
+  succeeded. A compensating-delete failure is logged (identifiers only,
+  never a path) and never re-surfaces in place of the original error.
+- Workspace-scoped duplicate detection (`UNIQUE(workspace_id,
+  checksum_sha256)`, Slice 3.1) — a duplicate upload in the same
+  workspace is rejected with the existing document's ID; the same
+  content in a different workspace is unaffected, since both the
+  pre-check and the constraint are workspace-scoped.
+- Rate-limited (`document_upload` operation, IP + authenticated user ID,
+  the existing Redis token-bucket engine with the same Tier A
+  never-fail-open fallback policy as `login`/`refresh`/
+  `forgot-password`/`reset-password`) and audited
+  (`AuditEvent.DOCUMENT_UPLOADED`, `backend/app/core/audit.py`) exactly
+  once per successful upload.
+- **Not yet implemented**, deliberately out of this slice's scope:
+  resource/time limits on *parsing* (nothing parses anything yet — that
+  risk applies once Slice 3.4 adds real extraction), malformed/corrupt
+  document handling beyond the lightweight checks above, and any
+  document-level authorization beyond the standard workspace role check
+  (no per-document ACLs exist).
 
 ## Prompt injection defense
 
@@ -252,8 +296,12 @@ immediately and independently of the surrounding request's transaction,
 so a denial's (or escalation's) audit record survives even when the
 request goes on to raise an error. `user_id`/`workspace_id` use `ON
 DELETE SET NULL` so the audit trail outlives the account/workspace it
-references. Document upload/delete audit events will be added when that
-surface exists (Issue #3).
+references. **`AuditEvent.DOCUMENT_UPLOADED` is implemented** (Issue #3,
+Slice 3.3) — emitted exactly once per successful upload, from the
+document row's own committing transaction (see "Upload & document
+safety" above for the exact metadata and the transaction-consistency
+detail). Document-delete and other document-lifecycle audit events will
+be added when those surfaces exist.
 
 ## Security testing
 
@@ -263,13 +311,21 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
   workspace's documents, conversations, and collections; must fail.
   **Implemented (Issue #2)** for workspaces/membership themselves —
   `backend/tests/test_workspaces.py` proves a non-member gets `404` (never
-  `403`, never real data) on every workspace-scoped endpoint. Documents/
-  conversations/collections don't exist yet, so this extends to them when
-  they're built.
+  `403`, never real data) on every workspace-scoped endpoint. **Extended
+  to documents (Issue #3, Slice 3.3)** — `backend/tests/test_document_upload.py`
+  proves the same 404-not-403 behavior for document upload, and that a
+  duplicate-checksum match in one workspace never affects or is visible
+  from another. Conversations/collections don't exist yet.
 - **Malicious upload tests** — oversized files, mismatched
   extension/content, malformed PDFs/DOCX, zip-bomb-style payloads; must be
-  rejected or safely contained. Not implemented — no upload surface exists
-  yet (Issue #3).
+  rejected or safely contained. **Partially implemented (Issue #3, Slice
+  3.3)** — `backend/tests/test_document_upload.py` covers oversized
+  uploads, extension/MIME/signature mismatches, and malformed multipart
+  input, all real-Postgres/real-filesystem, no mocks. Genuinely malformed
+  *internal* document structure (a truncated-but-signature-matching PDF,
+  a corrupt DOCX zip) and zip-bomb-style decompression risk are not
+  covered — no code parses file content yet; that testing lands with the
+  extraction slice that actually opens these files.
 - **Prompt injection tests** — documents containing instruction-like text
   ("ignore the above," attempts to leak system prompt or other users'
   data); the system must not comply with injected instructions. Not
@@ -281,13 +337,23 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
   access tokens and revoked refresh tokens; `test_workspaces.py` covers a
   valid session with no membership in the target workspace.
 - **Path traversal tests** — filenames/paths like `../../etc/passwd` must
-  be neutralized. Not implemented — no file storage surface exists yet
-  (Issue #3).
+  be neutralized. **Implemented** — `backend/tests/test_storage_provider.py`
+  (Slice 3.2, the storage layer itself: empty/absolute/`..`-containing
+  keys and symlink-based escapes, all rejected on every operation) and
+  `backend/tests/test_document_upload.py` (Slice 3.3, end to end: a
+  `../../etc/passwd.pdf` filename uploaded through the real endpoint
+  lands safely at the generated key, never influencing the storage path).
 - **Rate limiting tests** — confirm limits actually trigger under load on
   login and expensive endpoints. **Implemented (Issue #2)** —
   `backend/tests/test_auth.py` drives `register`/`login`/`refresh`, and
   `backend/tests/test_password_reset.py` drives `forgot-password`/
-  `reset-password`, past their limits and asserts `429`.
+  `reset-password`, past their limits and asserts `429`. **Extended to
+  document upload (Issue #3, Slice 3.3)** —
+  `backend/tests/test_document_upload.py` drives real uploads past the
+  `document_upload` limit (20/60s) and asserts `429`, proves the real
+  Redis IP/user dimension keys are created, and proves the Tier A
+  fallback (a genuinely unreachable Redis) still enforces the same
+  threshold rather than failing open.
 - **CSRF tests** — missing/mismatched token rejected, valid token accepted,
   safe methods exempt, login/register themselves protected (login CSRF),
   a token from one client's cookie jar rejected against another's request.

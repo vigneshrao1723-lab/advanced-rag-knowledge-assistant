@@ -179,6 +179,10 @@ class Settings(BaseSettings):
     storage_local_root: str = "./data/documents"
     storage_bucket: str | None = None
 
+    # Document upload (Issue #3, Slice 3.3). Enforced while streaming the
+    # upload (bounded reads), never by buffering the whole body first.
+    max_upload_size_bytes: int = 50 * 1024 * 1024
+
     # Reserved for future issues — not consumed by any code path yet.
     llm_api_key: str | None = None
     embedding_api_key: str | None = None

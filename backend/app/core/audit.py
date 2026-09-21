@@ -38,6 +38,7 @@ class AuditEvent:
     AUTHORIZATION_DENIED = "authorization_denied"
     RATE_LIMITED = "rate_limited"
     ABUSE_TEMPORARY_BLOCK_APPLIED = "abuse_temporary_block_applied"
+    DOCUMENT_UPLOADED = "document_uploaded"
 
 
 def record(

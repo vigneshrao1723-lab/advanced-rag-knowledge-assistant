@@ -10,44 +10,6 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-21 — StorageProvider error-handling fix (Issue #3, Slice 3.2 follow-up)
-
-- **Committed as `6e96481`/`d950d4e` on branch
-  `issue-3-slice-3-2-storage-error-handling-fix`, cut from the merged
-  `941c1a7`, pushed, and opened as PR #19 — not yet merged.**
-  A correctness/security review of the already-merged Slice 3.2
-  (`941c1a7`, PR #18) found that `save()`/`delete()`/`exists()` had no
-  filesystem-error handling at all, and `read()` only handled the "not
-  found" case — a raw `PermissionError`/`OSError` (whose message
-  includes the absolute filesystem path) could have escaped the module,
-  contradicting its own documented "never leaks a raw filesystem path"
-  contract. The review ran concurrently with PR #18's own merge, so the
-  fix landed too late to be included in it — it ships as this separate,
-  small follow-up instead.
-- Fixed: every operation (`save`/`read`/`delete`/`exists`) now guards
-  its own filesystem calls, raising `StorageError` referencing only the
-  caller-supplied key, never the resolved absolute path. Two
-  stdlib-behavior assumptions from the original implementation were
-  empirically disproven along the way (not just inspected) —
-  `Path.is_file()` does not swallow `OSError` on this project's actual
-  Python version (3.13.15), contrary to what the original code's own
-  comment claimed.
-- 7 new tests (`backend/tests/test_storage_provider.py`, 14 → 21): a
-  symlink planted inside the storage root that would resolve outside
-  it (rejected, proving the traversal check works against symlinks, not
-  just literal `".."` segments); permission-denied
-  `save`/`read`/`delete`/`exists` each raising `StorageError` — never a
-  raw `OSError` — with no error message containing the configured
-  storage root; `exists()` still correctly returning `True` when only a
-  file's own permissions (not its containing directory) are restricted.
-- `docs/SECURITY.md`: a new "Implemented" paragraph under "Upload &
-  document safety" documenting the enforced path-traversal/generated-
-  identifier requirement and the error contract.
-- `ruff`/`mypy` clean (88 source files, no new findings). **21/21
-  storage tests passing**; the complete backend suite **294/294
-  passing** (273 pre-existing + 21 new), **3 consecutive runs**, no
-  regression in any existing test.
-
 ### 2026-09-20 — Abuse-protection Slice 3c: escalation audit emission + HTTP-level tests
 
 - **Not committed.** Adds abuse-escalation audit emission on top of
@@ -370,15 +332,103 @@ with invented history of either kind.
 
 ## [Unreleased — committed]
 
+### 2026-09-21 — `feat: add document upload API (Issue #3, Slice 3.3)` (b81b7d2) + docs (b3cf3cf), opened as PR #20
+
+*(Branch `issue-3-slice-3-3-document-upload-api`, cut from the merged
+Slice 3.2 fix (`5e6fdc2`, PR #19). Opened as **PR #20** — CI status and
+merge not yet confirmed as of this entry; not yet part of a tagged
+release either way.)*
+
+`POST /api/v1/workspaces/{workspace_id}/documents`
+(`multipart/form-data`, field `file`) — authenticate, authorize
+(MEMBER, via the existing `require_workspace_role`), rate-limit,
+validate, checksum, check for a workspace-scoped duplicate, write to
+`StorageProvider`, create the `documents` row, emit the audit event,
+commit, return `201`. The document stays in `UPLOADED` — no
+extraction, chunking, embedding, or background processing.
+
+`backend/app/services/document_service.py` (new): validation (extension
+allowlist, MIME allowlist including named browser variants for
+`.md`/`.csv`, a magic-byte signature check for PDF/DOCX — no reliable
+signature exists for the plain-text formats, a documented gap, not a
+hidden one); a streamed, chunked checksum/size-limit reader that aborts
+before buffering an oversized payload; storage-key generation from
+trusted identifiers only, never the client filename. Storage-then-
+database ordering: the file always durably exists before any DB row is
+attempted; if the insert then fails for any reason (including a
+race-lost duplicate-checksum insert the pre-check missed), a
+best-effort compensating `storage.delete()` runs, logged if it also
+fails, never masking the original error. Duplicate uploads in the same
+workspace return `409` referencing the existing document's id; the same
+checksum in a different workspace is unaffected.
+
+`backend/app/repositories/document_repository.py`,
+`backend/app/schemas/document.py` (new, small, following the existing
+patterns exactly — `DocumentRead` never includes `storage_key`).
+`backend/app/core/audit.py`: additive `AuditEvent.DOCUMENT_UPLOADED`.
+`backend/app/core/rate_limit.py`: additive `document_upload` operation
+(IP + authenticated user ID, 20/60s, Tier A — falls back on a Redis
+outage, never fails open; the R1–R5 abuse-decision layer is not
+consulted, since its rule table targets a different threat model).
+`backend/app/core/config.py`: additive `max_upload_size_bytes` (default
+50 MiB). New dependency: `python-multipart`. `backend/app/api/v1/documents.py`
+(new) + router registration.
+
+`backend/tests/test_document_service.py` (new, 37 unit tests, no
+database) and `backend/tests/test_document_upload.py` (new, 30
+HTTP-level tests, real Postgres/Redis/filesystem, no mocks) — covering
+authentication/authorization/cross-workspace isolation, every supported
+format, unsupported extension/MIME/signature mismatches, the size
+limit, checksum correctness, path-traversal-filename safety, the audit
+event, duplicate-checksum handling (same and different workspace), a
+genuine storage failure, a genuine database failure (FK violation)
+after a successful storage write with compensating cleanup, a genuine
+race-lost duplicate insert, cleanup-failure path-leak safety, malformed
+multipart input, and real-Redis rate-limit key creation/enforcement/
+fallback.
+
+`docs/API_CONTRACT.md`: the `/api/v1/workspaces/{workspace_id}/documents`
+contract filled in (correcting the "Target namespaces" table's earlier
+flat, non-binding `/api/v1/documents` sketch to the nested path
+actually used). `docs/SECURITY.md`: "Upload & document safety"
+extended; "Audit logging" and "Security testing" bullets updated from
+their previous "not implemented yet" state.
+
+`ruff`/`mypy` clean (94 source files). 67/67 new tests passing; the
+complete backend suite 361/361 passing (294 pre-existing + 67 new), 3
+consecutive runs, no regression in any existing test. Frontend
+re-confirmed unaffected (48/48 vitest, lint/typecheck clean). A full
+manual smoke test against the real Docker Compose stack (register →
+create workspace → upload a real PDF) succeeded end-to-end, including
+verifying the file landed at the correct path inside the running
+container.
+
+**Pre-merge correctness review (same PR #20, commit `1cc760f`)**: found
+that `_cleanup_orphaned_storage_object()` only caught `StorageError`,
+but `StorageProvider` is an unenforced `Protocol` — a cleanup-time
+failure of any other exception type would have propagated uncaught,
+masking the original error (e.g. a genuine race-lost-duplicate `409`)
+with whatever the cleanup attempt itself raised. Fixed: broadened to
+catch `Exception`, still never re-raising, still only logging
+identifiers, never a path. New regression test proves the original
+`409` still surfaces when the compensating delete itself fails with an
+unrelated exception type. Also added: boundary-precision tests for the
+streaming size limit (exactly at the limit succeeds; one byte over is
+rejected; the check depends only on bytes actually read, never a
+length hint) and four additional path-traversal-style filename
+patterns beyond the one already covered. `ruff`/`mypy` clean. 9 new
+tests, 67 → 76, 76/76 passing. Complete backend suite: 370/370 passing
+(361 pre-review + 9 new), 3 consecutive runs.
+
 ### 2026-09-21 — `feat: add StorageProvider abstraction (Issue #3, Slice 3.2)` (91d98b7) + docs (d57ccdb, 044c54f), merged as `941c1a7`
 
 *(Branch `issue-3-slice-3-2-storage-provider`, cut from the merged Slice
 3.1 (`79d4787`, PR #17). Opened as **PR #18**, verified green on GitHub
 Actions CI (4/4 checks), merged into `main` as squash commit `941c1a7`.
 Note: this merge happened before a concurrent correctness/security
-review of the same slice had finished — that review's own fix (below,
-"StorageProvider error-handling fix") landed as a separate follow-up
-instead of inside this PR.)*
+review of the same slice had finished — that review's own fix (next
+entry below) landed as a separate follow-up PR instead of inside this
+one.)*
 
 Adds the `StorageProvider` abstraction — a `Protocol`
 (`save`/`read`/`delete`/`exists`) plus `LocalStorage`, a filesystem-
@@ -394,6 +444,32 @@ object-storage provider. 14 new tests
 `ruff`/`mypy` clean. Full backend suite: 287/287 passing (273 existing +
 14 new), 3 consecutive runs. No upload endpoint, extraction, chunking,
 background processing, or embedding code — nothing calls this yet.
+
+### 2026-09-21 — `fix: prevent raw filesystem errors/paths escaping StorageProvider` (6e96481) + docs (d950d4e), merged as `5e6fdc2`
+
+*(A correctness/security review of the already-merged Slice 3.2 found
+that `save()`/`delete()`/`exists()` had no filesystem-error handling at
+all, and `read()` only handled the "not found" case — a raw
+`PermissionError`/`OSError` could have escaped the module, leaking the
+absolute configured storage root via its own message. The review ran
+concurrently with PR #18's merge, so the fix couldn't land inside it —
+committed as `050b185`/`03c870e` on that now-merged branch, then
+cherry-picked cleanly onto a fresh branch cut from `main`, opened as
+**PR #19**, verified green on GitHub Actions CI (4/4 checks), merged as
+squash commit `5e6fdc2`.)*
+
+Every operation now guards its own filesystem calls, raising
+`StorageError` referencing only the caller-supplied key, never the
+resolved absolute path. Two stdlib-behavior assumptions from the
+original implementation were empirically disproven while fixing this —
+`Path.is_file()` does not swallow `OSError` on this project's actual
+Python version (3.13.15), contrary to what the original code's own
+comment claimed. 7 new tests (`backend/tests/test_storage_provider.py`,
+14 → 21): a symlink planted inside the root that would resolve outside
+it, permission-denied operations each raising `StorageError` with no
+path leak, and `exists()` still correctly returning `True` when only a
+file's own permissions are restricted. `ruff`/`mypy` clean. Full backend
+suite: 294/294 passing (273 existing + 21 new), 3 consecutive runs.
 
 ### 2026-09-20 — `feat: add document and document_chunk schema (Issue #3, Slice 3.1)` (36fe8b0) + docs (301f8a2, e73c883), merged as `79d4787`
 
