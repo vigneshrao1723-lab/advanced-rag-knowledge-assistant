@@ -10,54 +10,42 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-20 — Document schema: `documents` + `document_chunks` (Issue #3, Slice 3.1)
+### 2026-09-20 — StorageProvider abstraction (Issue #3, Slice 3.2)
 
-- **Not committed.** GitHub Issue #3 (Knowledge Ingestion), Slice 3.1 —
-  schema only. No upload API, storage, extraction, chunking, embedding,
-  or frontend document UI is added — those are later slices.
-- `backend/app/models/document.py` (new): `documents` table — workspace
-  ownership (`workspace_id`, `ON DELETE CASCADE`), nullable uploader
-  (`uploaded_by`, `ON DELETE SET NULL`, matching `audit_logs.user_id`'s
-  precedent), server-generated `storage_key` (never the user-supplied
-  `filename`), `checksum_sha256`, and a native Postgres enum
-  `DocumentStatus` (`document_status`) mirroring the documented lifecycle
-  (`docs/REQUIREMENTS.md`/`docs/RAG_DESIGN.md`) exactly: `UPLOADED →
-  PROCESSING → PARSED → CLEANED → CHUNKED → EMBEDDED → INDEXED → READY /
-  FAILED`. A native enum was chosen over a plain string (unlike
-  `audit_logs.event_type`) because this lifecycle is a fixed, closed set
-  defined once, not an open-ended taxonomy — following `workspace_role`'s
-  convention instead.
-- `backend/app/models/document_chunk.py` (new): `document_chunks` table
-  — `document_id` (`ON DELETE CASCADE`), a deliberately denormalized
-  `workspace_id` (for workspace-scoped queries without a join, once
-  retrieval exists), `chunk_index`/`page`/`section`/`content`. No
-  embedding column yet — adding pgvector's `VECTOR(n)` now would lock the
-  schema to an embedding model/dimension before the provider abstraction
-  is designed; that's an additive migration for a later slice.
-- `backend/alembic/versions/0004_add_documents_and_document_chunks.py`
-  (new): reversible migration for both tables, following `0002`/`0003`'s
-  style. Constraints: `UNIQUE(storage_key)`,
-  `UNIQUE(workspace_id, checksum_sha256)` (duplicate-upload detection,
-  scoped per workspace),
-  `UNIQUE(document_id, chunk_index)`. Indexes on both tables'
-  `workspace_id`, and on `document_chunks.document_id`.
-- `backend/tests/test_document_schema.py` (new, 19 tests, real Postgres,
-  no mocks): table existence, FK validity/rejection (workspace, uploader,
-  document), both unique constraints (including that they're correctly
-  *not* global — same checksum across two workspaces, same chunk_index
-  across two documents, both allowed), cascade delete from `documents` to
-  `document_chunks`, nullable-field defaults, `DocumentStatus` persistence
-  and mutation, and database-assigned timestamps.
-- `ruff`/`mypy` clean (86 source files). **19/19 new tests passing**; the
-  complete backend suite **273/273 passing** (254 pre-existing + 19 new),
-  **3 consecutive runs**, real Postgres + real Redis — no regression in
-  any existing auth/workspace/rate-limit/abuse-protection test. Migration
-  `0004` verified reversible: `alembic downgrade 0003` removes both
-  tables and the `document_status` enum; `alembic upgrade head`
-  re-creates them identically.
-- `docs/DATA_MODEL.md` updated: `documents`/`document_chunks` moved from
-  PROPOSED to IMPLEMENTED (schema only) — retrieval, generation, and
-  every other proposed entity remain PROPOSED, unchanged.
+- **Not committed at the time this entry was written — committed as
+  `91d98b7` on branch `issue-3-slice-3-2-storage-provider` shortly
+  after; see `HANDOFF.md` for exact push/PR status.** No upload
+  endpoint, extraction, chunking, background processing, or embedding
+  code is added — nothing calls this yet.
+- `backend/app/services/storage_provider.py` (new): a `StorageProvider`
+  `Protocol` (`save`/`read`/`delete`/`exists`) plus `LocalStorage`, a
+  filesystem-backed implementation for local dev/CI, mirroring
+  `EmailProvider`'s exact shape. Storage keys are always
+  server-generated upstream (never a user-supplied filename —
+  `docs/SECURITY.md`), but `LocalStorage` still rejects any key that
+  would resolve outside its configured root as defense in depth — empty
+  keys, absolute paths, and `..` segments are rejected on every
+  operation, not just `save()`. A dedicated `StorageError`/
+  `StorageKeyError` hierarchy avoids a raw `OSError` escaping the
+  module.
+- `backend/app/core/config.py`: `storage_provider` changed from
+  `str | None = None` to `Literal["local"] = "local"` (the only
+  implementation today); new `storage_local_root` setting.
+  `storage_bucket` stays reserved for a future object-storage provider.
+- `.env.example`, `.gitignore` updated for the new setting and to keep
+  dev/test uploads out of version control.
+- `docs/ARCHITECTURE.md`: `StorageProvider` marked IMPLEMENTED in the
+  provider-abstractions table; every other provider interface remains
+  PROPOSED.
+- `backend/tests/test_storage_provider.py` (new, 14 tests, real
+  filesystem via `tmp_path`, no mocks): save/read round-trip, nested
+  directory creation, exists/delete behavior, delete-of-nonexistent-key
+  as a no-op, read-of-nonexistent-key raising `StorageError`, five
+  unsafe keys rejected on every operation, non-colliding keys, and the
+  factory/settings defaults.
+- `ruff`/`mypy` clean (88 source files). **14/14 new tests passing**;
+  the complete backend suite **287/287 passing** (273 pre-existing + 14
+  new), **3 consecutive runs** — no regression in any existing test.
 
 ### 2026-09-20 — Abuse-protection Slice 3c: escalation audit emission + HTTP-level tests
 
@@ -380,6 +368,58 @@ with invented history of either kind.
   task.
 
 ## [Unreleased — committed]
+
+### 2026-09-20 — `feat: add document and document_chunk schema (Issue #3, Slice 3.1)` (36fe8b0) + docs (301f8a2, e73c883), merged as `79d4787`
+
+*(Branch `issue-3-slice-3-1-document-schema`, cut from the merged
+Playwright E2E work (`e1c4858`, PR #16). Opened as **PR #17**, verified
+green on GitHub Actions CI (4/4 checks — backend, frontend, Docker
+build, and the first real Actions run of the `e2e` job), merged into
+`main` as squash commit `79d4787`.)*
+
+GitHub Issue #3 (Knowledge Ingestion), Slice 3.1 — schema only. Adds
+`documents`/`document_chunks` (migration `0004`): workspace ownership,
+nullable `uploaded_by` (`ON DELETE SET NULL`), server-generated
+`storage_key`, a native `DocumentStatus` enum matching the documented
+ingestion lifecycle exactly, and `document_chunks` with a deliberately
+denormalized `workspace_id` and no embedding column yet (deferred until
+the embedding provider/model/dimension is chosen). 19 new tests
+(`backend/tests/test_document_schema.py`), real Postgres, no mocks.
+`ruff`/`mypy` clean. Full backend suite: 273/273 passing (254 existing +
+19 new), 3 consecutive runs. Migration reversibility explicitly verified
+(`alembic downgrade 0003` / `upgrade head` against the real database).
+Also reconciled a documentation lag from the Playwright merge below
+(`PROJECT_STATE.md`/`HANDOFF.md`/`CHANGELOG.md` still described it as
+uncommitted).
+
+### 2026-09-20 — `feat: add Playwright E2E coverage for auth and password recovery` (e1c4858)
+
+*(Branch `playwright-e2e-auth-validation`, cut from the merged Slice 3c
+(`75dd466`, PR #15). Opened as **PR #16** and merged into `main` as
+squash commit `e1c4858` — a single-commit PR, so the commit hash above
+is both the branch's own commit and the merge result.)*
+
+Introduces Playwright (`@playwright/test` ^1.63.0, Chromium), previously
+absent from this repository. `frontend/playwright.config.ts` —
+`workers: 1`/`fullyParallel: false` deliberately, since the backend's
+rate limiter and abuse layer (ADR 0006) both key partly by source IP and
+every request in a run shares one peer address. 19 tests across three
+spec files: `app-availability.spec.ts` (3), `auth.spec.ts` (9 —
+registration, session persistence/reload, logout, protected-route
+redirects, a genuine CSRF positive+negative case through the real
+backend middleware), `password-recovery.spec.ts` (7 — the full
+forgot-password → Mailpit → reset-password → post-reset login →
+session-revocation flow). Run against the real
+frontend/backend/PostgreSQL/Redis/Mailpit stack, no mocks — 19/19
+passed, 3 consecutive clean runs. Three genuine findings from validation,
+all fixed as test-code corrections, no application code changed:
+a locator strict-mode ambiguity (a workspace name correctly renders in
+three places, not a bug); a direct refresh-revocation check that
+initially omitted the CSRF header a state-changing endpoint requires;
+Chromium's own "Failed to load resource: 401" console logging for an
+already-handled anonymous-visitor auth check. `.github/workflows/ci.yml`
+gained a new `e2e` job. `ruff`/`npx eslint`/`npx tsc --noEmit` all clean;
+existing 48 vitest tests unaffected.
 
 ### 2026-09-20 — `feat: emit audit events for abuse-layer escalations` (58b6c71), merged as `75dd466`
 
