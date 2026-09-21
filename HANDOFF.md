@@ -9,48 +9,43 @@ in-flight task — overwrite it as work progresses, don't append a history
 ## Current task
 
 **Everything through Redis Slices 1–3c, Playwright E2E, and Issue #3
-Slices 3.1–3.2 is merged into `main`.** In order: Redis Slice 1
-(foundation + token-bucket engine) — PR #11, squash commit `46ef03b`.
-Slice 2 (endpoint wiring) — PR #12, squash commit `5391a78`. Slice 3a
+Slices 3.1–3.2 (including Slice 3.2's own correctness-review fix) is
+merged into `main`.** In order: Redis Slice 1 (foundation +
+token-bucket engine) — PR #11, squash commit `46ef03b`. Slice 2
+(endpoint wiring) — PR #12, squash commit `5391a78`. Slice 3a
 (abuse-state Redis primitives) — PR #13, squash commit `026dcf3`. Slice
 3b (decision engine + R1–R5 endpoint wiring, plus a `tests/conftest.py`
 test-isolation fix) — PR #14, squash commit `42529e3`. Slice 3c
 (abuse-escalation audit emission) — PR #15, squash commit `75dd466`.
 Browser E2E (Playwright) for authentication/password-recovery — PR #16,
 squash commit `e1c4858`. Issue #3 Slice 3.1 (document data model +
-migration `0004`) — PR #17, squash commit `79d4787`, CI green (4/4
-checks, including the first real Actions run of the `e2e` job). Issue #3
-Slice 3.2 (`StorageProvider` abstraction) — PR #18, squash commit
-`941c1a7`, CI green (4/4 checks). **`main`/`origin/main` are at
-`941c1a7`.** Nothing is pending review, push, or merge for any of the
+migration `0004`) — PR #17, squash commit `79d4787`. Issue #3 Slice 3.2
+(`StorageProvider` abstraction) — PR #18, squash commit `941c1a7`.
+Slice 3.2's own pre-merge correctness/security review fix (raw
+filesystem errors/paths could otherwise escape the module — see the
+dedicated "Completed work" section below) — PR #19, squash commit
+`5e6fdc2`, CI green (4/4 checks). **`main`/`origin/main` are at
+`5e6fdc2`.** Nothing is pending review, push, or merge for any of the
 above. Full per-item implementation detail is preserved below under its
 own "Completed work" section — not repeated here, per this file's own
 "don't append a history" instruction.
 
-**A pre-merge correctness/security review of Slice 3.2 found and fixed a
-genuine gap** in `backend/app/services/storage_provider.py`:
-`save()`/`delete()`/`exists()` had no filesystem-error handling at all,
-and `read()` only handled the "not found" case — a raw
-`PermissionError`/`OSError` (whose own message includes the absolute
-filesystem path) could have escaped the module, contradicting its
-documented contract. **The review wasn't finished before PR #18 was
-merged** (merged by the repository owner directly, not by this session,
-at 2026-09-21T13:38:20Z) **— so the fix could not land inside PR #18 and
-is instead on a new, separate branch,
-`issue-3-slice-3-2-storage-error-handling-fix`, cut from the now-merged
-`941c1a7`.** It is implemented, tested, committed
-(`6e96481`/`d950d4e`, cherry-picked from the original fix commits
-`050b185`/`03c870e`), pushed, and opened as **PR #19** — not yet merged.
-See "Completed work (Issue #3 — Slice 3.2...)" → "Correctness/
-security review" below for the full finding, including two stdlib
-behavior assumptions that turned out to be wrong on this project's
-actual Python version. No upload endpoint, extraction, chunking,
-background processing, or embedding code exists anywhere in Issue #3 yet
-— nothing calls `get_storage_provider()`. See "Exact next recommended
-action" at the end of this file for what's left. **Do not start Slice
-3.3 or
-any later Issue #3 slice without an explicit go-ahead** — this slice's
-own scope stops at the storage abstraction; no endpoint consumes it.
+**GitHub Issue #3 (Knowledge Ingestion), Slice 3.3 (document upload API)
+is now IMPLEMENTED and TESTED, on branch
+`issue-3-slice-3-3-document-upload-api`** (cut from `5e6fdc2`) — not
+yet committed/pushed/PR'd as of this line; see "Exact next recommended
+action" at the end of this file. `POST
+/api/v1/workspaces/{workspace_id}/documents` (multipart upload) —
+authenticate, authorize (MEMBER), rate-limit, validate
+(extension/MIME/magic-byte), checksum, workspace-scoped duplicate
+check, `StorageProvider.save()`, then the `documents` row + audit event,
+committed together. Documents land in `UPLOADED` and stay there — see
+"Completed work (Issue #3 — Slice 3.3: document upload API)" below for
+the full implementation, transaction-consistency, and test detail.
+**Do not start Slice 3.4 or any later Issue #3 slice without an
+explicit go-ahead** — no text extraction, chunking, embedding, or
+background processing exists; this slice's own scope stops at a
+durably-stored, audited, `UPLOADED` document row.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -962,10 +957,10 @@ embedding code was added.
 ## Completed work (Issue #3 — Slice 3.2: StorageProvider abstraction)
 
 **Implemented, tested, committed as `91d98b7` (plus a docs commit,
-`d57ccdb`), pushed, opened as PR #18, and since merged into `main` as
-squash commit `941c1a7` — a pre-merge correctness/security review's own
-fix (below) landed too late to be included in that PR; see "Current
-task" above and the new fix branch it describes.** Storage abstraction only — per this slice's explicit scope,
+`d57ccdb`), pushed, opened as PR #18, and merged into `main` as squash
+commit `941c1a7`. A correctness/security review's own fix (below)
+landed too late to be included in that PR — it shipped separately as
+PR #19, squash commit `5e6fdc2`, also merged.** Storage abstraction only — per this slice's explicit scope,
 no upload endpoint, text extraction, chunking, background processing, or
 embedding code was added; nothing in the codebase calls
 `get_storage_provider()` yet.
@@ -1138,6 +1133,171 @@ as its own small follow-up rather than being lost or silently dropped.
 - **Docs updated this slice**: `docs/ARCHITECTURE.md` (as above),
   `PROJECT_STATE.md`, `CHANGELOG.md`, this file.
 
+## Completed work (Issue #3 — Slice 3.3: document upload API)
+
+**Implemented and tested; not yet committed as of this entry** — see
+"Exact next recommended action" for the plan once it is. Adds exactly
+one capability: `POST /api/v1/workspaces/{workspace_id}/documents`
+(`multipart/form-data`, field `file`). A successful upload authenticates,
+authorizes (MEMBER), rate-limits, validates, checksums, checks for a
+workspace-scoped duplicate, writes to `StorageProvider`, creates the
+`documents` row, emits the audit event, commits, and returns `201`. The
+document stays in `UPLOADED` — no later lifecycle state, no extraction,
+chunking, embedding, or background processing.
+
+- **`backend/app/api/v1/documents.py`** (new): the route. Resolves
+  authorization via the existing `require_workspace_role(WorkspaceRole.MEMBER)`
+  dependency (no duplicate workspace-authorization logic written) and
+  `StorageProvider`/`redis.Redis | None` via `Depends(get_storage_provider)`/
+  `Depends(get_redis_client)` — both already dependency-injection-shaped,
+  so tests override them exactly like `get_db` is already overridden.
+  Calls `enforce_document_upload_rate_limit()` explicitly in the route
+  body (after the workspace-authorization dependency has already run,
+  matching the intended "authorize, then rate-limit" order) rather than
+  as its own `Depends()` — see the rate-limiting entry below for why.
+- **`backend/app/services/document_service.py`** (new): the
+  orchestration. Ordering: extension/MIME check (no body read yet) →
+  stream-read the body in 1 MiB chunks, computing the SHA-256 digest and
+  aborting as soon as the running total exceeds `max_upload_size_bytes`
+  (never buffers an oversized payload first) → magic-byte signature
+  check on the now-fully-read content → workspace-scoped duplicate
+  pre-check → generate a storage key from trusted identifiers only
+  (`{workspace_id}/{document_id}{validated_extension}` — the client
+  filename never contributes) → `storage.save()` → `_persist_document()`.
+  - **File-type validation**: extension allowlist (`.pdf`/`.docx`/`.txt`/
+    `.md`/`.csv`, case-insensitive), a matching MIME allowlist per
+    extension (including named real-world browser variants for `.md`/
+    `.csv` — `text/plain` for both, `text/x-markdown` for `.md`,
+    `application/vnd.ms-excel` for `.csv` — never an arbitrary/wildcard
+    MIME), and a magic-byte signature check for the two binary formats
+    with a real, stable signature (`%PDF-` for PDF, the ZIP local-file
+    header `PK\x03\x04` for DOCX — DOCX's signature also matches any
+    other ZIP-based file, an accepted limitation of a byte-level
+    heuristic). Plain-text formats have no reliable signature — the
+    check is skipped for them, documented as a real gap, not silently
+    pretended otherwise. None of these three signals, individually or
+    together, prove the file is well-formed or safe to parse.
+  - **Storage/database consistency** (the design's own explicit focus):
+    storage always succeeds before any database write is attempted. If
+    the subsequent `document_repository.create()` (`add()` + `flush()`,
+    never `commit()` — matching every other repository's convention)
+    then fails for any reason — a losing race against another request's
+    identical `(workspace_id, checksum_sha256)`, or any other genuine DB
+    error — `_persist_document()` catches it, calls `db.rollback()`
+    (required before the session can be used again after a failed
+    flush), attempts a best-effort `storage.delete()` of the
+    just-written object (logging identifiers, never a path, if that
+    delete itself fails — never letting a cleanup failure replace or
+    mask the original error), and either raises the documented `409`
+    (if a race-lost duplicate — re-queries for the winning row and
+    references its `id`) or re-raises the original exception unmodified
+    (any other DB failure, surfacing as `500` through the existing
+    global exception handler, never a raw `OSError`/SQL error/stack
+    trace). `record_audit_event()`'s own `db.commit()` — confirmed by
+    reading `audit_log_repository.create()` directly, not assumed —
+    commits on the *same* `Session`, so the document insert (already
+    flushed) and the new audit row commit together as one Postgres
+    transaction; no second, independent commit call was needed for the
+    document row itself.
+  - **Duplicate uploads**: `409` with `code: "duplicate_document"`,
+    referencing the existing document's `id` in the message (the shared
+    error-response shape has no room for extra structured fields, so the
+    id is embedded in the human-readable message text rather than
+    extending `app/core/errors.py`). A pre-check (before any storage
+    write) handles the common case cheaply; the existing
+    `UNIQUE(workspace_id, checksum_sha256)` constraint (Slice 3.1)
+    remains the authoritative backstop for the race window between the
+    pre-check and the insert. Both are workspace-scoped — the same
+    checksum in a different workspace is unaffected, never even visible.
+- **`backend/app/repositories/document_repository.py`** (new):
+  `get_by_workspace_and_checksum()` and `create()`. `create()` takes an
+  explicit `id: uuid.UUID` parameter (the caller generates it) rather
+  than relying on the model's own `default=uuid.uuid4` — the storage key
+  is built from that same document ID *before* this insert ever runs
+  (storage must succeed first), so the row's actual `id` and the file's
+  actual location have to agree; a genuine bug caught and fixed during
+  implementation, before any test ran, not left for a test to discover.
+- **`backend/app/schemas/document.py`** (new): `DocumentRead` — never
+  includes `storage_key`.
+- **`backend/app/core/audit.py`** (additive): one new constant,
+  `AuditEvent.DOCUMENT_UPLOADED`.
+- **`backend/app/core/rate_limit.py`** (additive): `upload_rate_limiter`
+  (20/60s) and `enforce_document_upload_rate_limit()` — Tier A (falls
+  back to the in-process limiter on a genuine Redis outage, never fails
+  open, matching `login`/`refresh`/`forgot-password`/`reset-password`,
+  not `register`'s Tier B), dimensioned by IP and the authenticated
+  user's ID. Deliberately a **plain function, not itself a
+  `Depends()`-shaped dependency**: it needs the authenticated caller's
+  ID, only available after `require_workspace_role` has run, and
+  importing `get_current_user` from `app.core.dependencies` into this
+  module would create a circular import (`dependencies.py` already
+  imports `client_ip` from `rate_limit.py`) — the same class of cycle
+  `token_bucket_types.py` was extracted to solve for the abuse layer in
+  an earlier slice. The route calls it explicitly instead. No
+  abuse-decision-layer (R1–R5) consultation — that rule table targets
+  the login/forgot-password/reset-password credential-stuffing threat
+  model specifically; extending it for uploads wasn't warranted.
+- **`backend/app/core/config.py`** (additive): `max_upload_size_bytes`
+  (default 50 MiB).
+- **`backend/app/api/v1/router.py`** (modified): registers the new
+  `documents_router`.
+- **New dependency**: `python-multipart` (`backend/pyproject.toml`/
+  `uv.lock`) — required by FastAPI/Starlette for any `UploadFile`/`File`
+  route parameter; the app fails to start without it (`RuntimeError`
+  caught during a pre-test `create_app()` smoke check, not discovered
+  via a failing test).
+- **`backend/tests/test_document_service.py`** (new, 37 unit tests, no
+  database, no HTTP): extension normalization/allowlisting (including
+  that `../../etc/passwd.pdf` normalizes to just `.pdf` — a pure string
+  operation, not filesystem path handling), every allowed/disallowed
+  MIME combination including the named browser variants, magic-byte
+  match/mismatch for PDF and DOCX, the "no signature check" behavior
+  for the three text formats, storage-key generation (trusted
+  identifiers only, never a filename fragment), and the streamed
+  checksum/size-limit reader (via a minimal fake `UploadFile`
+  stand-in) — both the correct-checksum case and the
+  aborts-before-buffering-the-whole-oversized-payload case.
+- **`backend/tests/test_document_upload.py`** (new, 30 HTTP-level
+  tests, real Postgres/Redis/filesystem, no mocks): every item from the
+  task's own 27-point list is covered — see `docs/API_CONTRACT.md`'s
+  and `docs/SECURITY.md`'s updated sections for the security-relevant
+  subset, and `PROJECT_STATE.md`'s Testing row for the full enumeration.
+  Two things worth flagging specifically:
+  - **A real Starlette/FastAPI behavior, not a bug**: `TestClient`'s
+    default `raise_server_exceptions=True` re-raises a truly unhandled
+    exception straight to the test (for debugging visibility) instead of
+    letting the app's own registered `Exception` handler convert it to
+    a response. The one test that deliberately provokes an unhandled
+    `StorageError` (a broken storage backend) needs
+    `TestClient(app, raise_server_exceptions=False)` — with the
+    original client's cookies copied over — to observe the actual
+    client-visible `500` response instead of the raw Python exception.
+    Every other test uses the normal shared `client` fixture; `409`s,
+    `404`s, etc. are ordinary `HTTPException`s and were never affected
+    by this.
+  - **Per-test storage isolation**: an autouse fixture overrides
+    `get_storage_provider` to a `tmp_path`-backed `LocalStorage` for
+    every test in the file — no test writes into the real configured
+    dev storage root (`./data/documents`).
+  - `ruff`/`mypy` clean (94 source files). **67/67 new tests passing**;
+    the complete backend suite **361/361 passing** (294 pre-existing +
+    67 new), **3 consecutive runs**, no regression in any existing
+    test. Frontend (`npm run lint`/`typecheck`/`test`) re-confirmed
+    unaffected — no frontend file changed. Full manual smoke test
+    against the real Docker Compose stack (after rebuilding the
+    previously-stale `compose-backend-1` image — see "Blockers" above):
+    register → create workspace → upload a real PDF via `curl`,
+    verified `201` with the correct body, and the file landing at the
+    expected path inside the container's own filesystem.
+- **Docs updated this slice**: `docs/API_CONTRACT.md` (new
+  `/api/v1/workspaces/{workspace_id}/documents` implemented section;
+  the "Target namespaces" table's flat `/api/v1/documents` entry
+  corrected to the nested path actually used), `docs/SECURITY.md`
+  ("Upload & document safety" extended with the Slice 3.3 detail;
+  "Audit logging" and "Security testing" bullets updated from their
+  previous "not implemented yet" state), `PROJECT_STATE.md`,
+  `CHANGELOG.md`, this file.
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -1151,17 +1311,14 @@ as its own small follow-up rather than being lost or silently dropped.
   (Playwright E2E — authentication/password-recovery)" above. Covers
   only the authentication/password-recovery surface; no document/chat/
   search UI exists yet for E2E coverage to extend to.
-- **Issue #3 Slice 3.1 (document schema) is merged** (`79d4787`,
-  PR #17). **Slice 3.2 (`StorageProvider` abstraction) is also merged**
-  (`941c1a7`, PR #18). **A correctness/security review's own fix is
-  implemented, tested, committed, pushed, and opened as PR #19 — not
-  yet merged.**
-  No upload API, text extraction, chunking, background processing, or
-  embedding code exists; nothing calls `get_storage_provider()` yet. No
-  document-access/ingestion audit events exist yet either —
-  `AuditEvent` still only covers
-  auth/workspace/rate-limit/abuse-escalation events; those land with a
-  later Issue #3 slice (the upload/delete API).
+- **Issue #3 Slices 3.1–3.2 are merged** (`79d4787` PR #17, `941c1a7`
+  PR #18, correctness-fix `5e6fdc2` PR #19). **Slice 3.3 (document
+  upload API) is implemented and tested, PR not yet opened.** No text
+  extraction, chunking, background processing, or embedding code
+  exists — documents reach `UPLOADED` and stop there.
+  `AuditEvent.DOCUMENT_UPLOADED` is now implemented (Slice 3.3) — the
+  broader document-lifecycle taxonomy (delete, status-change, etc.)
+  still doesn't exist; those land with later Issue #3 slices.
 - **`client_ip()` (unconditional, no trusted-proxy handling) is still
   used elsewhere** — `app/api/v1/auth.py`'s audit/session IP recording
   and `app/core/dependencies.py`'s authorization-denial audit events
@@ -1175,8 +1332,8 @@ as its own small follow-up rather than being lost or silently dropped.
   whole ADR exists for (§2.1) has not been exercised with more than one
   backend process under real concurrent load, since no such deployment
   exists.
-- **Issue #3, Slice 3.3 onward (upload endpoint, extraction, chunking,
-  background processing, embeddings)** — not started.
+- **Issue #3, Slice 3.4 onward (text extraction, chunking, background
+  processing, embeddings)** — not started.
 - **Later RAG retrieval/generation features (Issue #4 onward)** — not
   started.
 - **Endpoint-driven concurrency test under real HTTP load** — not added
@@ -1192,7 +1349,7 @@ as its own small follow-up rather than being lost or silently dropped.
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: GitHub Issue #3 (Knowledge Ingestion), Slice 3.3
+## Next major task: GitHub Issue #3 (Knowledge Ingestion), Slice 3.4
 
 **ADR 0006's deterministic abuse-protection layer is functionally
 complete end-to-end and fully merged (Slices 1–3c).** Nothing further is
@@ -1202,28 +1359,26 @@ limitations" in the Slice 3c report above). Browser E2E coverage for the
 authentication/password-recovery flows is implemented, validated, and
 merged (PR #16, `e1c4858`).
 
-**GitHub Issue #3 (Knowledge Ingestion): Slice 3.1 (document data model +
-migration) is merged** (PR #17, `79d4787`). **Slice 3.2 (`StorageProvider`
-abstraction) is also merged** (PR #18, `941c1a7`) — no storage/upload
-API, extraction, chunking, background processing, or embedding code
-exists; nothing calls `StorageProvider` yet. **A correctness/security
-review's own follow-up fix is implemented, tested, committed, pushed,
-and opened as PR #19** on branch
-`issue-3-slice-3-2-storage-error-handling-fix` — not yet merged.
+**GitHub Issue #3 (Knowledge Ingestion): Slices 3.1 and 3.2 (including
+Slice 3.2's own correctness-review fix) are merged** (PR #17 `79d4787`,
+PR #18 `941c1a7`, PR #19 `5e6fdc2`). **Slice 3.3 (document upload API,
+`POST /api/v1/workspaces/{workspace_id}/documents`) is implemented and
+tested** on branch `issue-3-slice-3-3-document-upload-api` — PR not yet
+opened.
 
-**Before anything else starts**: get PR #19 reviewed and merged, per
-normal workflow — don't start Slice 3.3 on top of an unmerged fix to
-the prior slice.
+**Before anything else starts**: get the Slice 3.3 PR opened, reviewed,
+and merged, per normal workflow — don't start Slice 3.4 on top of an
+unmerged prior slice.
 
 With an explicit go-ahead, the next work in this repository's own stated
 order (`PROJECT_STATE.md` "Immediate priorities") is:
 
-1. **GitHub Issue #3, Slice 3.3** — the document upload endpoint
-   (workspace-scoped, MIME/extension/size validation, using
-   `get_storage_provider()` to persist bytes under a server-generated
-   `storage_key`, creating a `documents` row at `UPLOADED`) — not started;
-   not yet scoped in this file beyond that sketch. Do not assume further
-   detail without checking the Issue #3 GitHub issue and this file first.
+1. **GitHub Issue #3, Slice 3.4** — text extraction (parsers for
+   PDF/DOCX/TXT/Markdown/CSV, reading the bytes `StorageProvider`
+   already has, producing structured content for the chunking slice
+   after it) — not started; not yet scoped in this file. Do not assume
+   further detail without checking the Issue #3 GitHub issue and this
+   file first.
 
 ## Blockers
 
@@ -1236,6 +1391,24 @@ distro" after working moments earlier) — required restoring the
 integration on the Windows side before real-database validation could
 run; not a code or environment-configuration defect on the repository
 side.
+
+**A second, separate environmental issue found and fixed this
+session**: `compose-backend-1` was crash-looping (`Restarting (255)`)
+with `alembic.util.messaging: Can't locate revision identified by
+'0004'` in its logs — its *image* was stale, built from a commit before
+migration `0004` (Slice 3.1) existed in the image's own copy of
+`backend/alembic/versions/`, while the real Postgres volume's
+`alembic_version` table had already advanced past that point from
+earlier host-side `pytest` runs. Not caused by Slice 3.3 (confirmed:
+the mismatch is between the image's baked-in code and the database
+state, unrelated to anything this slice changed) and not a data
+problem — fixed with an ordinary `docker compose build backend &&
+docker compose up -d backend` (no `Dockerfile`/compose config change),
+after which the container reported healthy and a full manual
+register → create-workspace → upload smoke test against the real,
+running stack succeeded end-to-end (verified the uploaded file landed
+at the correct, expected path inside the container's own filesystem via
+`docker exec ... find /app/data`).
 
 ## Tests run
 
@@ -1458,28 +1631,47 @@ side.
   pre-fix tree and merged `main`'s tree for both changed files) as
   `6e96481`/`d950d4e` onto a fresh branch,
   `issue-3-slice-3-2-storage-error-handling-fix`, cut from the merged
-  `941c1a7`, pushed, and opened as PR #19** — re-validated in full on
-  that branch (ruff/mypy/21 focused tests/294-test suite × 3 runs, all
-  as reported above).
+  `941c1a7`, pushed, and opened as PR #19, **since merged into `main` as
+  squash commit `5e6fdc2`, CI green (4/4 checks).**
+- **Issue #3, Slice 3.3 (document upload API): `uv run ruff check .`**
+  (pass) and **`uv run mypy .`** (pass, 94 source files). **67 new
+  tests — 37 unit (`tests/test_document_service.py`) + 30 HTTP-level
+  (`tests/test_document_upload.py`) — 67/67 passed**, real
+  Postgres/Redis/filesystem for the HTTP-level tests, no mocks (a
+  per-test `get_storage_provider` override for storage isolation, an
+  explicit `raise_server_exceptions=False` client for the one test that
+  deliberately provokes an unhandled exception — see "Completed work
+  (Issue #3 — Slice 3.3...)" for why). **Complete backend suite:
+  361/361 passing** (294 pre-existing + 67 new), **3 consecutive runs**,
+  no regression in any existing test. Frontend (`npm run
+  lint`/`typecheck`/`test`) re-confirmed unaffected: 48/48 vitest
+  passing, lint/typecheck clean — no frontend file changed. **Docker/
+  Compose verification**: `compose-backend-1` was found crash-looping
+  on a stale image (see "Blockers" above); rebuilt
+  (`docker compose build backend && docker compose up -d backend`), came
+  up healthy, and a full manual smoke test against the real running
+  stack (register → create workspace → upload a real PDF via `curl`)
+  succeeded end-to-end, with the file verified on disk inside the
+  container at the expected, correctly-generated path. Not yet
+  committed as of this entry.
 
 ## Exact next recommended action
 
 Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.2
-are all merged into `main` (`46ef03b` PR #11, `5391a78` PR #12,
-`026dcf3` PR #13, `42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16,
-`79d4787` PR #17, `941c1a7` PR #18) — nothing pending for any of them.
-**A correctness/security review's fix for Slice 3.2 is implemented,
-tested, committed (`6e96481`/`d950d4e`), pushed, and opened as PR #19**
-on branch `issue-3-slice-3-2-storage-error-handling-fix` (cut from
-`941c1a7`) — see "Completed work (Issue #3 — Slice 3.2...)" →
-"Correctness/security review" and "Tests run" above. The next work, in
-order:
+(including Slice 3.2's own correctness-review fix) are all merged into
+`main` (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3`
+PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7`
+PR #18, `5e6fdc2` PR #19) — nothing pending for any of them. **GitHub
+Issue #3, Slice 3.3 (document upload API) is implemented and tested** on
+branch `issue-3-slice-3-3-document-upload-api` (cut from `5e6fdc2`) —
+not yet committed. See "Completed work (Issue #3 — Slice 3.3...)" and
+"Tests run" above. The next work, in order:
 
-1. **Get PR #19 reviewed, confirm CI is green, and merge it** — this
-   fix's own real-filesystem validation (21 focused tests, full
-   294-test suite × 3 runs) is already done locally, re-verified
-   against the actual merged `main`. Do not merge it without review.
+1. **Commit, push, open the PR, confirm CI is green, and get it
+   reviewed** — this slice's own real-stack validation (67 focused
+   tests, full 361-test suite × 3 runs, a live Docker Compose smoke
+   test) is already done locally. Do not merge it without review.
 2. **Once merged, with an explicit go-ahead:** scope and implement
-   GitHub Issue #3, Slice 3.3 (the document upload endpoint — see "Next
+   GitHub Issue #3, Slice 3.4 (text extraction — see "Next
    major task" above for the sketch already derived from the Issue #3
    GitHub issue).

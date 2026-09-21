@@ -44,7 +44,7 @@ exist. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 | `/api/v1/users` | Profile and settings management (**partially implemented** — `GET /me` only, Issue #2) |
 | `/api/v1/workspaces` | Create/rename/delete/switch workspaces, membership, roles (**implemented**, Issue #2) |
 | `/api/v1/workspaces/{workspace_id}/audit-logs` | Query security-relevant audit log entries for a workspace (`ADMIN`/`OWNER` only) |
-| `/api/v1/documents` | Upload, list, search, filter, sort, rename, delete, re-index, retry, download, metadata/status |
+| `/api/v1/workspaces/{workspace_id}/documents` | Upload (**implemented**, Issue #3 Slice 3.3); list, search, filter, sort, rename, delete, re-index, retry, download, metadata/status (not yet implemented). Nested under the owning workspace, matching `/workspaces/{workspace_id}/members` and `/audit-logs`'s existing convention, rather than the flat `/api/v1/documents` this table previously sketched. |
 | `/api/v1/collections` | Logical document grouping and collection-scoped retrieval |
 | `/api/v1/ingestion` | Ingestion pipeline status/control for a document |
 | `/api/v1/search` | Standalone search mode (snippets, evidence, scores, retrieval method) |
@@ -142,6 +142,67 @@ distributed rate limiting has not been implemented yet.
 Every error response (auth and workspaces included) uses the shared shape
 from Issue #1: `{"error": {"code", "message", "request_id"}}` — see
 `docs/SECURITY.md` "Errors and information disclosure."
+
+## Implemented: `/api/v1/workspaces/{workspace_id}/documents`
+
+**Upload only** (GitHub Issue #3, Slice 3.3) — list/search/filter/sort/
+rename/delete/re-index/retry/download/metadata/status are not
+implemented yet. Documents remain in `UPLOADED`; no extraction,
+chunking, or embedding exists.
+
+| Endpoint | Min. role | Body | Response |
+|---|---|---|---|
+| `POST /api/v1/workspaces/{workspace_id}/documents` | MEMBER | `multipart/form-data`, one field: `file` | `201` `DocumentRead`, or `400`/`409`/`413`/`429`/`500` (see below) |
+
+`DocumentRead`: `{id, filename, mime_type, size_bytes, checksum_sha256, status, page_count, created_at, updated_at}` — never `storage_key` (internal only).
+
+Resolves `workspace_id` through the same `require_workspace_role`
+dependency every other workspace-scoped route uses — a non-member or
+nonexistent workspace produces `404` (never `403`, never leaks
+existence), matching the rest of this document.
+
+**Supported formats:** PDF, DOCX, TXT, Markdown, CSV only — extension
+(case-insensitive), client-supplied MIME type (a small named allowlist,
+including known browser variants for `.md`/`.csv`), and a magic-byte
+signature check (PDF/DOCX only — no reliable signature exists for the
+plain-text formats) must all be consistent with the claimed type. This
+is a lightweight consistency check, not a parser — it does not prove the
+file is well-formed or safe to parse; real parsing is a later slice's
+job, and a malformed-but-signature-matching file is expected to be
+caught there, not here.
+
+**Size limit:** `max_upload_size_bytes` (default 50 MiB), enforced while
+streaming the upload — a chunk-by-chunk running total, never buffering
+an oversized payload first.
+
+**Duplicates:** `documents` has `UNIQUE(workspace_id, checksum_sha256)`
+— re-uploading identical content into the same workspace returns `409`
+referencing the existing document's `id`; the same content in a
+*different* workspace succeeds (the constraint, and the pre-check that
+backs it, are both workspace-scoped).
+
+**Storage/database consistency:** the file is always written via
+`StorageProvider` before any database row is created. If the database
+insert then fails for any reason (including losing a duplicate-checksum
+race that the pre-check didn't catch), the just-written storage object
+is deleted on a best-effort basis and the failure is translated to the
+documented `409`/`500` — the database row is never committed unless the
+storage write already durably succeeded first. See
+`backend/app/services/document_service.py` for the exact sequence.
+
+**Rate limiting:** a dedicated `document_upload` operation (Redis token
+bucket, falling back to the existing in-process limiter — the same
+Tier A policy as `login`/`refresh`/`forgot-password`/`reset-password`,
+never failing open), dimensioned by IP and the authenticated user ID,
+20 requests/60s. The deterministic R1–R5 abuse-detection layer (ADR
+0006) is not consulted — its rule table targets the
+login/forgot-password/reset-password credential-stuffing threat model
+specifically, not file uploads.
+
+**Audit:** `AuditEvent.DOCUMENT_UPLOADED`, emitted exactly once per
+successful upload, metadata limited to `document_id`/`filename`/
+`mime_type`/`size_bytes`/`checksum_sha256` — never the storage key, a
+filesystem path, or file content.
 
 ## Related documents
 
