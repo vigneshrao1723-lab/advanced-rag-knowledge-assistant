@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,6 +16,21 @@ def get_by_workspace_and_checksum(
         select(Document).where(
             Document.workspace_id == workspace_id,
             Document.checksum_sha256 == checksum_sha256,
+        )
+    ).scalar_one_or_none()
+
+
+def get_by_id_for_workspace(
+    db: Session, *, workspace_id: uuid.UUID, document_id: uuid.UUID
+) -> Document | None:
+    """Scoped to `workspace_id` in the query itself (not checked
+    afterward) so a document ID from one workspace can never be looked up
+    through another — the same IDOR-defense shape as every other
+    workspace-scoped lookup in this codebase."""
+    return db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.workspace_id == workspace_id,
         )
     ).scalar_one_or_none()
 
@@ -46,6 +62,41 @@ def create(
         storage_key=storage_key,
         status=DocumentStatus.UPLOADED,
     )
+    db.add(document)
+    db.flush()
+    db.refresh(document)
+    return document
+
+
+def mark_processing(db: Session, *, document: Document) -> Document:
+    """Committed by the caller as its own transaction, separate from the
+    extraction attempt that follows -- see
+    app/services/document_service.py's process_document() docstring for
+    why that separation matters (a crash mid-extraction must leave the
+    document honestly at PROCESSING, never falsely at PARSED)."""
+    document.status = DocumentStatus.PROCESSING
+    document.processing_started_at = datetime.now(UTC)
+    db.add(document)
+    db.flush()
+    db.refresh(document)
+    return document
+
+
+def mark_parsed(db: Session, *, document: Document, page_count: int | None) -> Document:
+    document.status = DocumentStatus.PARSED
+    document.page_count = page_count
+    document.failure_reason = None
+    document.processing_completed_at = datetime.now(UTC)
+    db.add(document)
+    db.flush()
+    db.refresh(document)
+    return document
+
+
+def mark_failed(db: Session, *, document: Document, reason: str) -> Document:
+    document.status = DocumentStatus.FAILED
+    document.failure_reason = reason
+    document.processing_completed_at = datetime.now(UTC)
     db.add(document)
     db.flush()
     db.refresh(document)

@@ -129,6 +129,13 @@ reset_password_rate_limiter = FixedWindowRateLimiter(limit=10, window_seconds=60
 # semantics (falls back on a Redis outage, never fails open) rather than
 # register's Tier B — see enforce_document_upload_rate_limit() below.
 upload_rate_limiter = FixedWindowRateLimiter(limit=20, window_seconds=60)
+# Issue #3, Slice 3.4 — document processing (text extraction). CPU-bound
+# synchronous work, not just I/O like upload -- a member repeatedly
+# triggering re-processing of the same (or a large) document is a
+# self-service resource-exhaustion vector on shared infrastructure, not
+# just a per-workspace cost. Same numbers as upload pending real usage
+# data; Tier A for the same reason (a defensive control, not UX).
+process_rate_limiter = FixedWindowRateLimiter(limit=20, window_seconds=60)
 
 
 def client_ip(request: Request) -> str:
@@ -589,6 +596,34 @@ def enforce_document_upload_rate_limit(
         dimensions=dimensions,
         redis_client=redis_client,
         fallback=upload_rate_limiter,
+        fallback_key=str(user_id),
+        fail_open_on_redis_error=False,
+    )
+
+
+def enforce_document_process_rate_limit(
+    request: Request,
+    *,
+    user_id: uuid.UUID,
+    redis_client: redis.Redis | None,
+) -> None:
+    """Tier A (ADR 0006 §13) — IP + authenticated user ID. Same shape and
+    rationale as `enforce_document_upload_rate_limit()` above, including
+    why this is a plain function rather than a `Depends()`-shaped
+    dependency."""
+    settings = get_settings()
+    ip = resolve_client_ip(request, settings.trusted_proxy_cidrs_list)
+
+    dimensions = [
+        _dimension("document_process", "ip", ip, process_rate_limiter),
+        _dimension("document_process", "user", str(user_id), process_rate_limiter),
+    ]
+
+    _check_or_fallback(
+        operation="document_process",
+        dimensions=dimensions,
+        redis_client=redis_client,
+        fallback=process_rate_limiter,
         fallback_key=str(user_id),
         fail_open_on_redis_error=False,
     )
