@@ -82,14 +82,30 @@ class ExtractedDocument:
         return "\n\n".join(section.text for section in self.sections if section.text)
 
 
-def _enforce_text_budget(text: str) -> str:
+def _truncate_to_budget(text: str, *, max_bytes: int) -> tuple[str, int]:
+    """Truncates `text` to at most `max_bytes` of UTF-8-encoded output, on
+    a UTF-8 boundary (never raising on a split multibyte sequence).
+    Returns `(truncated_text, actual_encoded_byte_length)` so a caller can
+    accumulate a running total across multiple sections/pages -- a single
+    per-call cap is not the same thing as a per-*document* cap when a
+    format can produce more than one section (see `_extract_pdf`/
+    `_extract_docx`/`_extract_markdown` below, each of which tracks a
+    running total; only formats that always produce exactly one section,
+    like TXT, can safely use `_enforce_text_budget` alone).
+    """
     encoded = text.encode("utf-8", errors="replace")
-    if len(encoded) <= _MAX_EXTRACTED_TEXT_BYTES:
-        return text
+    if len(encoded) <= max_bytes:
+        return text, len(encoded)
     # Truncate on a UTF-8 boundary rather than raise: a very large but
     # genuinely valid document still produces useful, bounded output,
     # rather than being treated as an outright failure.
-    return encoded[:_MAX_EXTRACTED_TEXT_BYTES].decode("utf-8", errors="ignore")
+    truncated = encoded[:max_bytes].decode("utf-8", errors="ignore")
+    return truncated, len(truncated.encode("utf-8"))
+
+
+def _enforce_text_budget(text: str) -> str:
+    truncated, _ = _truncate_to_budget(text, max_bytes=_MAX_EXTRACTED_TEXT_BYTES)
+    return truncated
 
 
 def _extract_pdf(content: bytes) -> ExtractedDocument:
@@ -107,14 +123,31 @@ def _extract_pdf(content: bytes) -> ExtractedDocument:
         )
 
     sections: list[ExtractedSection] = []
+    total_bytes = 0
     for index, page in enumerate(reader.pages, start=1):
+        # A running total across the whole document, not just a per-page
+        # cap: pypdf decompresses each page's content stream internally,
+        # so a page's share of the already-capped 50 MiB *compressed*
+        # upload says nothing about its *decompressed* text output (a
+        # classic decompression-bomb shape). A per-page-only cap would
+        # still let up to `_MAX_PDF_PAGES` pages each reach the per-page
+        # maximum, summing to far more than `_MAX_EXTRACTED_TEXT_BYTES`
+        # overall. Once the running total reaches the budget, remaining
+        # pages are skipped entirely (not just truncated) -- this also
+        # stops paying the decompression/extraction cost for pages whose
+        # output would only be discarded anyway.
+        if total_bytes >= _MAX_EXTRACTED_TEXT_BYTES:
+            break
         try:
             text = page.extract_text() or ""
         except Exception as exc:  # noqa: BLE001 - a single malformed page must not crash the rest
             raise ExtractionError(
                 f"The PDF could not be read — page {index} is malformed."
             ) from exc
-        sections.append(ExtractedSection(text=_enforce_text_budget(text), page=index))
+        remaining = _MAX_EXTRACTED_TEXT_BYTES - total_bytes
+        truncated, used = _truncate_to_budget(text, max_bytes=remaining)
+        sections.append(ExtractedSection(text=truncated, page=index))
+        total_bytes += used
 
     return ExtractedDocument(sections=sections, page_count=page_count)
 
@@ -164,17 +197,29 @@ def _extract_docx(content: bytes) -> ExtractedDocument:
         raise ExtractionError("The DOCX file could not be read — it may be corrupt.") from exc
 
     sections: list[ExtractedSection] = []
+    total_bytes = 0
     current_heading: str | None = None
     current_lines: list[str] = []
 
     def _flush() -> None:
+        # A running total across every section, not a per-section cap --
+        # see _extract_pdf's identical rationale. DOCX's total uncompressed
+        # size is already bounded by _validate_docx_archive_safety(), but
+        # that bound (200 MiB) is far larger than the documented
+        # per-document extracted-text budget, so relying on it alone would
+        # let a document with many heading-split sections produce far more
+        # than `_MAX_EXTRACTED_TEXT_BYTES` of total extracted text.
+        nonlocal total_bytes
         text = "\n".join(current_lines).strip()
-        if text or current_heading is not None:
-            sections.append(
-                ExtractedSection(text=_enforce_text_budget(text), heading=current_heading)
-            )
+        if (text or current_heading is not None) and total_bytes < _MAX_EXTRACTED_TEXT_BYTES:
+            remaining = _MAX_EXTRACTED_TEXT_BYTES - total_bytes
+            truncated, used = _truncate_to_budget(text, max_bytes=remaining)
+            sections.append(ExtractedSection(text=truncated, heading=current_heading))
+            total_bytes += used
 
     for paragraph in document.paragraphs:
+        if total_bytes >= _MAX_EXTRACTED_TEXT_BYTES:
+            break
         style_name = paragraph.style.name if paragraph.style is not None else ""
         if style_name.startswith(_HEADING_STYLE_PREFIX) and paragraph.text.strip():
             _flush()
@@ -205,17 +250,31 @@ _MARKDOWN_HEADING_PREFIX: Final = "#"
 def _extract_markdown(content: bytes) -> ExtractedDocument:
     text = _decode_text(content)
     sections: list[ExtractedSection] = []
+    total_bytes = 0
     current_heading: str | None = None
     current_lines: list[str] = []
 
     def _flush() -> None:
+        # Running total across sections -- see _extract_pdf's rationale.
+        # Markdown's decode is ~1:1 with input bytes (no decompression),
+        # so the total is already indirectly bounded by the 50 MiB upload
+        # limit, but a heading-heavy document could still split that into
+        # many sections each individually under the per-section cap while
+        # the *document's* total exceeds `_MAX_EXTRACTED_TEXT_BYTES` --
+        # tracked explicitly here so the documented per-document budget is
+        # actually true, not just "usually true because of an unrelated
+        # cap."
+        nonlocal total_bytes
         body = "\n".join(current_lines).strip()
-        if body or current_heading is not None:
-            sections.append(
-                ExtractedSection(text=_enforce_text_budget(body), heading=current_heading)
-            )
+        if (body or current_heading is not None) and total_bytes < _MAX_EXTRACTED_TEXT_BYTES:
+            remaining = _MAX_EXTRACTED_TEXT_BYTES - total_bytes
+            truncated, used = _truncate_to_budget(body, max_bytes=remaining)
+            sections.append(ExtractedSection(text=truncated, heading=current_heading))
+            total_bytes += used
 
     for line in text.splitlines():
+        if total_bytes >= _MAX_EXTRACTED_TEXT_BYTES:
+            break
         stripped = line.strip()
         if stripped.startswith(_MARKDOWN_HEADING_PREFIX) and " " in stripped:
             _flush()
@@ -239,9 +298,32 @@ def _extract_csv(content: bytes) -> ExtractedDocument:
     except csv.Error as exc:
         raise ExtractionError("The CSV file could not be read — it may be malformed.") from exc
 
-    rendered = "\n".join(", ".join(cell for cell in row) for row in rows)
+    # Rendered incrementally, row by row, tracking the exact running byte
+    # total (including the "\n" that will join each row) rather than
+    # joining every row into one large string first and truncating
+    # afterward. Two reasons: (1) re-serializing "," as ", " modestly
+    # expands a pathological, comma-dense CSV, so building the whole
+    # expanded string before truncating pays for more peak memory than
+    # necessary; (2) a CSV with a huge number of tiny rows could otherwise
+    # let the "\n" separators alone push the final joined size past the
+    # budget even if every individual row was itself within it.
+    parts: list[str] = []
+    total_bytes = 0
+    for row in rows:
+        separator_cost = 1 if parts else 0  # the "\n" that will precede this row
+        if total_bytes + separator_cost >= _MAX_EXTRACTED_TEXT_BYTES:
+            break
+        line = ", ".join(row)
+        remaining = _MAX_EXTRACTED_TEXT_BYTES - total_bytes - separator_cost
+        truncated, used = _truncate_to_budget(line, max_bytes=remaining)
+        parts.append(truncated)
+        total_bytes += used + separator_cost
+        if used < len(line.encode("utf-8")):
+            break  # this row was itself truncated -- budget is now exhausted
+
+    rendered = "\n".join(parts)
     return ExtractedDocument(
-        sections=[ExtractedSection(text=_enforce_text_budget(rendered))], page_count=None
+        sections=[ExtractedSection(text=rendered)], page_count=None
     )
 
 

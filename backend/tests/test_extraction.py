@@ -79,6 +79,26 @@ def test_pdf_page_count_limit_is_enforced(monkeypatch: pytest.MonkeyPatch) -> No
         extraction.extract(extension=".pdf", content=_blank_pdf(pages=3))
 
 
+def test_pdf_extracted_text_is_capped_across_the_whole_document_not_per_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression test: the extracted-text budget must be a running total
+    # across the whole document, not re-applied independently to each
+    # page. Without a running total, 5 pages x 8 bytes each would produce
+    # 40 bytes total, far exceeding this 10-byte budget -- a real PDF
+    # parser (pypdf decompresses each page's content stream internally)
+    # could reach a similar outcome from a small, highly compressed file.
+    monkeypatch.setattr(extraction, "_MAX_EXTRACTED_TEXT_BYTES", 10)
+    with patch("pypdf._page.PageObject.extract_text", return_value="12345678"):
+        result = extraction.extract(extension=".pdf", content=_blank_pdf(pages=5))
+    total = sum(len(section.text.encode("utf-8")) for section in result.sections)
+    assert total <= 10
+    assert len(result.sections) < 5
+    # page_count still reflects the PDF's real page count -- only how
+    # much text was *kept* is bounded, not the reported metadata.
+    assert result.page_count == 5
+
+
 def test_pdf_single_page_parser_exception_is_normalized() -> None:
     # Simulates pypdf itself raising while reading one specific page's
     # content stream -- a real malformed-content-stream PDF is difficult
@@ -164,6 +184,30 @@ def test_docx_real_zip_bomb_style_member_rejected_at_default_thresholds() -> Non
         extraction.extract(extension=".docx", content=content)
 
 
+def _docx_with_many_headings(count: int, body_text: str) -> bytes:
+    document = docx.Document()
+    for i in range(count):
+        document.add_heading(f"H{i}", level=1)
+        document.add_paragraph(body_text)
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def test_docx_extracted_text_is_capped_across_the_whole_document_not_per_section(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Same regression as the PDF version above: 5 heading-split sections
+    # x 8 bytes each would total 40 bytes without a running total, far
+    # exceeding this 10-byte budget.
+    monkeypatch.setattr(extraction, "_MAX_EXTRACTED_TEXT_BYTES", 10)
+    content = _docx_with_many_headings(5, "12345678")
+    result = extraction.extract(extension=".docx", content=content)
+    total = sum(len(section.text.encode("utf-8")) for section in result.sections)
+    assert total <= 10
+    assert len(result.sections) < 5
+
+
 def test_docx_parser_failure_after_safety_check_is_normalized() -> None:
     # Passes the ZIP-level safety check (a plausible member name/size) but
     # is not a real OOXML document -- python-docx itself must fail, and
@@ -195,6 +239,20 @@ def test_markdown_splits_on_top_level_headings() -> None:
     assert "second body" in result.sections[1].text
 
 
+def test_markdown_extracted_text_is_capped_across_the_whole_document_not_per_section(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Same regression as the PDF/DOCX versions above: 5 heading-split
+    # sections x 8 bytes each would total 40 bytes without a running
+    # total, far exceeding this 10-byte budget.
+    monkeypatch.setattr(extraction, "_MAX_EXTRACTED_TEXT_BYTES", 10)
+    content = b"\n\n".join(f"# H{i}\n\n12345678".encode() for i in range(5))
+    result = extraction.extract(extension=".md", content=content)
+    total = sum(len(section.text.encode("utf-8")) for section in result.sections)
+    assert total <= 10
+    assert len(result.sections) < 5
+
+
 def test_markdown_with_no_headings_is_a_single_section() -> None:
     result = extraction.extract(extension=".md", content=b"just plain content, no headings")
     assert len(result.sections) == 1
@@ -211,6 +269,21 @@ def test_csv_normal_content_is_rendered() -> None:
     result = extraction.extract(extension=".csv", content=b"col1,col2\n1,2\n3,4\n")
     assert "col1, col2" in result.sections[0].text
     assert "1, 2" in result.sections[0].text
+
+
+def test_csv_extracted_text_is_capped_even_with_many_tiny_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression test: CSV renders by joining rows with "\n" separators.
+    # A CSV with a huge number of tiny rows could let the separators
+    # alone push the final joined size past the budget even though every
+    # individual row is itself well within it, if the separator cost
+    # weren't counted in the running total.
+    monkeypatch.setattr(extraction, "_MAX_EXTRACTED_TEXT_BYTES", 10)
+    content = b"\n".join([b"a"] * 1000)
+    result = extraction.extract(extension=".csv", content=content)
+    total = len(result.sections[0].text.encode("utf-8"))
+    assert total <= 10
 
 
 def test_csv_field_exceeding_size_limit_raises_extraction_error() -> None:
