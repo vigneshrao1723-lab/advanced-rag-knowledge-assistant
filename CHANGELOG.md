@@ -10,14 +10,97 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-22 — Issue #3, Slice 3.4: document text extraction
+### 2026-09-22 — Issue #3, Slice 3.5: structure-aware chunking
+
+*(Branch `issue-3-slice-3-5-structure-aware-chunking`, cut from the
+merged Slice 3.4 (`2961b62`, PR #21). Implemented and tested; not yet
+committed as of this entry.)*
+
+- Adds `backend/app/ingestion/chunking.py`: a `ChunkingConfig` (all
+  sizes are character counts, not tokens), a `Chunk` output dataclass
+  (deliberately not the `DocumentChunk` SQLAlchemy model — no database
+  dependency), a `ChunkingStrategy` protocol, and one concrete
+  implementation, `StructureAwareChunker`. Pure
+  `ExtractedDocument -> list[Chunk]` transformation — no database, HTTP,
+  filesystem, or lifecycle dependency; nothing is persisted, no
+  `PARSED -> CLEANED -> CHUNKED` transition happens (that's Slice 3.6).
+- **Central design decision**: a `Chunk` never spans more than one
+  `ExtractedSection`, since `document_chunks` (migration `0004`) stores
+  exactly one `page`/`section` value per row — no array/range type.
+  Every `Chunk` inherits its source section's `page`/`heading` value
+  unchanged; a short section produces its own short chunk rather than
+  being merged with a different section's content under an invented,
+  misleading metadata value. Overlap follows the same rule — never
+  carried across a section boundary.
+- Boundary preference: section (never crossed) → paragraph (a blank
+  line, falling back to a single newline when none exists — most of
+  this project's own extractors join lines with `\n`, not `\n\n`) →
+  sentence (a `.`/`!`/`?` punctuation heuristic, not real segmentation)
+  → word → a hard character cut, reached only for a single "word" (no
+  internal whitespace) that alone still exceeds `max_chunk_size`.
+  Splitting guarantees every piece is `<= max_chunk_size` before
+  packing; packing greedily targets `target_chunk_size`, carries
+  `chunk_overlap` characters into the next chunk, and merges an
+  undersized trailing remainder into the previous chunk when that stays
+  within `max_chunk_size`.
+- `ChunkingConfig` validates eagerly (`ValueError`, matching
+  `app/core/config.py`'s own convention): every size positive,
+  `max_chunk_size` capped at an absolute 100,000-character ceiling,
+  `min_chunk_size <= target_chunk_size <= max_chunk_size`,
+  `chunk_overlap < min_chunk_size`. A `ChunkingError` (raised only for a
+  `_MAX_CHUNKS_PER_DOCUMENT` resource-safety ceiling, not for config
+  validation) protects against a pathological configuration producing
+  an unreasonable chunk count.
+- `backend/tests/test_chunking.py` (new, 45 unit tests, no
+  database/HTTP/filesystem): basic chunking, determinism (repeated
+  calls and fresh instances), gapless zero-based indexes, section/page
+  metadata preservation and non-mixing across sections, multiple
+  pages/sections, sentence/hard-character splitting for oversized
+  paragraphs, overlap behavior (tail-appears-in-next-chunk,
+  zero-overlap-no-duplication, never-exceeds-max), min/max enforcement
+  including trailing-remainder merge-back, empty/whitespace handling,
+  every `ChunkingConfig` validation rule, pathological-input
+  no-infinite-loop and bounded-chunk-count behavior, a large-document
+  no-quadratic-blowup timing test, and two tests feeding this module
+  real `extraction.extract()` output (Markdown, PDF) to prove the two
+  modules' contracts actually compose.
+- **A dedicated post-implementation quality review found and fixed two
+  genuine gaps**: (1) the overlap mechanism could emit a tiny orphaned
+  fragment chunk (pure carried-over overlap text that failed to combine
+  with the next piece), violating `min_chunk_size` and duplicating the
+  previous chunk's own tail — fixed by discarding pure-overlap buffers
+  that can't be combined further rather than emitting them; (2) the
+  `_MAX_CHUNKS_PER_DOCUMENT` ceiling was checked only once per section,
+  so a single very large section (TXT/CSV always produce exactly one)
+  could build far more than the stated ceiling internally before the
+  check ever ran — fixed by checking incrementally inside the packing
+  loop. Both verified with regression tests confirmed (via temporary,
+  `Edit`-based reverts, never `git checkout` on uncommitted work) to
+  fail against the pre-fix code and pass against the fix.
+- No third-party tokenizer or chunking framework added — stdlib `re`/
+  `dataclasses`/`typing` only; a real tokenizer was considered and
+  explicitly rejected for this slice (chunk sizing shouldn't be tied to
+  a specific model/tokenizer choice before `EmbeddingProvider`, Slice
+  3.7, exists to consume it).
+- `ruff`/`mypy` clean (99 source files). 45 new tests, 45/45 passing.
+  Complete backend suite: **471/471 passing** (426 pre-existing + 45
+  new), 3 consecutive runs. Frontend unaffected (no frontend file
+  changed) — `eslint`/`tsc --noEmit` re-confirmed clean. No dependency
+  added, so no Docker rebuild was needed for this slice.
+- Docs updated in the same working tree: `PROJECT_STATE.md`,
+  `HANDOFF.md`. No ADR added — the schema-compatibility constraint is a
+  direct consequence of the already-existing `document_chunks` schema,
+  documented in the module's own docstring, not a new architectural
+  decision.
+
+## [Unreleased — committed]
+
+### 2026-09-22 — `feat: add document text extraction (Issue #3, Slice 3.4)` (`b01cd24`/`8f72916`, review fixes `105ec72`/`eb14287`), merged as `2961b62`
 
 *(Branch `issue-3-slice-3-4-text-extraction`, cut from the merged Slice
-3.3 (`a6762e2`, PR #20). Committed as `b01cd24`/`8f72916`, pushed, and
-opened as **PR #21** — CI 4/4 green. A pre-merge correctness review then
-found and fixed a real gap in the extracted-text budget, committed as
-`105ec72` on the same branch/PR — see the end of this entry. Not yet
-merged as of this entry.)*
+3.3 (`a6762e2`, PR #20). Opened as **PR #21**, verified green on GitHub
+Actions CI (4/4 checks) after each of two pre-merge correctness reviews'
+fixes, and **merged into `main` as squash commit `2961b62`**.)*
 
 - Adds `POST
   /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` —

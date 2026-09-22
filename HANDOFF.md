@@ -42,21 +42,35 @@ committed together. See "Completed work (Issue #3 — Slice 3.3: document
 upload API)" below for the full implementation, transaction-consistency,
 and test detail.
 
-**GitHub Issue #3, Slice 3.4 (text extraction) is IMPLEMENTED, TESTED
-(including two pre-merge correctness-review fixes), committed, pushed, and
-open as PR #21 — CI 4/4 green, not yet merged**, on branch
-`issue-3-slice-3-4-text-extraction` (cut from `a6762e2`). `POST
+**GitHub Issue #3, Slice 3.4 (text extraction, including two pre-merge
+correctness-review fixes) was committed, pushed, opened as PR #21, and
+merged into `main` as squash commit `2961b62`. `main`/`origin/main` are
+currently at `2961b62`.** `POST
 /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` —
 synchronous text extraction (PDF/DOCX/TXT/Markdown/CSV) moving a
 document from `UPLOADED`/`PROCESSING`/`FAILED` to `PARSED` or `FAILED`.
 See "Completed work (Issue #3 — Slice 3.4: text extraction)" below for
 the full implementation, security, crash-safety, and test detail, and
-the independent review section immediately after it for the fix found
-during PR #21's own pre-merge review. **PR #21 must not be merged, and
-Slice 3.5 must not start, until explicitly instructed** — no chunking,
-embeddings, vector indexing, or background/queued processing exists;
-this slice's own scope stops at a durably-stored, audited,
-`PARSED`/`FAILED` document row.
+the two independent review sections immediately after it for the fixes
+found during PR #21's own pre-merge reviews.
+
+**GitHub Issue #3, Slice 3.5 (structure-aware chunking) is IMPLEMENTED
+and TESTED, on branch `issue-3-slice-3-5-structure-aware-chunking`**
+(cut from `2961b62`) — not yet committed/pushed/PR'd as of this line;
+see "Exact next recommended action" at the end of this file. A pure,
+in-memory `ChunkingStrategy` protocol plus one concrete
+`StructureAwareChunker` (`backend/app/ingestion/chunking.py`), turning an
+`ExtractedDocument` (Slice 3.4) into ordered `Chunk` objects — no
+database/HTTP/lifecycle dependency, nothing persisted, no document
+status transition. See "Completed work (Issue #3 — Slice 3.5:
+structure-aware chunking)" below for the full design, the
+schema-compatibility constraint that shaped it, and the two genuine
+gaps a dedicated post-implementation review found and fixed. **Do not
+start Slice 3.6 or any later Issue #3/Issue #4 work without an explicit
+go-ahead** — no chunk is wired into `document_chunks`, no lifecycle
+transition (`PARSED -> CLEANED -> CHUNKED`) happens, no embeddings, no
+background processing; this slice's own scope stops at the pure
+transformation itself.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -1889,6 +1903,224 @@ re-verified the same way. Complete backend suite: **426/426 passing**
 (425 pre-final-review + 1 new), **3 consecutive runs**. Frontend not
 re-run (no frontend file touched by this fix).
 
+**Both fixes above were later confirmed included when PR #21 merged
+into `main` as squash commit `2961b62`.**
+
+## Completed work (Issue #3 — Slice 3.5: structure-aware chunking)
+
+**Implemented, tested; not yet committed, pushed, or opened as a PR**,
+on branch `issue-3-slice-3-5-structure-aware-chunking` (cut from `main`
+at `2961b62`, the now-merged Slice 3.4). Adds exactly one new module,
+`backend/app/ingestion/chunking.py`: a `ChunkingConfig`, a `Chunk`
+output dataclass, a `ChunkingStrategy` protocol, and one concrete
+implementation, `StructureAwareChunker`. Pure `ExtractedDocument ->
+list[Chunk]` transformation — no database, HTTP, filesystem, or
+lifecycle dependency; nothing is persisted, no document status
+transition happens. Wiring `Chunk`s into `document_chunks` rows and the
+`PARSED -> CLEANED -> CHUNKED` lifecycle transition is explicitly
+**not** this slice's job (Slice 3.6).
+
+- **Design starting point**: before writing any code, read
+  `app/ingestion/extraction.py`'s actual output types
+  (`ExtractedDocument`/`ExtractedSection` — `sections: list[...]`,
+  `page_count`; each section has `text`/`page`/`heading`) and
+  `app/models/document_chunk.py`'s actual schema (`chunk_index: int`,
+  `page: int | None`, `section: str | None`, `content: str`, one value
+  each per row, no array/range type) directly, rather than trusting
+  older planning documents (`docs/RAG_DESIGN.md`/`docs/REQUIREMENTS.md`)
+  to still match the current implementation exactly. They did, for the
+  concepts that matter (chunk metadata fields, the three named
+  strategies), but the schema's single-value-per-row shape is the
+  detail that actually drove the module's central design decision
+  below — confirmed by reading the model file, not assumed from the
+  docs' higher-level description.
+- **The central design decision, forced by that schema shape**: a
+  `Chunk` never spans more than one `ExtractedSection`. Each
+  `ExtractedSection` already carries exactly one `page`/`heading` pair
+  (one page for PDF, one heading for DOCX/Markdown, `None`/`None` for
+  TXT/CSV's single section); every `Chunk` inherits that section's
+  values unchanged. Merging content across two different sections to
+  reach `target_chunk_size` for a short section would require inventing
+  a `page`/`section` value that doesn't honestly describe the chunk's
+  content (e.g. claiming "page 3" for text that's actually pages 3 and
+  4) — the exact kind of misleading representation the task's own
+  instructions warned against inventing. A short section instead simply
+  produces its own short chunk. Overlap follows the same rule: it never
+  carries text across a section boundary, only between consecutive
+  chunks within the same section. This is the module's own docstring's
+  first, load-bearing paragraph — read that before changing anything
+  about cross-section behavior in a later slice.
+- **`Chunk`** is a new, small, frozen dataclass — deliberately not the
+  `DocumentChunk` SQLAlchemy model, so this module stays free of a
+  SQLAlchemy dependency (a pure transformation shouldn't need to import
+  the ORM to be unit-tested). Field names match `document_chunks`'
+  columns 1:1 (minus `document_id`/`workspace_id`/`id`, which only exist
+  once a document/workspace context is applied by whatever later slice
+  persists these), so mapping to that model when it happens is a
+  trivial 1:1 copy — not a redesign.
+- **`ChunkingConfig`**: `target_chunk_size`/`chunk_overlap`/
+  `min_chunk_size`/`max_chunk_size`, all **character counts** (`len(text)`),
+  explicitly not tokens — no tokenizer is used or implied anywhere in
+  this module (see "Dependency discipline" below for why one wasn't
+  added). Validated eagerly in `__post_init__` via `ValueError` (matching
+  `app/core/config.py`'s own existing `ValueError`-on-bad-value
+  convention, not a new pattern): every size must be positive; `max_chunk_size`
+  is capped at an absolute ceiling (100,000 characters — a sane bound, a
+  "chunk" larger than this defeats the purpose of chunking, not a tuned
+  value); `min_chunk_size <= target_chunk_size <= max_chunk_size`;
+  `chunk_overlap < min_chunk_size` (also transitively rules out
+  `chunk_overlap >= max_chunk_size`, and structurally guarantees every
+  new chunk after the first contains at least some genuinely new
+  content, not just carried-over overlap).
+- **`StructureAwareChunker`**: chunks each section independently.
+  Boundary preference, exactly as specified: section (never crossed) ->
+  paragraph (a blank line; when none exists, falls back to a single
+  newline, since most of this project's own extractors join lines with
+  `\n` not `\n\n` — confirmed by reading `extraction.py` directly, not
+  assumed) -> sentence (a `.`/`!`/`?` followed by whitespace — a
+  punctuation heuristic, explicitly documented as not real sentence
+  segmentation) -> word (whitespace) -> a hard character cut, reached
+  only for a single "word" with no internal whitespace that alone still
+  exceeds `max_chunk_size` (a long URL or base64 blob). Splitting
+  (`_split_into_pieces`/`_split_oversized`) guarantees every piece is
+  `<= max_chunk_size` before packing ever starts; packing
+  (`_pack`/`_close_buffer`) greedily accumulates pieces toward
+  `target_chunk_size`, closes a chunk once reached, carries
+  `chunk_overlap` characters of the closed chunk's tail into the next
+  chunk, and merges an undersized trailing remainder into the previous
+  chunk when doing so keeps it within `max_chunk_size` (so
+  `min_chunk_size` is a target, not an absolute guarantee — the one
+  documented exception is an unavoidable, unmergeable small remainder;
+  `max_chunk_size` **is** an absolute guarantee, verified never violated
+  in tests).
+- **Deterministic by construction**: no randomness, no wall-clock/ID
+  generation, no reliance on set iteration order (only stable `list`/
+  `dict` ordering); verified directly, not just assumed, by a test
+  calling `chunk()` twice on the same input/config (and again via a
+  fresh chunker instance) and asserting byte-identical results.
+- **`backend/tests/test_chunking.py`** (new, 45 unit tests, no
+  database/HTTP/filesystem — pure, fast): basic paragraph chunking;
+  deterministic repeated execution across calls and instances; gapless
+  zero-based chunk indexes; section/page metadata preserved from the
+  source section and never mixed across two different sections (the
+  central design decision's own regression test); multiple
+  pages/multiple headed sections each keeping their own metadata;
+  sentence-boundary splitting and hard-character-fallback splitting for
+  a 500-character single "word"; a ~100,000-character pathological
+  paragraph never producing a chunk over `max_chunk_size`; overlap-tail-
+  appears-in-the-next-chunk and zero-overlap-produces-no-shared-text
+  behavior, and overlap never producing an over-`max_chunk_size` chunk;
+  a short section standing alone as its own chunk; a small trailing
+  remainder merging into the previous chunk when it fits; every
+  `ChunkingConfig` validation rule (7 non-positive-size parametrized
+  cases, `chunk_overlap` >= `min_chunk_size` twice, `min_chunk_size` >
+  `target_chunk_size`, `target_chunk_size` > `max_chunk_size`, an
+  absurdly large `max_chunk_size`, and the default config's own
+  validity); empty/whitespace sections and an empty document producing
+  no chunks, and no chunk ever being empty/whitespace-only across a
+  mixed batch; a pathological-`min_chunk_size` document proven bounded
+  (no infinite loop, chunk count either within the ceiling or a raised
+  `ChunkingError`); a monkeypatched-ceiling test proving `ChunkingError`
+  is raised, not a crash; a 50-section, ~250,000-character document
+  chunking in well under 5 seconds (no hidden quadratic behavior); the
+  `Chunk` dataclass's frozen immutability and the
+  `StructureAwareChunker`/`ChunkingStrategy` protocol shape; and two
+  tests feeding this module **real** `extraction.extract()` output
+  (Markdown with two headings, and a real 2-page blank PDF) rather than
+  only hand-built fixtures, to prove the two modules' contracts actually
+  compose, not just that this test file's own assumptions about
+  `ExtractedDocument`'s shape happen to be self-consistent.
+- **A dedicated post-implementation quality review (not just re-running
+  the tests) found and fixed two genuine gaps**, both discovered by
+  reasoning through edge cases the initial test suite hadn't yet
+  covered, then verified empirically:
+  1. **Orphaned overlap fragment.** When a chunk closed for reaching
+     `target_chunk_size` exactly at (or very near) `max_chunk_size` — the
+     common shape for a run of hard-split pieces from one oversized
+     "word" — the small overlap tail carried into the next iteration
+     sometimes couldn't combine with the next (large) piece, and was
+     being emitted as its own standalone tiny chunk: below
+     `min_chunk_size`, and containing nothing that wasn't already the
+     previous chunk's own tail (a near-duplicate fragment, not new
+     information). Reproduced directly (a 500-character single "word",
+     `max_chunk_size=50`, `chunk_overlap=5`, `min_chunk_size=10`
+     produced a genuine 5-character orphan chunk at index 1). Fixed by
+     tracking whether the current buffer is "pure carried-over overlap
+     with no new piece content yet"; when the next piece still doesn't
+     fit alongside it, that pure-overlap buffer is now discarded rather
+     than emitted, since it adds no new information over the previous
+     chunk's own tail. Verified via `git stash` (this fix was applied
+     before any commit existed, so an unstash/restash round-trip proved
+     the before/after difference directly) that the regression test
+     (`test_overlap_does_not_produce_an_orphaned_tiny_fragment_chunk`)
+     fails without the fix and passes with it.
+  2. **The chunk-count resource-safety ceiling (`_MAX_CHUNKS_PER_DOCUMENT`,
+     50,000) was checked only once per section**, in `chunk()`'s own
+     loop, after each `_chunk_section()` call fully returned. TXT and
+     CSV always produce **exactly one** section for the whole document —
+     the single most common shape for a large plain-text upload — so a
+     pathological configuration (a very small `min_chunk_size`) applied
+     to one large section could build far more than the stated ceiling
+     internally before the check ever ran. Reproduced directly: a
+     5,000,000-character single-section document with
+     `min_chunk_size=1` produced roughly 500,000+ intermediate chunks
+     (ten times the ceiling) before the old between-sections check would
+     have fired, confirmed by timing (took ~1.0s to raise) versus the
+     fix (~0.24s). Fixed by threading a running `index_offset` (the
+     count of chunks already produced by earlier sections) into `_pack()`
+     and checking the ceiling after every single chunk this section
+     closes, not just once at the end. Verified with a temporary,
+     `Edit`-based revert (setting the check to `if False and ...`, never
+     `git checkout` on uncommitted work) that both the pre-existing
+     cross-section ceiling test and a new, timing-asserting
+     single-large-section regression test
+     (`test_chunk_count_ceiling_is_enforced_within_a_single_large_section`)
+     fail without the fix and pass with it, then restored the fix the
+     same way and re-confirmed both pass.
+- **Other review areas confirmed correct, not just assumed**: no hidden
+  quadratic behavior in `_pack_words`/`_pack` (buffer concatenation is
+  bounded by `max_chunk_size`, a constant, not by total document size —
+  confirmed by the 50-section timing test completing in well under 5
+  seconds); no accidental lifecycle/database/HTTP coupling (the module's
+  only import beyond the stdlib is `app.ingestion.extraction`, confirmed
+  by reading the file's own import block); no unnecessary dependency
+  added (stdlib `re`/`dataclasses`/`typing` only — see "Dependency
+  discipline" below); `_split_oversized`'s recursion always terminates
+  (each fallback level either finds a real split or falls through to
+  hard-character splitting, which always makes guaranteed progress —
+  confirmed both by direct code reading and by the pathological-input
+  tests actually completing rather than hanging).
+- **Dependency discipline**: no third-party tokenizer or chunking
+  framework was added. A real tokenizer (e.g. `tiktoken`) was
+  considered and explicitly rejected for this slice: this module's own
+  `ChunkingConfig` is documented as character-based, not token-based,
+  matching what `docs/RAG_DESIGN.md`/`docs/REQUIREMENTS.md` actually
+  require at this stage (configurable chunk size/overlap/min/max — none
+  of those documents mandate token-aware sizing); adding a tokenizer
+  dependency now would tie chunk sizing to a specific
+  model/tokenizer choice before the `EmbeddingProvider` abstraction
+  (Slice 3.7) even exists to consume it, the same "don't lock in a
+  choice before the thing that needs it is designed" reasoning
+  `docs/DATA_MODEL.md` already applied to deferring the embedding
+  column itself.
+- `ruff`/`mypy` clean (99 source files, no new findings). **45 new
+  tests, 45/45 passing.** Complete backend suite: **471/471 passing**
+  (426 pre-Slice-3.5 + 45 new), **3 consecutive runs**, no regression in
+  any existing test. Frontend confirmed unaffected (`eslint`/
+  `tsc --noEmit` both clean — no frontend file changed; vitest not
+  re-run since nothing in its scope changed). No dependency added, so
+  no Docker image rebuild was performed for this slice (Slice 3.4's own
+  rebuild+smoke-test remains the most recent Docker verification,
+  unaffected by this slice's changes) — stated explicitly rather than
+  implying a verification that wasn't done.
+- **Documentation updated this slice**: `PROJECT_STATE.md` (component
+  status, testing row, immediate priorities), this file, `CHANGELOG.md`.
+  No ADR was added — nothing here is a genuinely architectural decision
+  beyond what the module's own docstring already documents (the
+  schema-compatibility constraint is a direct, load-bearing consequence
+  of the already-existing `document_chunks` schema, not a new decision
+  being made).
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -1902,14 +2134,16 @@ re-run (no frontend file touched by this fix).
   (Playwright E2E — authentication/password-recovery)" above. Covers
   only the authentication/password-recovery surface; no document/chat/
   search UI exists yet for E2E coverage to extend to.
-- **Issue #3 Slices 3.1–3.3 are merged** (`79d4787` PR #17, `941c1a7`
-  PR #18, correctness-fix `5e6fdc2` PR #19, `a6762e2` PR #20). **Slice
-  3.4 (text extraction), including two pre-merge correctness-review fixes,
-  is implemented, tested, committed, pushed, and open as PR #21 — CI
-  4/4 green, not yet merged.** No chunking, embedding, vector indexing, or
-  background/queued processing exists — documents reach `PARSED` or
-  `FAILED` and stop there. `AuditEvent.DOCUMENT_UPLOADED`/
-  `DOCUMENT_PARSED`/`DOCUMENT_PARSING_FAILED` are now implemented — the
+- **Issue #3 Slices 3.1–3.4 are merged** (`79d4787` PR #17, `941c1a7`
+  PR #18, correctness-fix `5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62`
+  PR #21). **Slice 3.5 (structure-aware chunking) is implemented and
+  tested, on branch `issue-3-slice-3-5-structure-aware-chunking` — not
+  yet committed, pushed, or opened as a PR.** No chunk is wired into
+  `document_chunks`, no lifecycle transition happens, no embedding,
+  vector indexing, or background/queued processing exists — documents
+  reach `PARSED` or `FAILED` and stop there; chunking exists only as a
+  pure, unwired, in-memory transformation. `AuditEvent.DOCUMENT_UPLOADED`/
+  `DOCUMENT_PARSED`/`DOCUMENT_PARSING_FAILED` are implemented — the
   broader document-lifecycle taxonomy (delete, etc.) still doesn't
   exist; those land with later Issue #3 slices.
 - **`client_ip()` (unconditional, no trusted-proxy handling) is still
@@ -1925,8 +2159,8 @@ re-run (no frontend file touched by this fix).
   whole ADR exists for (§2.1) has not been exercised with more than one
   backend process under real concurrent load, since no such deployment
   exists.
-- **Issue #3, Slice 3.5 onward (chunking, embeddings, vector indexing,
-  background processing)** — not started.
+- **Issue #3, Slice 3.6 onward (lifecycle/background processing wiring
+  chunking in, embeddings, vector indexing)** — not started.
 - **Later RAG retrieval/generation features (Issue #4 onward)** — not
   started.
 - **Endpoint-driven concurrency test under real HTTP load** — not added
@@ -1942,7 +2176,7 @@ re-run (no frontend file touched by this fix).
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: GitHub Issue #3 (Knowledge Ingestion), Slice 3.5
+## Next major task: GitHub Issue #3 (Knowledge Ingestion), Slice 3.6
 
 **ADR 0006's deterministic abuse-protection layer is functionally
 complete end-to-end and fully merged (Slices 1–3c).** Nothing further is
@@ -1950,35 +2184,37 @@ planned under it unless a future decision proposes one. Browser E2E
 coverage for the authentication/password-recovery flows is implemented,
 validated, and merged (PR #16, `e1c4858`).
 
-**GitHub Issue #3 (Knowledge Ingestion): Slices 3.1–3.3 are merged**
+**GitHub Issue #3 (Knowledge Ingestion): Slices 3.1–3.4 are merged**
 (PR #17 `79d4787`, PR #18 `941c1a7`, correctness-fix PR #19 `5e6fdc2`,
-PR #20 `a6762e2`). **Slice 3.4 (text extraction,
-`POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process`)
-is implemented and tested** on branch
-`issue-3-slice-3-4-text-extraction` (cut from `a6762e2`) — not yet
-committed, pushed, or opened as a PR.
+PR #20 `a6762e2`, PR #21 `2961b62`). **Slice 3.5 (structure-aware
+chunking, `backend/app/ingestion/chunking.py`) is implemented and
+tested** on branch `issue-3-slice-3-5-structure-aware-chunking` (cut
+from `2961b62`) — not yet committed, pushed, or opened as a PR.
 
-**Before anything else starts**: commit Slice 3.4, push the branch,
+**Before anything else starts**: commit Slice 3.5, push the branch,
 open a PR, and get it reviewed and merged, per normal workflow — don't
-start Slice 3.5 on top of an unmerged prior slice.
+start Slice 3.6 on top of an unmerged prior slice.
 
 With an explicit go-ahead, the next work in this repository's own stated
 order (`PROJECT_STATE.md` "Immediate priorities") is:
 
-1. **GitHub Issue #3, Slice 3.5** — not started; not yet scoped in this
-   file. Do not assume further detail (likely chunking, given the
-   documented lifecycle's `PARSED → CLEANED → CHUNKED` ordering, but
-   this is inference, not a confirmed scope) without checking the
-   Issue #3 GitHub issue and this file first.
+1. **GitHub Issue #3, Slice 3.6** — not started; not yet scoped in this
+   file. Do not assume further detail (likely the lifecycle/background-
+   processing wiring that actually calls `StructureAwareChunker` and
+   transitions `PARSED → CLEANED → CHUNKED`, given Slice 3.5's own
+   explicit scope boundary, but this is inference, not a confirmed
+   scope) without checking the Issue #3 GitHub issue and this file
+   first.
 
 ## Blockers
 
-None currently. Docker Compose (rebuilt this session to pick up the new
-`pypdf`/`python-docx` dependencies), the local Postgres container,
-Mailpit, a local Redis, and `gh` CLI access are all confirmed working in
-this environment. No Docker/WSL integration drop occurred this session
-(a recurring issue in prior sessions — see the Slice 3.3 report below
-for its own prior occurrence and fix).
+None currently. `gh` CLI access is confirmed working in this
+environment. Docker was not touched this session — Slice 3.5 adds no
+dependency and no Docker-relevant file changed (`git diff main --
+backend/pyproject.toml backend/uv.lock` is empty), so no rebuild was
+needed; Slice 3.4's own rebuild+smoke-test remains the most recent
+Docker verification, stated explicitly rather than implying a fresh one
+was done.
 
 ## Tests run
 
@@ -2243,26 +2479,26 @@ for its own prior occurrence and fix).
 
 ## Exact next recommended action
 
-Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.3
-(including Slice 3.2's own correctness-review fix) are all merged into
-`main` (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3`
-PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7`
-PR #18, `5e6fdc2` PR #19, `a6762e2` PR #20) — nothing pending for any of
-them. `main`/`origin/main` are at `a6762e2`. **GitHub Issue #3, Slice
-3.4 (text extraction), including two pre-merge correctness-review fixes, is
-implemented, tested, committed, pushed, and open as PR #21 — CI 4/4
-green, not yet merged**, on branch `issue-3-slice-3-4-text-extraction`
-(cut from `a6762e2`). See "Completed work (Issue #3 — Slice 3.4...)"
-and the two "Independent correctness/security review" sections
-immediately after it, above. The next work, in order:
+Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.4
+(including Slice 3.2's and Slice 3.4's own correctness-review fixes)
+are all merged into `main` (`46ef03b` PR #11, `5391a78` PR #12,
+`026dcf3` PR #13, `42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16,
+`79d4787` PR #17, `941c1a7` PR #18, `5e6fdc2` PR #19, `a6762e2` PR #20,
+`2961b62` PR #21) — nothing pending for any of them. `main`/`origin/main`
+are at `2961b62`. **GitHub Issue #3, Slice 3.5 (structure-aware
+chunking) is implemented and tested**, on branch
+`issue-3-slice-3-5-structure-aware-chunking` (cut from `2961b62`) — not
+yet committed, pushed, or opened as a PR. See "Completed work (Issue #3
+— Slice 3.5...)" above. The next work, in order:
 
-1. **Get PR #21 reviewed and merged.** This slice's own real-stack
-   validation (56 focused tests, full 426-test suite × 3 runs, a live
-   Docker Compose smoke test with the backend image rebuilt for the new
-   `pypdf`/`python-docx` dependencies, plus two independent pre-merge
-   correctness/security reviews that each found and fixed one real gap
-   — the extracted-text budget, and the event-loop-blocking extraction
-   call) is already done. Do not merge without review.
+1. **Commit Slice 3.5** on the current branch, push it, and open a PR
+   against `main`. This slice's own real-stack validation (45 focused
+   tests, full 471-test suite × 3 runs, a dedicated post-implementation
+   quality review that found and fixed two genuine gaps — an orphaned
+   overlap fragment chunk, and a resource-safety ceiling checked only
+   once per section instead of incrementally) is already done locally.
+   Get it reviewed, confirm CI is green, and merge — do not merge
+   without review.
 2. **Once merged, with an explicit go-ahead:** scope and implement
-   GitHub Issue #3, Slice 3.5 (not yet scoped in this file — see "Next
+   GitHub Issue #3, Slice 3.6 (not yet scoped in this file — see "Next
    major task" above).
