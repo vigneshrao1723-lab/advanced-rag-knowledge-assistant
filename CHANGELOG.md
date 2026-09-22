@@ -138,6 +138,53 @@ fail against the pre-fix code before being confirmed to pass against
 the fix. `ruff`/`mypy` clean. Complete backend suite: **425/425
 passing** (421 pre-review + 4 new), 3 consecutive runs.
 
+**Final pre-merge review (same PR #21, commit `eb14287`)**: a second,
+independent review found and fixed a more significant gap —
+`process_document()` called the
+synchronous, CPU-bound `extraction.extract()` (and the synchronous
+`storage.read()`) directly inside its `async def` body. This project
+runs one `uvicorn` process with no `--workers`
+(`infra/docker/backend.Dockerfile`'s entrypoint), so a synchronous call
+inside an async handler blocks that single event loop for its full
+duration — not just for the requesting user, but for **every**
+concurrent request the process is serving, including unrelated
+workspaces' logins, health checks, and uploads. Confirmed empirically
+with a real concurrency test (`httpx.AsyncClient` over an in-process ASGI
+transport, sharing the app's own event loop, with an absolute shared
+clock): an unrelated concurrent request measurably stalled until a slow
+extraction finished. Fixed by running the storage read + parse
+(`document_service._read_and_extract()`, new) via `asyncio.to_thread()`
+instead of calling it directly — re-confirmed with the same concurrency
+test that the unrelated request now completes promptly regardless of a
+slow extraction in progress. The existing crash-safety regression test
+(`test_processing_transition_is_committed_before_extraction_is_attempted`)
+was rewritten to avoid querying the database from inside the (now
+thread-offloaded) extraction spy — SQLAlchemy `Session`s are not
+thread-safe — replaced with commit/extraction-order tracking via plain
+list appends, safe under the GIL; both the rewritten test and the new
+concurrency test were confirmed to fail against the pre-fix code before
+being confirmed to pass against the fix. Separately reviewed and
+confirmed **not** a bug needing a fix: two simultaneous `/process` calls
+against the same document are not prevented by a lock, but each request
+gets its own database session/connection in production (`get_db()`),
+PostgreSQL's row-level locking serializes the competing status-transition
+updates, and the deterministic content means both converge on the same
+final outcome — the only cost is duplicate extraction work and duplicate
+audit rows for one logical operation, already bounded by the
+`document_process` rate limit, consistent with this codebase's existing
+no-pessimistic-locking convention. A related question — whether a
+wall-clock/CPU timeout on a single pathological document's parse should
+also be added now — was considered and deliberately deferred: the more
+severe "affects every other request" failure mode is what the threading
+fix closes; a true per-parse timeout on arbitrary synchronous Python code
+would need process-based isolation or signal-based interruption, a
+materially larger architectural change out of this slice's scope, and
+the existing page-count/output-size caps already bound the structural
+work involved. 1 new regression test
+(`test_slow_extraction_does_not_block_unrelated_concurrent_requests`).
+`ruff`/`mypy` clean. Complete backend suite: **426/426 passing** (425
+pre-review + 1 new), 3 consecutive runs.
+
 ### 2026-09-20 — Abuse-protection Slice 3c: escalation audit emission + HTTP-level tests
 
 - **Not committed.** Adds abuse-escalation audit emission on top of

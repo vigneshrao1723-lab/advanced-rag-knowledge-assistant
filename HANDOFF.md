@@ -43,7 +43,7 @@ upload API)" below for the full implementation, transaction-consistency,
 and test detail.
 
 **GitHub Issue #3, Slice 3.4 (text extraction) is IMPLEMENTED, TESTED
-(including a pre-merge correctness-review fix), committed, pushed, and
+(including two pre-merge correctness-review fixes), committed, pushed, and
 open as PR #21 — CI 4/4 green, not yet merged**, on branch
 `issue-3-slice-3-4-text-extraction` (cut from `a6762e2`). `POST
 /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` —
@@ -1385,11 +1385,12 @@ cleanup* failure) and found one real issue:
 **Implemented, tested, committed (`b01cd24`/`8f72916`), pushed, and
 open as PR #21** — CI 4/4 green, not yet merged — on branch
 `issue-3-slice-3-4-text-extraction` (cut from `main` at `a6762e2`, the
-now-merged Slice 3.3). **A dedicated pre-merge correctness/security
-review then found and fixed a real gap in the extracted-text budget,
-committed as `105ec72` on the same branch/PR — see the "Independent
-correctness/security review" section immediately after this one for
-the full detail.** Adds exactly one capability:
+now-merged Slice 3.3). **Two dedicated pre-merge correctness/security
+reviews then each found and fixed a real gap**: the extracted-text
+budget (committed as `105ec72`), and a synchronous call blocking the
+event loop (committed as `eb14287`) — see the two "Independent
+correctness/security review" sections immediately after this one for
+the full detail. Adds exactly one capability:
 `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process`
 — synchronous text extraction moving a document from
 `UPLOADED`/`PROCESSING`/`FAILED` to `PARSED` or `FAILED`. No chunking,
@@ -1753,6 +1754,141 @@ Complete backend suite: **425/425 passing** (421 pre-review + 4 new),
 **3 consecutive runs**. Frontend not re-run (no frontend file touched
 by this fix).
 
+## Second independent correctness/security review (Issue #3 — Slice 3.4, final pre-merge)
+
+**Committed as `eb14287` on branch `issue-3-slice-3-4-text-extraction`,
+same PR #21.** A further, separate review focused specifically on
+resource-exhaustion resistance, concurrency, and the async/threading
+model of the request-handling layer itself — areas the first review
+(above) didn't cover, since it focused on the extraction module's own
+per-format logic.
+
+**Finding (real, significant, fixed): `process_document()` called
+synchronous, CPU-bound work directly inside its `async def` body,
+blocking the single event loop for every concurrent request.**
+`storage.read()` and `extraction.extract()` were called directly, not
+via any thread/executor offload. This project runs exactly one
+`uvicorn` process with no `--workers` (confirmed by reading
+`infra/docker/backend.Dockerfile`'s entrypoint script directly, not
+assumed from the earlier `rate_limit.py` docstring alone). Since
+Python's asyncio event loop is single-threaded, a genuinely blocking
+call anywhere in an awaited coroutine chain — not just an infinite
+loop, but any call that doesn't hand control back to the scheduler —
+prevents *every other* coroutine (every other in-flight request: other
+users' logins, unrelated workspaces' health checks and uploads) from
+making progress until that call returns. `async def` route handlers
+are not automatically thread-offloaded by FastAPI/Starlette the way
+plain `def` handlers are; only the code declared `async def` needs to
+avoid blocking calls, and this endpoint's whole chain (`documents.py`'s
+route → `process_document()` → `extraction.extract()`) was `async def`
+all the way down to a plain synchronous call at the bottom.
+
+**Verified empirically, not assumed**: wrote a real concurrency test
+using `httpx.AsyncClient` with `ASGITransport(app=app)` — sharing the
+actual event loop the application runs on, not `TestClient`'s
+synchronous-per-call wrapper, which cannot observe this class of bug at
+all. Two coroutines were run via `asyncio.gather()`: one triggering
+`/process` with a monkeypatched `extraction.extract` that does
+`time.sleep(2.0)` (simulating real CPU-bound parser work), the other
+issuing `/api/v1/health` after a 0.2–0.3s delay. Timings were measured
+from one shared `t=0` reference (an earlier draft of this same
+diagnostic measured elapsed time *relative to each coroutine's own
+start*, which — caught during this review, not shipped — silently hides
+this exact bug: if the health check never even gets scheduled to start
+until the slow request finishes, its own *internal* duration still
+looks fast). With the absolute-clock version: pre-fix, the health check
+(scheduled at t≈0.3s) didn't actually complete until t≈2.0s — proving
+it was blocked, not just slow. Post-fix, it completed at t≈0.31s,
+regardless of the still-in-flight 2-second extraction.
+
+**Fix**: `_read_and_extract()` (new, in `document_service.py`) wraps
+`storage.read()` + `extraction.extract()` as one plain synchronous
+function; `process_document()` now calls it via `await
+asyncio.to_thread(...)` instead of calling it directly. No new
+dependency, no new infrastructure, no architecture change — `to_thread`
+is a Python 3.9+ stdlib facility built exactly for this situation
+(occasional blocking calls inside async code), not a background-job
+system.
+
+**A second, related correctness hazard this introduced was caught and
+fixed in the same pass, before it could ship**: the existing
+crash-safety regression test
+(`test_processing_transition_is_committed_before_extraction_is_attempted`)
+monkeypatched `extraction.extract` with a spy that queried
+`document_repository.get_by_id_for_workspace(db_session, ...)` — safe
+when everything ran on one thread, but once extraction moved to a
+`to_thread()` worker thread, that spy would now execute on a *different*
+thread than the one that owns `db_session`. SQLAlchemy `Session`
+objects are documented as not safe for reuse across threads (even
+non-concurrently) — this would have been a latent, non-deterministic
+test hazard shipped alongside the real fix if not caught. Rewritten to
+avoid any cross-thread session access: it now monkeypatches
+`db_session.commit` itself to record "a commit happened" and
+`extraction.extract` to record "extraction started", both via plain
+`list.append()` calls (safe across threads under CPython's GIL — the
+GIL serializes the append operation itself even though it runs on
+different OS threads), and asserts the recorded order. Verified this
+rewritten test still means what it claims: temporarily removed the
+`db.commit()` call preceding extraction (via `Edit`, confirmed restored
+correctly afterward — not `git checkout`, which was tried once during
+this review and mistakenly reverted the then-uncommitted
+`asyncio.to_thread` fix itself, caught immediately by re-grepping for
+it and redone via `Edit`) and confirmed the test fails as expected; a
+new, permanent regression test
+(`test_slow_extraction_does_not_block_unrelated_concurrent_requests`)
+encodes the concurrency proof above and was itself confirmed to fail
+against the pre-fix code before being confirmed to pass against the fix.
+
+**Item E (concurrent `/process` calls on the same document) — reviewed
+again with the production session model explicitly confirmed, not just
+assumed**: read `app/core/db.py`'s `get_db()` directly — it creates a
+fresh `SessionLocal()` per request via FastAPI's dependency injection
+(the test suite's *shared* `db_session` fixture is a test-only
+isolation artifact, not representative of production). This confirms
+the earlier conclusion: two concurrent `/process` calls on the same
+document each get their own database session/connection in production;
+PostgreSQL's own row-level locking serializes the competing
+`mark_processing()` `UPDATE`s (the second blocks until the first
+commits, then proceeds against the now-current row — no error, no
+corruption); the extraction step's own content is deterministic, so
+both converge on the same final `PARSED`/`FAILED` outcome regardless of
+ordering. The `asyncio.to_thread()` fix in this same review changes
+*how* the wasted duplicate extraction work happens — it can now run in
+genuine OS-thread parallelism instead of being serialized behind the
+(now-freed) event loop — but does not change whether it's safe: the
+imperfection remains bounded to duplicate CPU cost and duplicate
+`DOCUMENT_PARSED`/`DOCUMENT_PARSING_FAILED` audit rows for one logical
+operation, not data corruption, and remains bounded in practice by the
+existing `document_process` rate limit (20/60s per user+IP). No lock
+was added — consistent with this codebase's established
+no-pessimistic-locking convention, and not justified by this slice's
+actual risk.
+
+**Item A (whether a CPU/wall-clock timeout should be added now) —
+considered and deliberately deferred, not silently skipped**: the
+severe failure mode (one document freezing the entire server for every
+other request) is exactly what the threading fix above closes. What
+remains is narrower: a single pathological document could still tie up
+one worker thread for a long time, bounded in practice by the existing
+page-count (2000) and output-size (20 MiB) caps on the *amount of work
+performed*, and by the `document_process` rate limit on how many such
+requests one actor can trigger per minute. A true wall-clock
+interruption of arbitrary synchronous Python code cannot be done
+safely by killing a thread (Python provides no safe API for this); the
+correct mechanism would be process-based isolation (a
+`ProcessPoolExecutor`) or an external supervisor/timeout at the
+infrastructure layer — either a materially larger architectural change
+than this slice's own scope, explicitly out of bounds per this review's
+own instructions ("do not redesign the architecture").
+
+**Verification**: `ruff`/`mypy` clean (97 source files, no new
+findings). 1 new regression test, confirmed (via a temporary,
+`Edit`-based revert, not `git checkout`) to fail against the pre-fix
+code and pass against the fix; the rewritten crash-safety test also
+re-verified the same way. Complete backend suite: **426/426 passing**
+(425 pre-final-review + 1 new), **3 consecutive runs**. Frontend not
+re-run (no frontend file touched by this fix).
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -1768,7 +1904,7 @@ by this fix).
   search UI exists yet for E2E coverage to extend to.
 - **Issue #3 Slices 3.1–3.3 are merged** (`79d4787` PR #17, `941c1a7`
   PR #18, correctness-fix `5e6fdc2` PR #19, `a6762e2` PR #20). **Slice
-  3.4 (text extraction), including a pre-merge correctness-review fix,
+  3.4 (text extraction), including two pre-merge correctness-review fixes,
   is implemented, tested, committed, pushed, and open as PR #21 — CI
   4/4 green, not yet merged.** No chunking, embedding, vector indexing, or
   background/queued processing exists — documents reach `PARSED` or
@@ -2113,19 +2249,20 @@ Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.3
 PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7`
 PR #18, `5e6fdc2` PR #19, `a6762e2` PR #20) — nothing pending for any of
 them. `main`/`origin/main` are at `a6762e2`. **GitHub Issue #3, Slice
-3.4 (text extraction), including a pre-merge correctness-review fix, is
+3.4 (text extraction), including two pre-merge correctness-review fixes, is
 implemented, tested, committed, pushed, and open as PR #21 — CI 4/4
 green, not yet merged**, on branch `issue-3-slice-3-4-text-extraction`
 (cut from `a6762e2`). See "Completed work (Issue #3 — Slice 3.4...)"
-and the "Independent correctness/security review" section immediately
-after it, above. The next work, in order:
+and the two "Independent correctness/security review" sections
+immediately after it, above. The next work, in order:
 
 1. **Get PR #21 reviewed and merged.** This slice's own real-stack
-   validation (55 focused tests, full 425-test suite × 3 runs, a live
+   validation (56 focused tests, full 426-test suite × 3 runs, a live
    Docker Compose smoke test with the backend image rebuilt for the new
-   `pypdf`/`python-docx` dependencies, plus an independent pre-merge
-   correctness/security review that found and fixed one real gap) is
-   already done. Do not merge without review.
+   `pypdf`/`python-docx` dependencies, plus two independent pre-merge
+   correctness/security reviews that each found and fixed one real gap
+   — the extracted-text budget, and the event-loop-blocking extraction
+   call) is already done. Do not merge without review.
 2. **Once merged, with an explicit go-ahead:** scope and implement
    GitHub Issue #3, Slice 3.5 (not yet scoped in this file — see "Next
    major task" above).
