@@ -12,7 +12,14 @@ with invented history of either kind.
 
 ### 2026-09-22 — Issue #3, Slice 3.4: document text extraction
 
-- **Not committed.** Adds `POST
+*(Branch `issue-3-slice-3-4-text-extraction`, cut from the merged Slice
+3.3 (`a6762e2`, PR #20). Committed as `b01cd24`/`8f72916`, pushed, and
+opened as **PR #21** — CI 4/4 green. A pre-merge correctness review then
+found and fixed a real gap in the extracted-text budget, committed as
+`105ec72` on the same branch/PR — see the end of this entry. Not yet
+merged as of this entry.)*
+
+- Adds `POST
   /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` —
   synchronous text extraction for the same five formats Slice 3.3
   accepts (PDF, DOCX, TXT, Markdown, CSV), moving a document from
@@ -101,6 +108,35 @@ with invented history of either kind.
   document safety" extended with the extraction-time threat model and
   limits; "Audit logging" and "Security testing" updated from their
   previous "not yet" state), `PROJECT_STATE.md`, `HANDOFF.md`.
+
+**Pre-merge correctness review (same PR #21, commit `105ec72`)**: found
+that the extracted-text budget (`_MAX_EXTRACTED_TEXT_BYTES`) was applied
+independently to each section/page rather than as a running total
+across the whole document. PDF (up to 2000 pages) and DOCX (one section
+per heading) could each produce many sections, so a document with many
+sections each near the per-section cap could yield total extracted text
+far exceeding the documented per-document limit — for PDF specifically,
+pypdf decompresses each page's content stream internally, so a small,
+highly compressed upload can still expand to a large per-page text
+output (a decompression-bomb shape distinct from the already-handled
+DOCX archive case). Markdown has the same multi-section structure,
+though bounded by the 50 MiB upload cap since no decompression is
+involved. Fixed: PDF/DOCX/Markdown extraction now track a running byte
+total across sections, stopping once the budget is reached (not just
+truncating each section independently); CSV's rendering was also made
+incremental (row by row, with exact separator-byte accounting) rather
+than joining every row into one string before truncating. A separate
+question — whether a crafted ZIP could lie about a member's declared
+uncompressed size to bypass the DOCX archive-safety check while
+`python-docx` still decompresses a much larger real payload — was
+investigated empirically with a hand-built malicious ZIP fixture and
+confirmed **not** exploitable: Python's `zipfile` module caps
+decompressed output at the declared size regardless of the underlying
+compressed stream's real size, so no code change was needed for that
+path. 4 new regression tests (`test_extraction.py`), each confirmed to
+fail against the pre-fix code before being confirmed to pass against
+the fix. `ruff`/`mypy` clean. Complete backend suite: **425/425
+passing** (421 pre-review + 4 new), 3 consecutive runs.
 
 ### 2026-09-20 — Abuse-protection Slice 3c: escalation audit emission + HTTP-level tests
 

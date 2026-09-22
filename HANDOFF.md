@@ -42,19 +42,21 @@ committed together. See "Completed work (Issue #3 — Slice 3.3: document
 upload API)" below for the full implementation, transaction-consistency,
 and test detail.
 
-**GitHub Issue #3, Slice 3.4 (text extraction) is now IMPLEMENTED and
-TESTED, on branch `issue-3-slice-3-4-text-extraction`** (cut from
-`a6762e2`) — not yet committed/pushed/PR'd as of this line; see "Exact
-next recommended action" at the end of this file. `POST
+**GitHub Issue #3, Slice 3.4 (text extraction) is IMPLEMENTED, TESTED
+(including a pre-merge correctness-review fix), committed, pushed, and
+open as PR #21 — CI 4/4 green, not yet merged**, on branch
+`issue-3-slice-3-4-text-extraction` (cut from `a6762e2`). `POST
 /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` —
 synchronous text extraction (PDF/DOCX/TXT/Markdown/CSV) moving a
 document from `UPLOADED`/`PROCESSING`/`FAILED` to `PARSED` or `FAILED`.
 See "Completed work (Issue #3 — Slice 3.4: text extraction)" below for
-the full implementation, security, crash-safety, and test detail.
-**Do not start Slice 3.5 or any later Issue #3 slice without an
-explicit go-ahead** — no chunking, embeddings, vector indexing, or
-background/queued processing exists; this slice's own scope stops at a
-durably-stored, audited, `PARSED`/`FAILED` document row.
+the full implementation, security, crash-safety, and test detail, and
+the independent review section immediately after it for the fix found
+during PR #21's own pre-merge review. **PR #21 must not be merged, and
+Slice 3.5 must not start, until explicitly instructed** — no chunking,
+embeddings, vector indexing, or background/queued processing exists;
+this slice's own scope stops at a durably-stored, audited,
+`PARSED`/`FAILED` document row.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -1380,9 +1382,14 @@ cleanup* failure) and found one real issue:
 
 ## Completed work (Issue #3 — Slice 3.4: text extraction)
 
-**Implemented, tested; not yet committed, pushed, or opened as a PR**,
-on branch `issue-3-slice-3-4-text-extraction` (cut from `main` at
-`a6762e2`, the now-merged Slice 3.3). Adds exactly one capability:
+**Implemented, tested, committed (`b01cd24`/`8f72916`), pushed, and
+open as PR #21** — CI 4/4 green, not yet merged — on branch
+`issue-3-slice-3-4-text-extraction` (cut from `main` at `a6762e2`, the
+now-merged Slice 3.3). **A dedicated pre-merge correctness/security
+review then found and fixed a real gap in the extracted-text budget,
+committed as `105ec72` on the same branch/PR — see the "Independent
+correctness/security review" section immediately after this one for
+the full detail.** Adds exactly one capability:
 `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process`
 — synchronous text extraction moving a document from
 `UPLOADED`/`PROCESSING`/`FAILED` to `PARSED` or `FAILED`. No chunking,
@@ -1593,6 +1600,159 @@ embedding, vector indexing, or background/queued processing.
   "not yet"/"no code parses file content yet" state to reflect what's
   now actually tested); `PROJECT_STATE.md`, this file, `CHANGELOG.md`.
 
+## Independent correctness/security review (Issue #3 — Slice 3.4, pre-merge)
+
+**Committed as `105ec72` on branch `issue-3-slice-3-4-text-extraction`,
+same PR #21.** A dedicated, line-by-line review of the Slice 3.4 diff
+(not just a re-run of the existing 51 tests) — extraction.py,
+document_service.py, document_repository.py, the schema/audit/
+rate-limit additions, and both test files — against the specific
+threat model Issue #3's own security section names (untrusted PDF/DOCX/
+TXT/Markdown/CSV, DOCX-as-ZIP-container zip-bomb risk, resource/time
+limits, workspace isolation).
+
+**Finding (real, fixed): the extracted-text budget was enforced
+per-section, not per-document.** `_enforce_text_budget()` was called
+independently on each `ExtractedSection.text` with no running total
+across sections. For a single-section format (TXT) this is harmless,
+but PDF (up to 2000 sections, one per page) and DOCX (one section per
+heading) can produce many sections — a document with many sections
+each individually under the per-section cap could still sum to far
+more than the documented `_MAX_EXTRACTED_TEXT_BYTES` (20 MiB) total.
+This is not merely theoretical for PDF specifically: pypdf decompresses
+each page's content stream internally when `extract_text()` is called,
+so a page's share of the already-capped 50 MiB *compressed* upload says
+nothing about that page's *decompressed* text output — a small,
+highly-compressible content stream (repeated text-drawing operators)
+can expand substantially on decompression, the same class of risk the
+DOCX archive-safety check was already built to defend against, just
+via a different mechanism pypdf doesn't expose a pre-flight hook for.
+Markdown has the identical multi-section structure (heading-split), but
+since Markdown decoding is ~1:1 with input bytes (no decompression),
+its worst case is bounded by the 50 MiB upload cap — a real but
+lower-severity instance of the same documentation-accuracy gap (the
+"20 MiB regardless of format" claim in `docs/SECURITY.md` wasn't
+literally true for Markdown either, just less exploitable).
+
+**Verified before fixing, not assumed**: `git stash`ed the fix, re-ran
+the new regression tests against the pre-fix code, and confirmed the
+PDF/DOCX/Markdown tests genuinely fail (40 bytes produced against a
+10-byte budget in each case) while the CSV test passes even without the
+fix — confirming CSV's *final* output was already correctly bounded by
+the old single-call `_enforce_text_budget(rendered)` (the string was
+just built in one large intermediate allocation before being truncated,
+a separate, lower-severity transient-memory concern addressed in the
+same fix for consistency, not because the final result was wrong).
+
+**Fix**: `_extract_pdf`, `_extract_docx`, and `_extract_markdown` now
+track a running byte total across sections via a new
+`_truncate_to_budget(text, *, max_bytes)` helper (returns both the
+truncated text and its actual encoded length, so a caller can
+accumulate precisely); once the running total reaches the budget,
+further pages/sections are skipped entirely — for PDF this also stops
+paying the decompression/`extract_text()` cost for pages whose output
+would only be discarded. `_extract_csv` was rewritten to render
+row-by-row with exact separator-byte accounting (each `"\n"` join
+counted), rather than joining every row into one large string first —
+this also closes a secondary, narrower issue: without separator
+accounting, a CSV with a very large number of tiny rows could let the
+newline separators alone push the final size past the budget even
+though every individual row was itself within it.
+
+**A related question was investigated and found NOT to be a bug**:
+whether the DOCX archive-safety check (which reads only the declared
+`ZipInfo.file_size` from ZIP central-directory metadata, never
+decompressing anything itself) could be bypassed by a crafted ZIP that
+*lies* about a member's declared uncompressed size — e.g., declaring a
+tiny size while the member's real compressed data actually decompresses
+to something huge, letting `python-docx` pay the full decompression
+cost once it later calls `.read()` on that member. This was tested
+directly, not assumed: a ZIP was hand-built (via `zlib.compressobj` and
+raw local-file-header/central-directory `struct.pack` construction,
+bypassing `zipfile.ZipFile.write()`'s own automatic, honest size
+bookkeeping) with a 5 MiB real payload but a declared `file_size` of
+100 bytes. Reading it back confirmed Python's `zipfile.ZipExtFile`
+internally caps *decompressor output* at the declared size (via its own
+`_left` accounting), independent of how much more the underlying
+compressed stream could actually produce — attempting to read past that
+point raises `BadZipFile` (a CRC mismatch against the truncated output)
+rather than silently returning more data. A lied-about size cannot be
+used to extract more real content than declared; it can only make the
+member unreadable. No code change was needed for this path — it was a
+real question worth answering empirically rather than leaving as an
+unverified assumption, and the answer was "already sound."
+
+**Other review areas confirmed correct, not just assumed**:
+
+- **Crash safety**: re-confirmed by reading (not just trusting the
+  existing test) that `mark_processing()` + `db.commit()` happens
+  before the `try` block that reads storage and calls `extraction.extract()`
+  — a crash mid-extraction genuinely leaves the document at
+  `PROCESSING`, which `_REPROCESSABLE_STATUSES` treats as retriable.
+- **Information leakage**: `StorageError`'s own message is never used
+  as `failure_reason` (it embeds the storage key) — a fixed generic
+  string is used instead; `ExtractionError` messages are all hardcoded
+  literals or contain only safe, bounded values (a page index, a
+  fixed extension name) — never a filename, path, or raw library
+  exception text; the fully-unexpected-exception branch logs the real
+  exception server-side (`logger.exception`) and returns a fixed
+  generic reason, never `str(exc)`.
+- **Workspace isolation**: `get_by_id_for_workspace()` scopes the
+  lookup in the query itself (`Document.id == document_id,
+  Document.workspace_id == workspace_id`), not as a post-hoc check —
+  the same IDOR-safe shape as every other workspace-scoped lookup in
+  this codebase; already covered by
+  `test_cross_workspace_document_id_rejected_with_404` (a document ID
+  from workspace A is unreachable through workspace B's ID, even for a
+  real member of workspace B).
+- **Rate limiting**: `enforce_document_process_rate_limit()` mirrors
+  `enforce_document_upload_rate_limit()` exactly (IP + user-ID
+  dimensions via the trusted-proxy-aware `resolve_client_ip()`, Tier A,
+  `fail_open_on_redis_error=False`) — no leaked sensitive data in the
+  rate-limit keys (a UUID and a resolved IP, the same shape every other
+  dimension in this codebase already uses).
+- **Byte-vs-character confusion**: `_truncate_to_budget()` measures via
+  `.encode("utf-8")`, never `len(text)` — confirmed the budget is
+  genuinely bytes, matching its own "20 MiB" documentation, and that a
+  truncation on a split multibyte UTF-8 boundary is handled
+  (`errors="ignore"` on the re-decode) rather than raising or silently
+  keeping one extra malformed byte.
+- **DOCX traversal check**: re-verified `info.filename.replace("\\",
+  "/").split("/")` correctly catches `..` in any position (leading,
+  middle, or via a Windows-style backslash), and that even though the
+  check is currently unreachable in practice (`python-docx`/`zipfile`
+  only ever read members in-memory via `.read()`, never extract to a
+  filesystem path), it remains correct, low-cost defense in depth
+  against that assumption changing in a future library version — as
+  the code's own comment already stated, now independently confirmed
+  rather than taken on faith.
+
+**Reviewed and accepted as a known, low-severity limitation, not
+fixed**: two (or more) concurrent `/process` calls against the same
+document are not prevented by any row-level lock. Traced the actual
+behavior: PostgreSQL's own row-level locking serializes the competing
+`UPDATE`s from `mark_processing()`, so there is no data corruption or
+torn state — but each request still independently performs its own
+extraction attempt (duplicate CPU cost) and its own `record_audit_event()`
+call (duplicate `DOCUMENT_PARSED`/`DOCUMENT_PARSING_FAILED` audit rows
+for one logical operation). Since the underlying content is
+deterministic, both requests converge on the same final `PARSED`/
+`FAILED` outcome — the imperfection is wasted work and audit-log
+duplication, not incorrect data. No pessimistic locking exists anywhere
+else in this codebase (the established pattern is "accept the race,
+use a database constraint as backstop where correctness genuinely
+depends on it" — e.g. upload's duplicate-checksum handling), and adding
+one here would be a new architectural pattern not justified by this
+slice's actual risk. Bounded in practice by the `document_process` rate
+limit (20/60s per user+IP) regardless.
+
+**Verification**: `ruff`/`mypy` clean (97 source files, no new
+findings). 4 new regression tests, each independently confirmed (via
+`git stash`) to fail against the pre-fix code and pass against the fix.
+Complete backend suite: **425/425 passing** (421 pre-review + 4 new),
+**3 consecutive runs**. Frontend not re-run (no frontend file touched
+by this fix).
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -1608,9 +1768,9 @@ embedding, vector indexing, or background/queued processing.
   search UI exists yet for E2E coverage to extend to.
 - **Issue #3 Slices 3.1–3.3 are merged** (`79d4787` PR #17, `941c1a7`
   PR #18, correctness-fix `5e6fdc2` PR #19, `a6762e2` PR #20). **Slice
-  3.4 (text extraction) is implemented, tested, on branch
-  `issue-3-slice-3-4-text-extraction` — not yet committed, pushed, or
-  opened as a PR.** No chunking, embedding, vector indexing, or
+  3.4 (text extraction), including a pre-merge correctness-review fix,
+  is implemented, tested, committed, pushed, and open as PR #21 — CI
+  4/4 green, not yet merged.** No chunking, embedding, vector indexing, or
   background/queued processing exists — documents reach `PARSED` or
   `FAILED` and stop there. `AuditEvent.DOCUMENT_UPLOADED`/
   `DOCUMENT_PARSED`/`DOCUMENT_PARSING_FAILED` are now implemented — the
@@ -1953,17 +2113,19 @@ Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.3
 PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7`
 PR #18, `5e6fdc2` PR #19, `a6762e2` PR #20) — nothing pending for any of
 them. `main`/`origin/main` are at `a6762e2`. **GitHub Issue #3, Slice
-3.4 (text extraction) is implemented and tested, on branch
-`issue-3-slice-3-4-text-extraction`** (cut from `a6762e2`) — not yet
-committed, pushed, or opened as a PR. See "Completed work (Issue #3 —
-Slice 3.4...)" above. The next work, in order:
+3.4 (text extraction), including a pre-merge correctness-review fix, is
+implemented, tested, committed, pushed, and open as PR #21 — CI 4/4
+green, not yet merged**, on branch `issue-3-slice-3-4-text-extraction`
+(cut from `a6762e2`). See "Completed work (Issue #3 — Slice 3.4...)"
+and the "Independent correctness/security review" section immediately
+after it, above. The next work, in order:
 
-1. **Commit Slice 3.4** on the current branch, push it, and open a PR
-   against `main`. This slice's own real-stack validation (51 focused
-   tests, full 421-test suite × 3 runs, a live Docker Compose smoke test
-   with the backend image rebuilt for the new `pypdf`/`python-docx`
-   dependencies) is already done locally. Get it reviewed, confirm CI is
-   green, and merge — do not merge without review.
+1. **Get PR #21 reviewed and merged.** This slice's own real-stack
+   validation (55 focused tests, full 425-test suite × 3 runs, a live
+   Docker Compose smoke test with the backend image rebuilt for the new
+   `pypdf`/`python-docx` dependencies, plus an independent pre-merge
+   correctness/security review that found and fixed one real gap) is
+   already done. Do not merge without review.
 2. **Once merged, with an explicit go-ahead:** scope and implement
    GitHub Issue #3, Slice 3.5 (not yet scoped in this file — see "Next
    major task" above).
