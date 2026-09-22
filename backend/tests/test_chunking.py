@@ -279,6 +279,31 @@ def test_small_trailing_remainder_is_merged_into_the_previous_chunk_when_it_fits
     assert "iota" in chunks[-1].content
 
 
+def test_unmergeable_trailing_remainder_is_emitted_below_min_chunk_size() -> None:
+    # min_chunk_size is documented as a target, not an absolute
+    # guarantee, with one exception: a trailing remainder that can't
+    # merge into the previous chunk without exceeding max_chunk_size.
+    # Reproduced directly (not just trusted from the docstring): ten
+    # 9-character words pack into 19-character chunks (just under the
+    # 20-char max), leaving no room for the final 1-character piece to
+    # merge back -- confirming the exception is genuinely reachable, not
+    # merely theoretical, and that reaching it doesn't crash, drop
+    # content, or violate max_chunk_size.
+    config = ChunkingConfig(
+        target_chunk_size=18, chunk_overlap=0, min_chunk_size=10, max_chunk_size=20
+    )
+    words = ["123456789"] * 10 + ["x"]
+    text = " ".join(words)
+    chunks = StructureAwareChunker(config=config).chunk(
+        _doc(ExtractedSection(text=text, page=1, heading=None))
+    )
+    sizes = [len(c.content) for c in chunks]
+    assert sizes[-1] < config.min_chunk_size  # the documented, unavoidable exception
+    assert all(size <= config.max_chunk_size for size in sizes)  # never violated, even here
+    assert chunks[-1].content == "x"  # the final piece survives intact, not dropped
+    assert [c.chunk_index for c in chunks] == list(range(len(chunks)))
+
+
 def test_no_chunk_ever_exceeds_max_chunk_size_across_varied_inputs() -> None:
     config = ChunkingConfig(
         target_chunk_size=50, chunk_overlap=10, min_chunk_size=20, max_chunk_size=80
@@ -478,6 +503,28 @@ def test_large_document_chunks_quickly_no_quadratic_blowup() -> None:
     chunks = StructureAwareChunker(config=config).chunk(doc)
     elapsed = time.monotonic() - start
     assert chunks
+    assert elapsed < 5.0  # generous; a quadratic-blowup bug would be far slower
+
+
+def test_single_large_section_chunks_in_bounded_linear_time() -> None:
+    # A single very large section -- the shape TXT/CSV always produce
+    # (exactly one section for the whole document), distinct from the
+    # 50-section test above, which never exercises the single-section
+    # code path at any real scale. Confirms linear-time behavior holds
+    # for this shape too, not only for many small sections.
+    import time
+
+    config = ChunkingConfig(
+        target_chunk_size=800, chunk_overlap=100, min_chunk_size=200, max_chunk_size=1500
+    )
+    text = "This is a realistic sentence with normal words in it. " * 20_000  # ~1.1M chars
+    doc = _doc(ExtractedSection(text=text, page=None, heading=None))
+    start = time.monotonic()
+    chunks = StructureAwareChunker(config=config).chunk(doc)
+    elapsed = time.monotonic() - start
+    assert chunks
+    assert all(len(c.content) <= config.max_chunk_size for c in chunks)
+    assert [c.chunk_index for c in chunks] == list(range(len(chunks)))
     assert elapsed < 5.0  # generous; a quadratic-blowup bug would be far slower
 
 

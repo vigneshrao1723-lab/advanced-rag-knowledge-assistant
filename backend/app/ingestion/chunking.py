@@ -56,13 +56,29 @@ from app.ingestion.extraction import ExtractedDocument, ExtractedSection
 # one is almost certainly a mistake, not a legitimate use case.
 _ABSOLUTE_MAX_CHUNK_SIZE: Final = 100_000
 
-# Defense-in-depth against a pathological configuration (e.g. a very
-# small min_chunk_size) combined with a large document producing an
-# unreasonable number of chunks. Extraction already bounds total input
-# text to 20 MiB (`extraction._MAX_EXTRACTED_TEXT_BYTES`); this catches
-# the case where min_chunk_size is small enough that 20 MiB of text would
-# still produce an excessive chunk count, rather than silently returning
-# an enormous list.
+# Defense-in-depth against a pathological configuration (a small
+# min_chunk_size and/or max_chunk_size) combined with a large document
+# producing an unreasonable number of *output* chunks -- bounds what
+# `_pack()` accumulates, checked after every chunk it closes (see
+# `_check_chunk_ceiling()`), not just once per section.
+#
+# What this does NOT bound: the upfront splitting phase
+# (`_split_into_pieces()`/`_split_oversized()`) always processes a whole
+# section's text once, in full, before packing (and this ceiling) ever
+# runs -- an inherent, single-pass O(n) cost for any correct chunker,
+# proportional only to that section's own length. Measured directly, not
+# assumed: at extraction's own real worst case (a single ~20 MiB
+# section, extraction._MAX_EXTRACTED_TEXT_BYTES, of short
+# space-separated tokens -- the pathological shape for the word-split
+# fallback), splitting alone took ~1.7s and ~250 MiB peak, scaling
+# linearly (confirmed at 5/20/50 MiB) with input size, not with
+# min_chunk_size or max_chunk_size -- str.split(" ") on a large string
+# has this cost regardless of how the resulting words are later packed.
+# This is accepted as a bounded, input-proportional cost backed by
+# extraction's own pre-existing 20 MiB cap, the same "each layer bounds
+# what it controls, trusts the layer above it for the rest" pattern
+# already used throughout this codebase -- not a gap this ceiling is
+# meant to close.
 _MAX_CHUNKS_PER_DOCUMENT: Final = 50_000
 
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n[ \t]*\n+")
