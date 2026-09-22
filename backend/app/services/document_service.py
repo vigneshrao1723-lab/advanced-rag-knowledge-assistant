@@ -23,6 +23,7 @@ here or anywhere in this slice.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -374,6 +375,24 @@ def _extension_from_storage_key(storage_key: str) -> str:
     return PurePosixPath(storage_key).suffix.lower()
 
 
+def _read_and_extract(
+    *, storage: StorageProvider, storage_key: str, extension: str
+) -> extraction.ExtractedDocument:
+    """Synchronous, potentially CPU- and I/O-bound: the storage read and
+    the parser call. Deliberately a single plain function (not a
+    coroutine) so it can be run via `asyncio.to_thread()` in
+    `process_document()` below -- this project runs one uvicorn process
+    with no `--workers` (see `infra/docker/backend.Dockerfile`'s
+    entrypoint), so calling this directly inside an `async def` would
+    block that single event loop, and with it every other concurrent
+    request this process is serving, for the full duration of parsing a
+    single document. Confirmed empirically, not just reasoned about: a
+    synchronous call here measurably stalled an unrelated concurrent
+    request until the slow call finished."""
+    content = storage.read(key=storage_key)
+    return extraction.extract(extension=extension, content=content)
+
+
 async def process_document(
     db: Session,
     *,
@@ -383,11 +402,13 @@ async def process_document(
     storage: StorageProvider,
     ip_address: str | None = None,
 ) -> DocumentRead:
-    """Synchronous text extraction. Deliberately not a background job:
-    per this slice's own scope, the minimum execution mechanism needed is
-    "call the extractor while handling the request" -- introducing a
-    queue/worker for this would be new infrastructure this slice doesn't
-    justify.
+    """Synchronous text extraction, run within the request -- not a
+    background job: per this slice's own scope, the minimum execution
+    mechanism needed is "call the extractor while handling the request",
+    not a new queue/worker infrastructure. The extraction itself (storage
+    read + parsing) runs via `asyncio.to_thread()` in a worker thread, not
+    directly on the event loop -- see `_read_and_extract()`'s docstring
+    for why that distinction matters even without a background job.
 
     The PROCESSING transition is committed on its own, *before*
     extraction is attempted -- so if this process crashes or is killed
@@ -415,9 +436,13 @@ async def process_document(
     extracted: extraction.ExtractedDocument | None = None
     reason: str | None = None
     try:
-        content = storage.read(key=document.storage_key)
         extension = _extension_from_storage_key(document.storage_key)
-        extracted = extraction.extract(extension=extension, content=content)
+        extracted = await asyncio.to_thread(
+            _read_and_extract,
+            storage=storage,
+            storage_key=document.storage_key,
+            extension=extension,
+        )
     except StorageError:
         # Never include the StorageError's own message here -- it embeds
         # the storage key (see storage_provider.py), which must never

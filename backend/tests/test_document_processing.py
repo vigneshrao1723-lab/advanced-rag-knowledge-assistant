@@ -13,7 +13,9 @@ together, the way a real client would.
 
 from __future__ import annotations
 
+import asyncio
 import io
+import time
 import uuid
 import zipfile
 from collections.abc import Callable, Iterator
@@ -21,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import docx
+import httpx
 import pytest
 import redis
 from fastapi import FastAPI
@@ -35,7 +38,6 @@ from app.core.redis_keys import rate_limit_key
 from app.ingestion import extraction
 from app.models.audit_log import AuditLog
 from app.models.document import Document, DocumentStatus
-from app.repositories import document_repository
 from app.services.storage_provider import (
     LocalStorage,
     StorageError,
@@ -467,6 +469,19 @@ def test_unexpected_extraction_exception_transitions_to_failed_not_a_500(
 def test_processing_transition_is_committed_before_extraction_is_attempted(
     client: TestClient, db_session: DbSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Extraction runs via asyncio.to_thread() (see document_service.py's
+    # _read_and_extract() docstring -- a synchronous, potentially
+    # CPU-bound call inside an async endpoint would otherwise block this
+    # project's single uvicorn process for every other concurrent
+    # request), so the extraction spy below executes on a worker thread,
+    # not the thread that owns `db_session`. SQLAlchemy Sessions are not
+    # thread-safe, so this test deliberately does NOT query the database
+    # from inside the spy (unlike a same-thread version of this test
+    # could) -- instead it records the *relative order* of "a commit
+    # happened" vs. "extraction started" via plain list.append() calls,
+    # which is safe across threads under the GIL, and proves the same
+    # property: PROCESSING must be committed strictly before extraction
+    # is even attempted.
     _register(client)
     workspace = _create_workspace(client)
     document = _upload(
@@ -476,29 +491,110 @@ def test_processing_transition_is_committed_before_extraction_is_attempted(
         content=_PDF_BYTES,
         content_type="application/pdf",
     )
-    document_id = uuid.UUID(document["id"])
-    workspace_id = uuid.UUID(workspace["id"])
 
-    seen_status: list[DocumentStatus] = []
+    order: list[str] = []
     real_extract = extraction.extract
+    real_commit = db_session.commit
 
-    def _spy(*, extension: str, content: bytes) -> extraction.ExtractedDocument:
-        # Reads through the *same* session process_document is using --
-        # if PROCESSING wasn't already committed (as its own transaction,
-        # separate from the eventual PARSED/FAILED commit), this would
-        # still observe UPLOADED here.
-        current = document_repository.get_by_id_for_workspace(
-            db_session, workspace_id=workspace_id, document_id=document_id
-        )
-        assert current is not None
-        seen_status.append(current.status)
+    def _tracking_commit() -> None:
+        order.append("commit")
+        real_commit()
+
+    def _spy_extract(*, extension: str, content: bytes) -> extraction.ExtractedDocument:
+        order.append("extract_started")
         return real_extract(extension=extension, content=content)
 
-    monkeypatch.setattr(extraction, "extract", _spy)
+    monkeypatch.setattr(db_session, "commit", _tracking_commit)
+    monkeypatch.setattr(extraction, "extract", _spy_extract)
 
     response = _process(client, workspace["id"], document["id"])
     assert response.status_code == 200, response.text
-    assert seen_status == [DocumentStatus.PROCESSING]
+
+    # order[0] is the PROCESSING-transition commit; "extract_started"
+    # (and every later commit, for mark_parsed/mark_failed) must come
+    # strictly after it -- if the commit happened only after extraction,
+    # a crash during extraction could leave the document looking like it
+    # was never touched (still UPLOADED) rather than honestly PROCESSING.
+    assert order[0] == "commit"
+    assert order.index("extract_started") > order.index("commit")
+
+
+# --- resource exhaustion: a slow extraction must not block other requests --
+
+
+@pytest.mark.asyncio
+async def test_slow_extraction_does_not_block_unrelated_concurrent_requests(
+    app: FastAPI, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # This project runs one uvicorn process with no --workers (see
+    # infra/docker/backend.Dockerfile's entrypoint), so if extraction ran
+    # synchronously inside the async endpoint, a single slow/pathological
+    # document would stall every other concurrent request this process is
+    # serving -- not just the caller's own -- for the full duration of
+    # parsing. document_service._read_and_extract() runs via
+    # asyncio.to_thread() specifically to prevent this. Proven here with
+    # real concurrency (httpx.AsyncClient over an in-process ASGI
+    # transport, sharing the same event loop the app itself runs on) and
+    # an absolute shared clock, not per-request-relative timings, which
+    # would hide exactly this kind of event-loop-blocking bug.
+    app.dependency_overrides[get_storage_provider] = lambda: LocalStorage(root=str(tmp_path))
+
+    def _slow_extract(*, extension: str, content: bytes) -> extraction.ExtractedDocument:
+        time.sleep(1.0)  # simulates real CPU-bound parser work
+        return extraction.ExtractedDocument(sections=[], page_count=1)
+
+    monkeypatch.setattr(extraction, "extract", _slow_extract)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as async_client:
+        csrf_response = await async_client.get("/api/v1/auth/csrf")
+        csrf_token = csrf_response.cookies.get("csrf_token")
+        headers = {"X-CSRF-Token": csrf_token or ""}
+
+        register_response = await async_client.post(
+            "/api/v1/auth/register",
+            json={"email": _unique_email(), "password": _PASSWORD},
+            headers=headers,
+        )
+        assert register_response.status_code == 201, register_response.text
+
+        workspace_response = await async_client.post(
+            "/api/v1/workspaces", json={"name": "concurrency-check"}, headers=headers
+        )
+        assert workspace_response.status_code == 201, workspace_response.text
+        workspace_id = workspace_response.json()["id"]
+
+        upload_response = await async_client.post(
+            f"/api/v1/workspaces/{workspace_id}/documents",
+            files={"file": ("a.pdf", _PDF_BYTES, "application/pdf")},
+            headers=headers,
+        )
+        assert upload_response.status_code == 201, upload_response.text
+        document_id = upload_response.json()["id"]
+
+        t_zero = time.monotonic()
+
+        async def slow_process() -> None:
+            response = await async_client.post(
+                f"/api/v1/workspaces/{workspace_id}/documents/{document_id}/process",
+                headers=headers,
+            )
+            assert response.status_code == 200, response.text
+
+        async def fast_health() -> float:
+            await asyncio.sleep(0.2)
+            response = await async_client.get("/api/v1/health")
+            assert response.status_code == 200
+            return time.monotonic() - t_zero
+
+        _, fast_finish = await asyncio.gather(slow_process(), fast_health())
+
+    # The health check was scheduled to fire at t=0.2s. If extraction were
+    # blocking the event loop, it wouldn't complete until the ~1s slow
+    # extraction finished too. A generous threshold (well under the 1s
+    # extraction time) avoids test flakiness from ordinary scheduling
+    # jitter while still failing hard if the event loop was blocked.
+    assert fast_finish < 0.6
 
 
 # --- authorization / lifecycle -----------------------------------------------
