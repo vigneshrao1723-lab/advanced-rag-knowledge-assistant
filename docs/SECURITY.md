@@ -237,12 +237,68 @@ caller-supplied key.
   `forgot-password`/`reset-password`) and audited
   (`AuditEvent.DOCUMENT_UPLOADED`, `backend/app/core/audit.py`) exactly
   once per successful upload.
-- **Not yet implemented**, deliberately out of this slice's scope:
-  resource/time limits on *parsing* (nothing parses anything yet — that
-  risk applies once Slice 3.4 adds real extraction), malformed/corrupt
-  document handling beyond the lightweight checks above, and any
+- Not yet implemented, deliberately out of this slice's scope: any
   document-level authorization beyond the standard workspace role check
   (no per-document ACLs exist).
+
+**Implemented (Issue #3, Slice 3.4 — text extraction,**
+`POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process`,
+`backend/app/ingestion/extraction.py` +
+`backend/app/services/document_service.py::process_document`**):** every
+uploaded document is treated as untrusted input at extraction time, not
+just at upload time.
+
+- **Malformed/corrupt document handling**: every parser failure (pypdf,
+  python-docx, `zipfile`, `csv`, a text-decode error, or any other
+  unexpected exception) is caught and normalized to a `FAILED` status
+  with a short, generic `failure_reason` — never a crash, never a raw
+  library exception, filesystem path, or storage key reaching the
+  client. The endpoint itself always returns `200`; a parsing failure is
+  an expected, handled outcome recorded on the document row, not a
+  request-level error.
+- **DOCX zip-bomb / path-traversal defense**: DOCX is a ZIP container, so
+  a `%PDF-`/`PK\x03\x04`-style signature match at upload time says
+  nothing about safety at parse time. Before `python-docx` ever runs, a
+  pre-flight check reads only ZIP central-directory metadata
+  (`ZipInfo.file_size`/`.filename` — no member is decompressed) and
+  rejects: any member name containing `..` or starting with `/`
+  (traversal), any single member's declared uncompressed size over 50
+  MiB, a total declared uncompressed size over 200 MiB (the zip-bomb
+  case — a highly compressible member can have a tiny on-disk footprint
+  and a huge declared size), and more than 2000 members. Real DOCX
+  content is read only in-memory via `BytesIO`, never extracted to disk.
+- **PDF resource limits**: page count capped at 2000; per-page text
+  extraction is wrapped so one malformed page's parser exception doesn't
+  crash the whole document. **Known limitation, documented not hidden**:
+  no wall-clock/CPU timeout exists for a single pathological PDF's parse
+  — true preemption of synchronous CPU-bound work inside an async
+  handler would be a disproportionate addition for this slice; the page
+  cap is the primary bound.
+- **Output-size bound**: extracted text is capped at 20 MiB regardless of
+  format, independent of the (already-enforced) 50 MiB upload-size
+  limit — a small-but-pathological input (e.g. a PDF that expands
+  unusually on extraction) still can't produce unbounded extracted text.
+- **TXT/Markdown/CSV**: decoded with `errors="replace"` — an invalid byte
+  sequence never raises, never crashes extraction; CSV additionally
+  bounds per-field size via Python's own `csv` module default, raising a
+  normalized `ExtractionError` (not a crash) if exceeded.
+- Extraction reads exclusively through `StorageProvider`, using the
+  server-generated storage key — the client-supplied filename is never
+  touched again at this stage beyond having already picked the extension
+  at upload time.
+- **Crash safety**: the document's `PROCESSING` transition is committed
+  as its own database transaction *before* extraction is attempted, so a
+  process crash or restart mid-parse leaves the document at `PROCESSING`
+  (itself treated as retriable) rather than falsely appearing `PARSED`.
+- Rate-limited (`document_process` operation, same IP + user-ID
+  dimensions and Tier A policy as `document_upload`, since extraction is
+  CPU-bound and a repeat-triggerable resource cost) and audited
+  (`AuditEvent.DOCUMENT_PARSED` on success,
+  `AuditEvent.DOCUMENT_PARSING_FAILED` on failure — metadata never
+  includes a raw exception, filesystem path, or storage key).
+- **Not yet implemented**, deliberately out of this slice's scope:
+  chunking, embeddings, vector indexing, and any background/queued
+  processing (extraction is synchronous, within the request).
 
 ## Prompt injection defense
 
@@ -300,8 +356,13 @@ references. **`AuditEvent.DOCUMENT_UPLOADED` is implemented** (Issue #3,
 Slice 3.3) — emitted exactly once per successful upload, from the
 document row's own committing transaction (see "Upload & document
 safety" above for the exact metadata and the transaction-consistency
-detail). Document-delete and other document-lifecycle audit events will
-be added when those surfaces exist.
+detail). **`AuditEvent.DOCUMENT_PARSED`/`DOCUMENT_PARSING_FAILED` are
+implemented** (Issue #3, Slice 3.4) — emitted exactly once per
+`/process` call, on the extraction outcome (never on an already-`PARSED`
+`409` rejection, which never reaches the extraction step at all); see
+"Upload & document safety" above for the exact metadata. Document-delete
+and other document-lifecycle audit events will be added when those
+surfaces exist.
 
 ## Security testing
 
@@ -312,20 +373,30 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
   **Implemented (Issue #2)** for workspaces/membership themselves —
   `backend/tests/test_workspaces.py` proves a non-member gets `404` (never
   `403`, never real data) on every workspace-scoped endpoint. **Extended
-  to documents (Issue #3, Slice 3.3)** — `backend/tests/test_document_upload.py`
-  proves the same 404-not-403 behavior for document upload, and that a
-  duplicate-checksum match in one workspace never affects or is visible
-  from another. Conversations/collections don't exist yet.
+  to documents (Issue #3, Slices 3.3–3.4)** —
+  `backend/tests/test_document_upload.py` proves the same 404-not-403
+  behavior for document upload, and that a duplicate-checksum match in
+  one workspace never affects or is visible from another;
+  `backend/tests/test_document_processing.py` proves the same for
+  `/process` — a document ID from one workspace is unreachable through
+  another workspace's ID, even for a real member of that other
+  workspace. Conversations/collections don't exist yet.
 - **Malicious upload tests** — oversized files, mismatched
   extension/content, malformed PDFs/DOCX, zip-bomb-style payloads; must be
-  rejected or safely contained. **Partially implemented (Issue #3, Slice
-  3.3)** — `backend/tests/test_document_upload.py` covers oversized
-  uploads, extension/MIME/signature mismatches, and malformed multipart
-  input, all real-Postgres/real-filesystem, no mocks. Genuinely malformed
-  *internal* document structure (a truncated-but-signature-matching PDF,
-  a corrupt DOCX zip) and zip-bomb-style decompression risk are not
-  covered — no code parses file content yet; that testing lands with the
-  extraction slice that actually opens these files.
+  rejected or safely contained. **Implemented (Issue #3, Slices 3.3–3.4)**
+  — `backend/tests/test_document_upload.py` covers oversized uploads,
+  extension/MIME/signature mismatches, and malformed multipart input.
+  Genuinely malformed *internal* document structure and zip-bomb-style
+  decompression risk are covered by Slice 3.4's extraction tests:
+  `backend/tests/test_extraction.py` (unit-level — malformed PDF/DOCX,
+  four archive-member-traversal name patterns, per-member/total/
+  member-count ZIP limits including one real highly-compressible
+  60 MB→~50 KB zip-bomb-shaped member rejected at the real default
+  threshold, a malformed CSV exceeding the field-size limit, invalid
+  UTF-8 byte sequences) and `backend/tests/test_document_processing.py`
+  (HTTP-level — malformed PDF/DOCX/CSV and a DOCX archive-traversal
+  attempt each transition the document to `FAILED` with a `200`
+  response and a safe `failure_reason`, never a `500` or a crash).
 - **Prompt injection tests** — documents containing instruction-like text
   ("ignore the above," attempts to leak system prompt or other users'
   data); the system must not comply with injected instructions. Not

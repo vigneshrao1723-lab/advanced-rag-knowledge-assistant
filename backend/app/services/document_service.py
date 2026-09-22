@@ -1,22 +1,33 @@
-"""Document upload orchestration (Issue #3, Slice 3.3).
+"""Document upload and processing orchestration (Issue #3, Slices 3.3/3.4).
 
-Ordering, deliberately: validate (extension/MIME, no body read needed) ->
-stream-read the body (bounded, computing the checksum as it goes) ->
-magic-byte consistency check -> workspace-scoped duplicate check ->
-generate a storage key -> StorageProvider.save() -> DB insert -> audit
+**Upload** (Slice 3.3) ordering: validate (extension/MIME, no body read
+needed) -> stream-read the body (bounded, computing the checksum as it
+goes) -> magic-byte consistency check -> workspace-scoped duplicate check
+-> generate a storage key -> StorageProvider.save() -> DB insert -> audit
 event -> commit. Storage always succeeds before anything is written to
 Postgres — see `_persist_document()` for exactly how a failure after the
 storage write is compensated for.
 
-This is schema/upload only. No extraction, chunking, embedding, or state
-transition beyond UPLOADED happens here or anywhere in this slice.
+**Processing / text extraction** (Slice 3.4): `process_document()` moves
+a document from UPLOADED/PROCESSING/FAILED to PARSED or FAILED, via
+`app.ingestion.extraction`. The PROCESSING transition is committed as its
+own transaction *before* extraction is attempted — see that function's
+docstring for why. Extraction always reads through the existing
+StorageProvider (never a raw filesystem path) and operates on the
+server-generated storage key, never the client-supplied filename beyond
+recovering its (already-validated-at-upload) extension.
+
+No chunking, embedding, or state transition beyond PARSED/FAILED happens
+here or anywhere in this slice.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import uuid
+from pathlib import PurePosixPath
 from typing import Final
 
 from fastapi import HTTPException, UploadFile, status
@@ -25,10 +36,12 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import AuditEvent
 from app.core.audit import record as record_audit_event
-from app.models.document import Document
+from app.ingestion import extraction
+from app.ingestion.extraction import ExtractionError
+from app.models.document import Document, DocumentStatus
 from app.repositories import document_repository
 from app.schemas.document import DocumentRead
-from app.services.storage_provider import StorageProvider
+from app.services.storage_provider import StorageError, StorageProvider
 
 logger = logging.getLogger("app.documents")
 
@@ -189,6 +202,7 @@ def _to_document_read(document: Document) -> DocumentRead:
         checksum_sha256=document.checksum_sha256,
         status=document.status,
         page_count=document.page_count,
+        failure_reason=document.failure_reason,
         created_at=document.created_at,
         updated_at=document.updated_at,
     )
@@ -322,4 +336,161 @@ async def upload_document(
     return _to_document_read(document)
 
 
-__all__ = ["upload_document"]
+# A document can be (re)processed from UPLOADED (first attempt), PROCESSING
+# (a prior attempt was interrupted -- e.g. a crash or restart mid-extraction
+# -- and never reached PARSED/FAILED, so it's treated as retriable rather
+# than stuck forever), or FAILED (explicit retry after a fixable failure).
+# PARSED and every later lifecycle state (CLEANED/CHUNKED/EMBEDDED/INDEXED/
+# READY) are refused with 409 -- extraction has already happened or the
+# document has moved past it.
+_REPROCESSABLE_STATUSES: Final = frozenset(
+    {DocumentStatus.UPLOADED, DocumentStatus.PROCESSING, DocumentStatus.FAILED}
+)
+
+
+def _document_not_found_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"code": "document_not_found", "message": "Document not found."},
+    )
+
+
+def _document_already_processed_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "document_already_processed",
+            "message": "This document has already been processed.",
+        },
+    )
+
+
+def _extension_from_storage_key(storage_key: str) -> str:
+    """The storage key is server-generated (`_generate_storage_key()`
+    above) as `f"{workspace_id}/{document_id}{extension}"`, where
+    `extension` is itself drawn from the same validated allowlist
+    upload-time extraction dispatch uses -- never the client-supplied
+    filename. `PurePosixPath` is used only for its `.suffix` parsing (no
+    filesystem access), matching the key's always-forward-slash shape."""
+    return PurePosixPath(storage_key).suffix.lower()
+
+
+def _read_and_extract(
+    *, storage: StorageProvider, storage_key: str, extension: str
+) -> extraction.ExtractedDocument:
+    """Synchronous, potentially CPU- and I/O-bound: the storage read and
+    the parser call. Deliberately a single plain function (not a
+    coroutine) so it can be run via `asyncio.to_thread()` in
+    `process_document()` below -- this project runs one uvicorn process
+    with no `--workers` (see `infra/docker/backend.Dockerfile`'s
+    entrypoint), so calling this directly inside an `async def` would
+    block that single event loop, and with it every other concurrent
+    request this process is serving, for the full duration of parsing a
+    single document. Confirmed empirically, not just reasoned about: a
+    synchronous call here measurably stalled an unrelated concurrent
+    request until the slow call finished."""
+    content = storage.read(key=storage_key)
+    return extraction.extract(extension=extension, content=content)
+
+
+async def process_document(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    document_id: uuid.UUID,
+    triggered_by: uuid.UUID,
+    storage: StorageProvider,
+    ip_address: str | None = None,
+) -> DocumentRead:
+    """Synchronous text extraction, run within the request -- not a
+    background job: per this slice's own scope, the minimum execution
+    mechanism needed is "call the extractor while handling the request",
+    not a new queue/worker infrastructure. The extraction itself (storage
+    read + parsing) runs via `asyncio.to_thread()` in a worker thread, not
+    directly on the event loop -- see `_read_and_extract()`'s docstring
+    for why that distinction matters even without a background job.
+
+    The PROCESSING transition is committed on its own, *before*
+    extraction is attempted -- so if this process crashes or is killed
+    mid-extraction (a large PDF, a slow parse), the document is left
+    honestly at PROCESSING, which `_REPROCESSABLE_STATUSES` above treats
+    as retriable, rather than silently vanishing mid-request while still
+    claiming (via a stale UPLOADED row) that processing never started.
+
+    A parsing failure is an expected, handled outcome, not a server
+    error: it is recorded as FAILED with a generic reason, audited, and
+    returned as an ordinary 200 response -- never raised as an
+    HTTPException and never left silently unrecorded.
+    """
+    document = document_repository.get_by_id_for_workspace(
+        db, workspace_id=workspace_id, document_id=document_id
+    )
+    if document is None:
+        raise _document_not_found_error()
+    if document.status not in _REPROCESSABLE_STATUSES:
+        raise _document_already_processed_error()
+
+    document = document_repository.mark_processing(db, document=document)
+    db.commit()
+
+    extracted: extraction.ExtractedDocument | None = None
+    reason: str | None = None
+    try:
+        extension = _extension_from_storage_key(document.storage_key)
+        extracted = await asyncio.to_thread(
+            _read_and_extract,
+            storage=storage,
+            storage_key=document.storage_key,
+            extension=extension,
+        )
+    except StorageError:
+        # Never include the StorageError's own message here -- it embeds
+        # the storage key (see storage_provider.py), which must never
+        # reach an API response (docs/SECURITY.md "Upload & document
+        # safety").
+        reason = "The document's stored file could not be read."
+    except ExtractionError as exc:
+        # extraction.py's own messages are already short, generic, and
+        # storage-safe by construction -- see that module's docstring.
+        reason = str(exc)
+    except Exception:  # noqa: BLE001 - any other parser failure must not crash the request
+        logger.exception(
+            "document_processing_unexpected_failure",
+            extra={"document_id": str(document.id)},
+        )
+        reason = "Processing failed due to an unexpected error."
+
+    if extracted is None:
+        assert reason is not None
+        document = document_repository.mark_failed(db, document=document, reason=reason)
+        record_audit_event(
+            db,
+            event_type=AuditEvent.DOCUMENT_PARSING_FAILED,
+            user_id=triggered_by,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+            metadata={"document_id": str(document.id), "reason": reason},
+        )
+        db.commit()
+        return _to_document_read(document)
+
+    document = document_repository.mark_parsed(
+        db, document=document, page_count=extracted.page_count
+    )
+    record_audit_event(
+        db,
+        event_type=AuditEvent.DOCUMENT_PARSED,
+        user_id=triggered_by,
+        workspace_id=workspace_id,
+        ip_address=ip_address,
+        metadata={
+            "document_id": str(document.id),
+            "page_count": extracted.page_count,
+            "section_count": len(extracted.sections),
+        },
+    )
+    db.commit()
+    return _to_document_read(document)
+
+
+__all__ = ["process_document", "upload_document"]

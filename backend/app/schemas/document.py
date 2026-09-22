@@ -16,5 +16,6 @@ class DocumentRead(BaseModel):
     checksum_sha256: str
     status: DocumentStatus
     page_count: int | None
+    failure_reason: str | None
     created_at: datetime
     updated_at: datetime

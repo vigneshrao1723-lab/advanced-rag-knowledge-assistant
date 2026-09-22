@@ -39,6 +39,8 @@ class AuditEvent:
     RATE_LIMITED = "rate_limited"
     ABUSE_TEMPORARY_BLOCK_APPLIED = "abuse_temporary_block_applied"
     DOCUMENT_UPLOADED = "document_uploaded"
+    DOCUMENT_PARSED = "document_parsed"
+    DOCUMENT_PARSING_FAILED = "document_parsing_failed"
 
 
 def record(
