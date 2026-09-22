@@ -2121,6 +2121,104 @@ transition happens. Wiring `Chunk`s into `document_chunks` rows and the
   of the already-existing `document_chunks` schema, not a new decision
   being made).
 
+## Final independent review (Issue #3 — Slice 3.5, same PR #22)
+
+Stress-tested the already-merged-into-this-branch implementation
+against every area the review brief named, beyond what the original 45
+tests covered. **No new correctness or security bug was found**; two
+genuine test/documentation gaps were found and closed.
+
+- **Unicode/multi-script correctness, verified directly, not assumed**:
+  chunked real Tamil (`தமிழ்`), Kannada (`ಕನ್ನಡ`), Hindi (`हिन्दी`), emoji
+  (including multi-codepoint ZWJ sequences like `👨‍👩‍👧‍👦`), CJK text
+  (space-free, so it exercises the hard-character-fallback path via
+  `_split_oversized`'s word-split branch failing to find any spaces),
+  and combining-character sequences (`e` + U+0301) — `max_chunk_size`
+  held in every case. Confirmed via direct inspection that the module
+  never calls `.encode()`/`.decode()`/`bytes()` anywhere (`grep` came up
+  empty), so `len(text)` and all slicing are Python's native
+  codepoint-based `str` operations throughout — sizing is genuinely
+  character-based, never accidentally byte-based. A zero-overlap CJK
+  reconstruction test confirmed no content loss or corruption (only the
+  inserted `"\n\n"` piece-join separators account for any length
+  difference from the original).
+- **Overlap attacked specifically**: overlap=1, overlap=`min_chunk_size`-1,
+  overlap after hard-character splitting (a 1000-character single
+  "word"), a short trailing remainder, and — most importantly — overlap
+  across two different sections. Confirmed directly: a chunk from
+  section 2 never starts with section 1's overlap tail, and no chunk
+  from one page/section ever contains a substring unique to a different
+  page/section's content. No orphan chunks, no `max_chunk_size`
+  violations, no index gaps, in any of these configurations.
+- **`min_chunk_size` exception verified genuinely unavoidable, not just
+  accepted because documented**: reproduced directly — ten 9-character
+  words packed at `target_chunk_size=18`/`max_chunk_size=20` fill each
+  chunk to 19 characters, leaving no room (19+2+1=22 > 20) for an
+  11th, 1-character word to merge back. Considered whether a smarter
+  global-redistribution algorithm (rebalancing across multiple already-
+  closed chunks, not just the immediately-previous one) could close
+  this exactly, and judged it not worth the added complexity: it would
+  require re-splitting an earlier chunk's content at a non-boundary
+  point (undermining the paragraph/sentence/word boundary preference
+  for that shaved-off portion) for a purely cosmetic improvement (one
+  undersized chunk at a section's end) that never violates the one hard
+  guarantee (`max_chunk_size`) or causes data loss — not a correctness/
+  security issue, and a materially larger change than this finding
+  warrants. **No regression test previously locked this behavior
+  in — added one** (`test_unmergeable_trailing_remainder_is_emitted_below_min_chunk_size`).
+- **Resource safety re-verified with algorithmic reasoning, not just a
+  timing test**: confirmed `_split_into_pieces()`'s cost is inherently
+  single-pass/O(n) per section (each regex split and recursive
+  `_split_oversized()` call partitions its input with no overlapping
+  re-scans — verified by direct code reading, and by measuring
+  wall-clock time at 5M/20M/50M-character inputs, which scaled
+  proportionally: ~0.39s/~1.7s/~4.3s, confirming linear, not
+  quadratic). Found a real gap in what the *ceiling* actually bounds,
+  though not a correctness bug: `_MAX_CHUNKS_PER_DOCUMENT`'s incremental
+  check (added by the prior review) bounds accumulated *packing*
+  output correctly, but the upfront *splitting* phase for one section
+  still always completes in full before packing (and this ceiling)
+  ever runs — at extraction's own real worst case (a single ~20 MiB
+  section built from many short space-separated tokens, the
+  pathological shape for the word-split fallback), splitting alone
+  measured ~1.7s and ~250 MiB peak. Judged this an accepted, bounded,
+  input-proportional cost — not a fix-worthy defect — since it's
+  strictly linear (not quadratic/unbounded) and already bounded by
+  extraction's own pre-existing 20 MiB cap, matching this codebase's
+  established "each layer bounds what it controls" pattern; Review Area
+  11's own stated expectation is exactly "approximately linear... if
+  performance is already sound, leave it alone." The
+  `_MAX_CHUNKS_PER_DOCUMENT` constant's comment was corrected to state
+  this precisely (what it bounds, what it doesn't, and why the
+  unbounded part is still acceptable) rather than leave the earlier,
+  slightly-overclaiming comment as the only record. **No existing test
+  exercised a genuinely large *single* section's performance — the
+  existing timing test used 50 *small* sections — added one**
+  (`test_single_large_section_chunks_in_bounded_linear_time`, ~1.1M
+  characters, one section, asserting completion well under 5s and every
+  invariant intact).
+- **Other areas confirmed sound, no bug found**: punctuation-heavy text
+  (ellipses, stacked `?!`), repeated whitespace, CRLF (`\r\n`) and
+  many-consecutive-blank-line newline variations, and a mixed
+  paragraph+sentence input — all produced correct, bounded,
+  non-empty, gapless-indexed chunks. One initially-suspicious result (a
+  chunk's content spanning what was originally two separate paragraphs,
+  via the overlap+packing mechanism) was traced and confirmed to be
+  correct, intended behavior: the documented "boundary preference"
+  governs where *oversized* content gets *split*, not a promise that
+  packing never *combines* two already-small pieces from different
+  paragraphs — that combination is the whole point of `target_chunk_size`
+  packing, and forbidding it would defeat `min_chunk_size` entirely.
+  Security sweep (`grep` for `eval`/`exec`/`subprocess`/`os.system`/
+  `open(`/`__import__`/`pickle`/`marshal`) found none; the module's only
+  imports remain stdlib `re`/`dataclasses`/`typing` plus its own sibling
+  `app.ingestion.extraction` — confirmed by reading the import block
+  directly, not assumed.
+- **Verification**: `ruff`/`mypy` clean (99 source files, no new
+  findings). 2 new regression tests. Complete backend suite:
+  **473/473 passing** (471 pre-review + 2 new), **3 consecutive runs**.
+  Frontend confirmed unaffected (`eslint`/`tsc --noEmit` both clean).
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`

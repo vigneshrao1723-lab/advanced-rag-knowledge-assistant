@@ -93,6 +93,35 @@ committed as of this entry.)*
   documented in the module's own docstring, not a new architectural
   decision.
 
+**Final independent review (same PR #22)**: stress-tested the merged
+implementation beyond the original test suite — Unicode/multi-script
+text (Tamil, Kannada, Hindi, emoji, CJK, combining characters) confirmed
+correctly sized by character count, never bytes (the module never calls
+`.encode()`/`.decode()`, so Python's native codepoint-based `str`
+semantics apply throughout); adversarial overlap configurations
+(overlap=1, overlap=min-1, overlap after hard-character splitting,
+cross-section boundaries) found no leakage, duplication, or violation;
+a single enormous section (matching extraction's own real 20 MiB
+single-document cap, in the pathological short-space-separated-token
+shape) confirmed linear, bounded, non-quadratic — no new correctness
+bug found. Two genuine test/documentation gaps were found and closed:
+(1) the documented `min_chunk_size` trailing-remainder exception was
+verified genuinely reachable (reproduced directly: ten 9-character
+words packed to 19-char chunks under a 20-char max leave a real
+1-character trailing chunk that cannot merge back) but had no
+regression test locking it in — added one; (2) the existing
+no-quadratic-blowup timing test only covered 50 *small* sections, never
+a genuinely large *single* section (the shape TXT/CSV always produce)
+— added a dedicated single-section performance test. The
+`_MAX_CHUNKS_PER_DOCUMENT` ceiling's own comment was corrected to state
+precisely what it bounds (accumulated output, checked incrementally)
+versus what it doesn't (the necessarily single-pass splitting phase,
+whose own cost — measured directly, not assumed, at ~1.7s/~250 MiB for
+one 20 MiB section, confirmed linear across 5/20/50 MiB) — accepted as
+bounded by extraction's own pre-existing cap, not a code defect. `ruff`/
+`mypy` clean. 2 new regression tests. Complete backend suite:
+**473/473 passing** (471 pre-review + 2 new), 3 consecutive runs.
+
 ## [Unreleased — committed]
 
 ### 2026-09-22 — `feat: add document text extraction (Issue #3, Slice 3.4)` (`b01cd24`/`8f72916`, review fixes `105ec72`/`eb14287`), merged as `2961b62`
