@@ -10,6 +10,98 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
+### 2026-09-22 — Issue #3, Slice 3.4: document text extraction
+
+- **Not committed.** Adds `POST
+  /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` —
+  synchronous text extraction for the same five formats Slice 3.3
+  accepts (PDF, DOCX, TXT, Markdown, CSV), moving a document from
+  `UPLOADED`/`PROCESSING`/`FAILED` to `PARSED` or `FAILED`. No chunking,
+  embedding, vector indexing, or background job system — synchronous,
+  within the request, per this slice's own scope.
+- `backend/app/ingestion/extraction.py` (new): `extract(extension,
+  content) -> ExtractedDocument` (`ExtractedSection` list with
+  `page`/`heading`/`text`), or a raised `ExtractionError` — pure, no
+  database/storage/HTTP dependency. Per-format extractors: PDF (pypdf,
+  one section per page, a 2000-page cap, per-page parser-exception
+  isolation); DOCX (python-docx, sections split on heading-styled
+  paragraphs) behind a pre-flight ZIP archive-safety check
+  (`_validate_docx_archive_safety`) that inspects only ZIP
+  central-directory metadata — member count (≤2000), per-member
+  uncompressed size (≤50 MiB), total uncompressed size (≤200 MiB), and
+  member-name traversal (`..`/leading `/`) — before any member is
+  decompressed or `python-docx` runs; TXT/Markdown (decoded with
+  `errors="replace"`, Markdown split on top-level headings); CSV (via
+  the stdlib `csv` module, `csv.Error` normalized). A 20 MiB output-text
+  budget applies to every format, independent of the input-size limit.
+  New dependencies: `pypdf`, `python-docx`.
+- `backend/app/services/document_service.py` (extended):
+  `process_document()` — looks up the document scoped to its workspace
+  (404 if absent/cross-workspace), rejects `PARSED`/later states with
+  `409`, transitions to `PROCESSING` and **commits that transition as
+  its own transaction before extraction runs** (so a crash mid-parse
+  leaves the document honestly `PROCESSING`, not falsely `PARSED`), then
+  reads through `StorageProvider` and calls `extraction.extract()`. A
+  parsing failure (a `StorageError`, an `ExtractionError`, or any other
+  unexpected exception) is recorded as `FAILED` with a short generic
+  `failure_reason` and returned as an ordinary `200` — never raised as a
+  request error, never silently swallowed.
+- `backend/app/repositories/document_repository.py`: additive
+  `get_by_id_for_workspace()`, `mark_processing()`, `mark_parsed()`,
+  `mark_failed()` — all follow the existing add/flush/no-commit
+  convention; the caller controls transaction boundaries.
+  `backend/app/schemas/document.py`: additive `failure_reason: str |
+  None` on `DocumentRead`. `backend/app/core/audit.py`: additive
+  `AuditEvent.DOCUMENT_PARSED`/`DOCUMENT_PARSING_FAILED`.
+  `backend/app/core/rate_limit.py`: additive `document_process`
+  operation (IP + authenticated user ID, Tier A, 20/60s — CPU-bound, so
+  it gets the same defensive treatment as `document_upload`, not
+  register/login's lighter policy). `backend/app/api/v1/documents.py`:
+  new `POST .../process` route in the same router as upload.
+- `backend/tests/test_extraction.py` (new, 27 unit tests, no
+  database/HTTP): valid/malformed/no-extractable-text PDF, a page-count
+  limit, a simulated single-page parser exception; valid DOCX with
+  heading-split sections, a malformed zip, four archive-traversal member
+  names, member-count/per-member/total-size limits (via monkeypatched
+  smaller thresholds for determinism, plus one real highly-compressible
+  60 MB→~50 KB member proving the check is against declared
+  uncompressed size at the real default threshold, not on-disk size), a
+  DOCX that passes the safety check but isn't real OOXML; valid/invalid-
+  byte-sequence TXT; Markdown heading-splitting and the empty-document
+  edge case; valid CSV and a field-size-limit failure; the unsupported-
+  extension path and the output-text budget.
+- `backend/tests/test_document_processing.py` (new, 24 HTTP-level tests,
+  real Postgres/Redis/filesystem, no mocks): per-format success
+  (PARSED, correct `page_count`, exactly one `DOCUMENT_PARSED` audit
+  row); per-format/malformed failure including a DOCX archive-traversal
+  attempt (FAILED, `200`, safe `failure_reason`, exactly one
+  `DOCUMENT_PARSING_FAILED` audit row); a storage-read failure (FAILED,
+  the storage key never appears in the response); an unexpected
+  (non-`ExtractionError`) exception from the extractor (FAILED, not a
+  `500`); a regression test proving the `PROCESSING` transition is
+  actually committed before extraction runs (reads the document's status
+  through the same session from inside a patched `extraction.extract`,
+  before it returns); authorization (unauthenticated `401`, VIEWER
+  `403`, non-member/cross-workspace-document-id `404`,
+  nonexistent-document `404`); lifecycle (`PARSED` reprocess `409`,
+  `FAILED` reprocess allowed); rate-limit key creation, threshold
+  enforcement, and Redis-unavailable Tier A fallback (each via a single
+  reprocessed `FAILED` document, to exhaust the `document_process` limit
+  without also tripping the separate `document_upload` limit).
+- `ruff`/`mypy` clean (97 source files). New tests: 27 + 24 = 51/51
+  passing. Complete backend suite: **421/421 passing** (370 pre-existing
+  + 51 new), 3 consecutive runs. Frontend unaffected (no frontend code
+  changed) — `eslint`/`tsc --noEmit` re-confirmed clean. A full manual
+  smoke test against the real Docker Compose stack (backend image
+  rebuilt with the new `pypdf`/`python-docx` dependencies; register →
+  create workspace → upload a real 2-page PDF → process → `PARSED` with
+  `page_count: 2`) succeeded end-to-end.
+- Docs updated in the same working tree: `docs/API_CONTRACT.md` (the
+  `/process` endpoint's full contract), `docs/SECURITY.md` ("Upload &
+  document safety" extended with the extraction-time threat model and
+  limits; "Audit logging" and "Security testing" updated from their
+  previous "not yet" state), `PROJECT_STATE.md`, `HANDOFF.md`.
+
 ### 2026-09-20 — Abuse-protection Slice 3c: escalation audit emission + HTTP-level tests
 
 - **Not committed.** Adds abuse-escalation audit emission on top of
@@ -332,12 +424,12 @@ with invented history of either kind.
 
 ## [Unreleased — committed]
 
-### 2026-09-21 — `feat: add document upload API (Issue #3, Slice 3.3)` (b81b7d2) + docs (b3cf3cf), opened as PR #20
+### 2026-09-21 — `feat: add document upload API (Issue #3, Slice 3.3)` (b81b7d2) + docs (b3cf3cf), merged as `a6762e2`
 
 *(Branch `issue-3-slice-3-3-document-upload-api`, cut from the merged
-Slice 3.2 fix (`5e6fdc2`, PR #19). Opened as **PR #20** — CI status and
-merge not yet confirmed as of this entry; not yet part of a tagged
-release either way.)*
+Slice 3.2 fix (`5e6fdc2`, PR #19). Opened as **PR #20**, merged into
+`main` as squash commit `a6762e2` by the repository owner — not by this
+agent. `main`/`origin/main` are at `a6762e2`.)*
 
 `POST /api/v1/workspaces/{workspace_id}/documents`
 (`multipart/form-data`, field `file`) — authenticate, authorize

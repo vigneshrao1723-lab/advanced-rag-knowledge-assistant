@@ -44,7 +44,7 @@ exist. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 | `/api/v1/users` | Profile and settings management (**partially implemented** — `GET /me` only, Issue #2) |
 | `/api/v1/workspaces` | Create/rename/delete/switch workspaces, membership, roles (**implemented**, Issue #2) |
 | `/api/v1/workspaces/{workspace_id}/audit-logs` | Query security-relevant audit log entries for a workspace (`ADMIN`/`OWNER` only) |
-| `/api/v1/workspaces/{workspace_id}/documents` | Upload (**implemented**, Issue #3 Slice 3.3); list, search, filter, sort, rename, delete, re-index, retry, download, metadata/status (not yet implemented). Nested under the owning workspace, matching `/workspaces/{workspace_id}/members` and `/audit-logs`'s existing convention, rather than the flat `/api/v1/documents` this table previously sketched. |
+| `/api/v1/workspaces/{workspace_id}/documents` | Upload + synchronous text extraction, including retrying a `FAILED` document via the same `/process` endpoint (**implemented**, Issue #3 Slices 3.3–3.4); list, search, filter, sort, rename, delete, re-index, download, metadata/status (not yet implemented). Nested under the owning workspace, matching `/workspaces/{workspace_id}/members` and `/audit-logs`'s existing convention, rather than the flat `/api/v1/documents` this table previously sketched. |
 | `/api/v1/collections` | Logical document grouping and collection-scoped retrieval |
 | `/api/v1/ingestion` | Ingestion pipeline status/control for a document |
 | `/api/v1/search` | Standalone search mode (snippets, evidence, scores, retrieval method) |
@@ -145,16 +145,17 @@ from Issue #1: `{"error": {"code", "message", "request_id"}}` — see
 
 ## Implemented: `/api/v1/workspaces/{workspace_id}/documents`
 
-**Upload only** (GitHub Issue #3, Slice 3.3) — list/search/filter/sort/
-rename/delete/re-index/retry/download/metadata/status are not
-implemented yet. Documents remain in `UPLOADED`; no extraction,
-chunking, or embedding exists.
+**Upload + text extraction** (GitHub Issue #3, Slices 3.3–3.4) —
+list/search/filter/sort/rename/delete/re-index/download/metadata are not
+implemented yet. Documents reach `UPLOADED` (upload) then `PARSED` or
+`FAILED` (processing); no chunking or embedding exists.
 
 | Endpoint | Min. role | Body | Response |
 |---|---|---|---|
 | `POST /api/v1/workspaces/{workspace_id}/documents` | MEMBER | `multipart/form-data`, one field: `file` | `201` `DocumentRead`, or `400`/`409`/`413`/`429`/`500` (see below) |
+| `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` | MEMBER | none | `200` `DocumentRead`, or `404`/`409`/`429`/`500` (see below) |
 
-`DocumentRead`: `{id, filename, mime_type, size_bytes, checksum_sha256, status, page_count, created_at, updated_at}` — never `storage_key` (internal only).
+`DocumentRead`: `{id, filename, mime_type, size_bytes, checksum_sha256, status, page_count, failure_reason, created_at, updated_at}` — never `storage_key` (internal only).
 
 Resolves `workspace_id` through the same `require_workspace_role`
 dependency every other workspace-scoped route uses — a non-member or
@@ -203,6 +204,60 @@ specifically, not file uploads.
 successful upload, metadata limited to `document_id`/`filename`/
 `mime_type`/`size_bytes`/`checksum_sha256` — never the storage key, a
 filesystem path, or file content.
+
+### `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` (Slice 3.4)
+
+Synchronous text extraction for the same five formats (PDF, DOCX, TXT,
+Markdown, CSV) — no background job/queue exists; the request blocks
+until extraction finishes or fails. Callable when the document is
+`UPLOADED`, `PROCESSING` (a prior attempt was interrupted and never
+reached `PARSED`/`FAILED` — treated as retriable, not stuck), or
+`FAILED` (explicit retry). Returns `409` (`document_already_processed`)
+if the document is `PARSED` or any later lifecycle state. Returns `404`
+if the document doesn't exist or doesn't belong to `workspace_id`
+(same non-leaking pattern as workspace lookup itself).
+
+**This always returns `200`, even when extraction fails** — a malformed
+or corrupt document is an expected, handled outcome (`status: "FAILED"`,
+`failure_reason` set to a short, generic, storage-safe string), not a
+server error. Only a genuinely unexpected condition (auth, lookup,
+already-processed, rate limit, an unhandled server fault) produces a
+non-`200` status.
+
+**Crash safety:** the `PROCESSING` transition is committed as its own
+transaction *before* extraction is attempted, so a crash or restart
+mid-extraction leaves the document honestly at `PROCESSING` (itself
+retriable) rather than falsely appearing `PARSED` or silently reverting
+to `UPLOADED`.
+
+**Security (every uploaded file is untrusted input):** extraction reads
+through `StorageProvider` only, using the server-generated storage key —
+never the client-supplied filename beyond recovering its
+already-validated extension. DOCX (a ZIP container) gets a pre-flight
+archive-safety check — member count, per-member and total uncompressed
+size, and member-name traversal — using only ZIP metadata (`file_size`
+from the central directory), before any member is actually decompressed
+or `python-docx` runs; this rejects zip-bomb-style and path-traversal
+archives cheaply. PDF page count and extracted-text size are both
+capped. TXT/Markdown/CSV are decoded with `errors="replace"`, never
+raising on invalid byte sequences. No parser failure (pypdf, python-docx,
+`zipfile`, `csv`, a decode error) ever reaches the client raw — every
+failure path is normalized to a short, generic reason string containing
+no filesystem path, no storage key, and no library stack trace. See
+`backend/app/ingestion/extraction.py` and
+`backend/app/services/document_service.py::process_document` for the
+exact limits and ordering.
+
+**Rate limiting:** a dedicated `document_process` operation, same shape
+as `document_upload` (IP + authenticated user ID, Tier A, 20/60s) —
+processing is CPU-bound, not just I/O, so it gets the same defensive
+treatment as upload.
+
+**Audit:** `AuditEvent.DOCUMENT_PARSED` (metadata:
+`document_id`/`page_count`/`section_count`) on success,
+`AuditEvent.DOCUMENT_PARSING_FAILED` (metadata: `document_id`/`reason`)
+on failure — the `reason` is the same storage-safe string returned to
+the client, never a raw exception or storage key.
 
 ## Related documents
 
