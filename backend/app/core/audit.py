@@ -41,6 +41,9 @@ class AuditEvent:
     DOCUMENT_UPLOADED = "document_uploaded"
     DOCUMENT_PARSED = "document_parsed"
     DOCUMENT_PARSING_FAILED = "document_parsing_failed"
+    DOCUMENT_CLEANING_FAILED = "document_cleaning_failed"
+    DOCUMENT_CHUNKED = "document_chunked"
+    DOCUMENT_CHUNKING_FAILED = "document_chunking_failed"
 
 
 def record(

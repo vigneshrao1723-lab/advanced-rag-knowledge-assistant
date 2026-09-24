@@ -171,7 +171,7 @@ def _audit_rows(db_session: DbSession, *, event_type: str, workspace_id: str) ->
 # --- per-format success: transitions to PARSED -----------------------------
 
 
-def test_pdf_processes_to_parsed_with_correct_page_count(
+def test_pdf_processes_to_chunked_with_correct_page_count(
     client: TestClient, db_session: DbSession
 ) -> None:
     _register(client)
@@ -187,19 +187,19 @@ def test_pdf_processes_to_parsed_with_correct_page_count(
     response = _process(client, workspace["id"], document["id"])
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["status"] == "PARSED"
+    assert body["status"] == "CHUNKED"
     assert body["page_count"] == 2
     assert body["failure_reason"] is None
     assert "storage_key" not in body
 
     row = db_session.get(Document, uuid.UUID(document["id"]))
     assert row is not None
-    assert row.status == DocumentStatus.PARSED
+    assert row.status == DocumentStatus.CHUNKED
     assert row.processing_started_at is not None
     assert row.processing_completed_at is not None
 
 
-def test_docx_processes_to_parsed(client: TestClient) -> None:
+def test_docx_processes_to_chunked(client: TestClient) -> None:
     _register(client)
     workspace = _create_workspace(client)
     document = _upload(
@@ -213,11 +213,11 @@ def test_docx_processes_to_parsed(client: TestClient) -> None:
     response = _process(client, workspace["id"], document["id"])
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["status"] == "PARSED"
+    assert body["status"] == "CHUNKED"
     assert body["page_count"] is None
 
 
-def test_txt_processes_to_parsed(client: TestClient) -> None:
+def test_txt_processes_to_chunked(client: TestClient) -> None:
     _register(client)
     workspace = _create_workspace(client)
     document = _upload(
@@ -226,10 +226,10 @@ def test_txt_processes_to_parsed(client: TestClient) -> None:
 
     response = _process(client, workspace["id"], document["id"])
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "PARSED"
+    assert response.json()["status"] == "CHUNKED"
 
 
-def test_markdown_processes_to_parsed(client: TestClient) -> None:
+def test_markdown_processes_to_chunked(client: TestClient) -> None:
     _register(client)
     workspace = _create_workspace(client)
     document = _upload(
@@ -238,10 +238,10 @@ def test_markdown_processes_to_parsed(client: TestClient) -> None:
 
     response = _process(client, workspace["id"], document["id"])
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "PARSED"
+    assert response.json()["status"] == "CHUNKED"
 
 
-def test_csv_processes_to_parsed(client: TestClient) -> None:
+def test_csv_processes_to_chunked(client: TestClient) -> None:
     _register(client)
     workspace = _create_workspace(client)
     document = _upload(
@@ -250,7 +250,7 @@ def test_csv_processes_to_parsed(client: TestClient) -> None:
 
     response = _process(client, workspace["id"], document["id"])
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "PARSED"
+    assert response.json()["status"] == "CHUNKED"
 
 
 def test_successful_processing_emits_exactly_one_document_parsed_audit_event(
@@ -673,7 +673,7 @@ def test_nonexistent_document_id_rejected_with_404(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_processing_an_already_parsed_document_is_rejected_with_409(client: TestClient) -> None:
+def test_processing_an_already_chunked_document_is_rejected_with_409(client: TestClient) -> None:
     _register(client)
     workspace = _create_workspace(client)
     document = _upload(
@@ -686,7 +686,7 @@ def test_processing_an_already_parsed_document_is_rejected_with_409(client: Test
 
     first = _process(client, workspace["id"], document["id"])
     assert first.status_code == 200
-    assert first.json()["status"] == "PARSED"
+    assert first.json()["status"] == "CHUNKED"
 
     second = _process(client, workspace["id"], document["id"])
     assert second.status_code == 409
