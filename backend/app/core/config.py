@@ -183,6 +183,23 @@ class Settings(BaseSettings):
     # upload (bounded reads), never by buffering the whole body first.
     max_upload_size_bytes: int = 50 * 1024 * 1024
 
+    # Embedding generation (Issue #3, Slice 3.7 —
+    # app/ingestion/embedding.py). "local" (LocalHashingEmbeddingProvider,
+    # deterministic, offline, no API key) is the only implementation
+    # today, matching `storage_provider`'s pattern — never hardcode a
+    # specific vendor. `embedding_batch_size` bounds how many chunk texts
+    # are sent to the provider in a single call; the local provider has
+    # no real batching benefit, but this is exercised now so a future
+    # networked provider's own request-size limits are already respected.
+    embedding_provider: Literal["local"] = "local"
+    embedding_batch_size: int = 64
+
+    @model_validator(mode="after")
+    def _validate_embedding_batch_size(self) -> "Settings":
+        if self.embedding_batch_size <= 0:
+            raise ValueError("embedding_batch_size must be > 0.")
+        return self
+
     # Reserved for future issues — not consumed by any code path yet.
     llm_api_key: str | None = None
     embedding_api_key: str | None = None

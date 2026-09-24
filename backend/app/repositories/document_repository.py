@@ -130,3 +130,49 @@ def mark_chunked(db: Session, *, document: Document) -> Document:
     db.flush()
     db.refresh(document)
     return document
+
+
+def mark_embedded(db: Session, *, document: Document) -> Document:
+    """Callers must update every one of this document's `document_chunks`
+    rows (see `document_chunk_repository.set_embeddings()`) in the *same*
+    transaction as this call, then commit both together -- the same
+    atomicity contract as `mark_chunked()`, so a document is never
+    observably `EMBEDDED` with some chunks still missing a vector."""
+    document.status = DocumentStatus.EMBEDDED
+    document.failure_reason = None
+    document.processing_completed_at = datetime.now(UTC)
+    db.add(document)
+    db.flush()
+    db.refresh(document)
+    return document
+
+
+def mark_indexed(db: Session, *, document: Document) -> Document:
+    """No separate build step precedes this -- pgvector's HNSW index
+    (migration `0005`) is maintained transactionally as part of the same
+    `UPDATE` that `mark_embedded()`'s caller already committed, so a
+    document's chunks are already covered by the index the instant
+    `EMBEDDED` is durably committed. This transition exists to preserve
+    the documented lifecycle (docs/RAG_DESIGN.md) and give downstream
+    consumers (retrieval, observability) an explicit, auditable signal
+    that indexing is guaranteed complete, not to perform additional
+    work."""
+    document.status = DocumentStatus.INDEXED
+    document.failure_reason = None
+    db.add(document)
+    db.flush()
+    db.refresh(document)
+    return document
+
+
+def mark_ready(db: Session, *, document: Document) -> Document:
+    """The terminal success state for the ingestion pipeline (Issue #3).
+    No additional work happens at this transition today -- it marks a
+    document as available for retrieval once Issue #4 exists."""
+    document.status = DocumentStatus.READY
+    document.failure_reason = None
+    document.processing_completed_at = datetime.now(UTC)
+    db.add(document)
+    db.flush()
+    db.refresh(document)
+    return document

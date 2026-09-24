@@ -21,6 +21,16 @@ remove it on the grounds that `document_id` already implies it.
 "child records die with their owning row" convention already used for
 `sessions`/`workspace_members` (Issue #2) — deleting a document removes its
 chunks, unlike `audit_logs`, which deliberately outlives what it describes.
+
+Migration `0005` (GitHub Issue #3, Slice 3.7) adds the embedding column
+this docstring anticipated: `embedding` (`pgvector` `Vector(384)`,
+nullable — populated when the document reaches `EMBEDDED`),
+`embedding_model`/`embedding_dimension` (per-row provenance, so a future
+model swap can identify exactly which rows a prior model produced — see
+`app/ingestion/embedding.py`). 384 matches
+`LocalHashingEmbeddingProvider`'s dimension, chosen to match common small
+real embedding models so a future swap to one of those needs no further
+migration.
 """
 
 from __future__ import annotations
@@ -28,6 +38,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, ForeignKey, Integer, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -60,6 +71,9 @@ class DocumentChunk(Base):
     page: Mapped[int | None] = mapped_column(Integer, nullable=True)
     section: Mapped[str | None] = mapped_column(Text, nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(384), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding_dimension: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

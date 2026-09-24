@@ -44,6 +44,8 @@ class AuditEvent:
     DOCUMENT_CLEANING_FAILED = "document_cleaning_failed"
     DOCUMENT_CHUNKED = "document_chunked"
     DOCUMENT_CHUNKING_FAILED = "document_chunking_failed"
+    DOCUMENT_EMBEDDING_FAILED = "document_embedding_failed"
+    DOCUMENT_READY = "document_ready"
 
 
 def record(
