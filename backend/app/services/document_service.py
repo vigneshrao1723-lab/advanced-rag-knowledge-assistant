@@ -1,4 +1,4 @@
-"""Document upload and processing orchestration (Issue #3, Slices 3.3/3.4).
+"""Document upload and processing orchestration (Issue #3, Slices 3.3–3.6).
 
 **Upload** (Slice 3.3) ordering: validate (extension/MIME, no body read
 needed) -> stream-read the body (bounded, computing the checksum as it
@@ -8,17 +8,25 @@ event -> commit. Storage always succeeds before anything is written to
 Postgres — see `_persist_document()` for exactly how a failure after the
 storage write is compensated for.
 
-**Processing / text extraction** (Slice 3.4): `process_document()` moves
-a document from UPLOADED/PROCESSING/FAILED to PARSED or FAILED, via
-`app.ingestion.extraction`. The PROCESSING transition is committed as its
-own transaction *before* extraction is attempted — see that function's
-docstring for why. Extraction always reads through the existing
-StorageProvider (never a raw filesystem path) and operates on the
-server-generated storage key, never the client-supplied filename beyond
-recovering its (already-validated-at-upload) extension.
+**Processing** (Slices 3.4–3.6): `process_document()` drives a document
+through the full synchronous pipeline -- extraction (Slice 3.4) ->
+cleaning (Slice 3.6, `app.ingestion.cleaning`) -> chunking (Slice 3.6,
+`app.ingestion.chunking`) -- committing a durable checkpoint after each
+stage *before* the next stage's work begins, so a crash at any point
+leaves the document honestly at its last completed stage, never falsely
+further along. See that function's own docstring for the exact ordering
+and why there is deliberately no persistence of extracted/cleaned text
+between stages -- resuming a document from `PARSED`/`CLEANED` re-runs
+the already-passed stages (idempotent, deterministic) rather than
+attempting to skip them, since nothing but the status itself is durable
+between requests.
 
-No chunking, embedding, or state transition beyond PARSED/FAILED happens
-here or anywhere in this slice.
+Extraction/cleaning/chunking all read/operate only through the existing
+StorageProvider and the server-generated storage key, never a raw
+filesystem path and never the client-supplied filename beyond recovering
+its (already-validated-at-upload) extension. No embedding, vector
+indexing, or state transition beyond `CHUNKED`/`FAILED` happens here or
+anywhere in this slice.
 """
 
 from __future__ import annotations
@@ -36,10 +44,12 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import AuditEvent
 from app.core.audit import record as record_audit_event
-from app.ingestion import extraction
-from app.ingestion.extraction import ExtractionError
+from app.ingestion import chunking, extraction
+from app.ingestion.chunking import Chunk, ChunkingError
+from app.ingestion.cleaning import clean as clean_extracted_document
+from app.ingestion.extraction import ExtractedDocument, ExtractionError
 from app.models.document import Document, DocumentStatus
-from app.repositories import document_repository
+from app.repositories import document_chunk_repository, document_repository
 from app.schemas.document import DocumentRead
 from app.services.storage_provider import StorageError, StorageProvider
 
@@ -336,15 +346,31 @@ async def upload_document(
     return _to_document_read(document)
 
 
-# A document can be (re)processed from UPLOADED (first attempt), PROCESSING
-# (a prior attempt was interrupted -- e.g. a crash or restart mid-extraction
-# -- and never reached PARSED/FAILED, so it's treated as retriable rather
-# than stuck forever), or FAILED (explicit retry after a fixable failure).
-# PARSED and every later lifecycle state (CLEANED/CHUNKED/EMBEDDED/INDEXED/
-# READY) are refused with 409 -- extraction has already happened or the
-# document has moved past it.
+# A document can be (re)processed from UPLOADED (first attempt),
+# PROCESSING/PARSED/CLEANED (a prior attempt was interrupted -- e.g. a
+# crash or restart -- partway through the pipeline and never reached
+# CHUNKED/FAILED, so it's treated as retriable rather than stuck
+# forever), or FAILED (explicit retry after a fixable failure). CHUNKED
+# and every later lifecycle state (EMBEDDED/INDEXED/READY) are refused
+# with 409 -- the full pipeline this slice covers has already completed.
+#
+# Resuming from PARSED or CLEANED does not skip the stages already
+# passed: nothing but the document's own `status` is durable between
+# requests (extracted/cleaned text is never persisted, deliberately --
+# see the module docstring), so process_document() below always restarts
+# from extraction regardless of which of these statuses it found. This
+# is safe because extraction/cleaning/chunking are all pure,
+# deterministic functions of the same stored bytes -- re-running an
+# already-passed stage produces the identical result, at the cost of
+# some redundant CPU work on a retry, never incorrect output.
 _REPROCESSABLE_STATUSES: Final = frozenset(
-    {DocumentStatus.UPLOADED, DocumentStatus.PROCESSING, DocumentStatus.FAILED}
+    {
+        DocumentStatus.UPLOADED,
+        DocumentStatus.PROCESSING,
+        DocumentStatus.PARSED,
+        DocumentStatus.CLEANED,
+        DocumentStatus.FAILED,
+    }
 )
 
 
@@ -393,6 +419,29 @@ def _read_and_extract(
     return extraction.extract(extension=extension, content=content)
 
 
+def _mark_failed_and_audit(
+    db: Session,
+    *,
+    document: Document,
+    reason: str,
+    event_type: str,
+    triggered_by: uuid.UUID,
+    workspace_id: uuid.UUID,
+    ip_address: str | None,
+) -> Document:
+    document = document_repository.mark_failed(db, document=document, reason=reason)
+    record_audit_event(
+        db,
+        event_type=event_type,
+        user_id=triggered_by,
+        workspace_id=workspace_id,
+        ip_address=ip_address,
+        metadata={"document_id": str(document.id), "reason": reason},
+    )
+    db.commit()
+    return document
+
+
 async def process_document(
     db: Session,
     *,
@@ -402,25 +451,35 @@ async def process_document(
     storage: StorageProvider,
     ip_address: str | None = None,
 ) -> DocumentRead:
-    """Synchronous text extraction, run within the request -- not a
-    background job: per this slice's own scope, the minimum execution
-    mechanism needed is "call the extractor while handling the request",
-    not a new queue/worker infrastructure. The extraction itself (storage
-    read + parsing) runs via `asyncio.to_thread()` in a worker thread, not
-    directly on the event loop -- see `_read_and_extract()`'s docstring
-    for why that distinction matters even without a background job.
+    """Drives a document through the full synchronous pipeline -- run
+    within the request, not a background job: per this slice's own
+    scope, the minimum execution mechanism needed is "call each stage
+    while handling the request", not a new queue/worker infrastructure.
+    Every CPU-bound stage (extraction, cleaning, chunking) runs via
+    `asyncio.to_thread()` in a worker thread, never directly on the
+    event loop -- see `_read_and_extract()`'s docstring for why that
+    distinction matters even without a background job; the same
+    reasoning applies identically to cleaning and chunking, both of
+    which operate on the same up-to-20-MiB-text input class.
 
-    The PROCESSING transition is committed on its own, *before*
-    extraction is attempted -- so if this process crashes or is killed
-    mid-extraction (a large PDF, a slow parse), the document is left
-    honestly at PROCESSING, which `_REPROCESSABLE_STATUSES` above treats
-    as retriable, rather than silently vanishing mid-request while still
-    claiming (via a stale UPLOADED row) that processing never started.
+    Each stage's success is committed as its own transaction, *before*
+    the next stage's work begins -- PROCESSING before extraction, PARSED
+    before cleaning, CLEANED before chunking, CHUNKED together with its
+    `document_chunks` rows in one final atomic commit. A crash or kill at
+    any point leaves the document honestly at its last completed stage
+    (which `_REPROCESSABLE_STATUSES` above treats as retriable) rather
+    than silently vanishing mid-request while claiming a stage it never
+    reached.
 
-    A parsing failure is an expected, handled outcome, not a server
-    error: it is recorded as FAILED with a generic reason, audited, and
-    returned as an ordinary 200 response -- never raised as an
-    HTTPException and never left silently unrecorded.
+    A failure at any stage is an expected, handled outcome, not a server
+    error: it is recorded as FAILED with a short, generic, storage-safe
+    reason, audited with a stage-specific event type, and returned as an
+    ordinary 200 response -- never raised as an HTTPException and never
+    left silently unrecorded. There is no separate `DOCUMENT_CLEANED`
+    success audit event: cleaning is an internal, always-conservative
+    normalization step with nothing distinct to report before chunking
+    actually completes -- auditing it separately would only add noise,
+    not information; its *failure* is still audited explicitly below.
     """
     document = document_repository.get_by_id_for_workspace(
         db, workspace_id=workspace_id, document_id=document_id
@@ -433,7 +492,7 @@ async def process_document(
     document = document_repository.mark_processing(db, document=document)
     db.commit()
 
-    extracted: extraction.ExtractedDocument | None = None
+    extracted: ExtractedDocument | None = None
     reason: str | None = None
     try:
         extension = _extension_from_storage_key(document.storage_key)
@@ -456,22 +515,21 @@ async def process_document(
     except Exception:  # noqa: BLE001 - any other parser failure must not crash the request
         logger.exception(
             "document_processing_unexpected_failure",
-            extra={"document_id": str(document.id)},
+            extra={"document_id": str(document.id), "stage": "extraction"},
         )
         reason = "Processing failed due to an unexpected error."
 
     if extracted is None:
         assert reason is not None
-        document = document_repository.mark_failed(db, document=document, reason=reason)
-        record_audit_event(
+        document = _mark_failed_and_audit(
             db,
+            document=document,
+            reason=reason,
             event_type=AuditEvent.DOCUMENT_PARSING_FAILED,
-            user_id=triggered_by,
+            triggered_by=triggered_by,
             workspace_id=workspace_id,
             ip_address=ip_address,
-            metadata={"document_id": str(document.id), "reason": reason},
         )
-        db.commit()
         return _to_document_read(document)
 
     document = document_repository.mark_parsed(
@@ -490,6 +548,87 @@ async def process_document(
         },
     )
     db.commit()
+
+    cleaned: ExtractedDocument | None = None
+    try:
+        cleaned = await asyncio.to_thread(clean_extracted_document, extracted)
+    except Exception:  # noqa: BLE001 - cleaning is total by design; still never crash the request
+        logger.exception(
+            "document_processing_unexpected_failure",
+            extra={"document_id": str(document.id), "stage": "cleaning"},
+        )
+        document = _mark_failed_and_audit(
+            db,
+            document=document,
+            reason="Processing failed due to an unexpected error.",
+            event_type=AuditEvent.DOCUMENT_CLEANING_FAILED,
+            triggered_by=triggered_by,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+        )
+        return _to_document_read(document)
+
+    document = document_repository.mark_cleaned(db, document=document)
+    db.commit()
+
+    chunks: list[Chunk] | None = None
+    try:
+        chunks = await asyncio.to_thread(chunking.StructureAwareChunker().chunk, cleaned)
+    except ChunkingError as exc:
+        # chunking.py's own messages are already short and generic by
+        # construction -- see that module's docstring.
+        reason = str(exc)
+    except Exception:  # noqa: BLE001 - any other chunker failure must not crash the request
+        logger.exception(
+            "document_processing_unexpected_failure",
+            extra={"document_id": str(document.id), "stage": "chunking"},
+        )
+        reason = "Processing failed due to an unexpected error."
+
+    if chunks is None:
+        assert reason is not None
+        document = _mark_failed_and_audit(
+            db,
+            document=document,
+            reason=reason,
+            event_type=AuditEvent.DOCUMENT_CHUNKING_FAILED,
+            triggered_by=triggered_by,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+        )
+        return _to_document_read(document)
+
+    try:
+        document_chunk_repository.bulk_create(
+            db, document_id=document.id, workspace_id=workspace_id, chunks=chunks
+        )
+        document = document_repository.mark_chunked(db, document=document)
+        record_audit_event(
+            db,
+            event_type=AuditEvent.DOCUMENT_CHUNKED,
+            user_id=triggered_by,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+            metadata={"document_id": str(document.id), "chunk_count": len(chunks)},
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        # A concurrent request for the same document won the race to
+        # persist chunks first -- document_chunks' own
+        # UNIQUE(document_id, chunk_index) constraint is the
+        # authoritative backstop for exactly this window, the same
+        # pattern already used for documents' own duplicate-checksum
+        # race (see _persist_document above). Both requests compute the
+        # identical, deterministic chunk set from the same stored bytes,
+        # so returning the winner's now-committed state is correct, not
+        # a stale/wrong result -- never a raised error for this case.
+        refreshed = document_repository.get_by_id_for_workspace(
+            db, workspace_id=workspace_id, document_id=document.id
+        )
+        if refreshed is not None:
+            document = refreshed
+
     return _to_document_read(document)
 
 

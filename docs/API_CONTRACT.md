@@ -44,7 +44,7 @@ exist. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 | `/api/v1/users` | Profile and settings management (**partially implemented** — `GET /me` only, Issue #2) |
 | `/api/v1/workspaces` | Create/rename/delete/switch workspaces, membership, roles (**implemented**, Issue #2) |
 | `/api/v1/workspaces/{workspace_id}/audit-logs` | Query security-relevant audit log entries for a workspace (`ADMIN`/`OWNER` only) |
-| `/api/v1/workspaces/{workspace_id}/documents` | Upload + synchronous text extraction, including retrying a `FAILED` document via the same `/process` endpoint (**implemented**, Issue #3 Slices 3.3–3.4); list, search, filter, sort, rename, delete, re-index, download, metadata/status (not yet implemented). Nested under the owning workspace, matching `/workspaces/{workspace_id}/members` and `/audit-logs`'s existing convention, rather than the flat `/api/v1/documents` this table previously sketched. |
+| `/api/v1/workspaces/{workspace_id}/documents` | Upload + synchronous extraction/cleaning/chunking pipeline through to `CHUNKED`, including retrying a `FAILED` or resuming an interrupted document via the same `/process` endpoint (**implemented**, Issue #3 Slices 3.3–3.6); list, search, filter, sort, rename, delete, re-index, download, metadata/status (not yet implemented). Nested under the owning workspace, matching `/workspaces/{workspace_id}/members` and `/audit-logs`'s existing convention, rather than the flat `/api/v1/documents` this table previously sketched. |
 | `/api/v1/collections` | Logical document grouping and collection-scoped retrieval |
 | `/api/v1/ingestion` | Ingestion pipeline status/control for a document |
 | `/api/v1/search` | Standalone search mode (snippets, evidence, scores, retrieval method) |
@@ -145,10 +145,13 @@ from Issue #1: `{"error": {"code", "message", "request_id"}}` — see
 
 ## Implemented: `/api/v1/workspaces/{workspace_id}/documents`
 
-**Upload + text extraction** (GitHub Issue #3, Slices 3.3–3.4) —
+**Upload + full processing pipeline** (GitHub Issue #3, Slices 3.3–3.6) —
 list/search/filter/sort/rename/delete/re-index/download/metadata are not
-implemented yet. Documents reach `UPLOADED` (upload) then `PARSED` or
-`FAILED` (processing); no chunking or embedding exists.
+implemented yet. Documents reach `UPLOADED` (upload), then progress
+through `PROCESSING → PARSED → CLEANED → CHUNKED` (or `FAILED` at any
+stage) via the same `/process` endpoint; chunks are persisted to
+`document_chunks` once `CHUNKED` is reached. No embedding or vector
+indexing exists yet.
 
 | Endpoint | Min. role | Body | Response |
 |---|---|---|---|
@@ -205,30 +208,62 @@ successful upload, metadata limited to `document_id`/`filename`/
 `mime_type`/`size_bytes`/`checksum_sha256` — never the storage key, a
 filesystem path, or file content.
 
-### `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` (Slice 3.4)
+### `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` (Slices 3.4–3.6)
 
-Synchronous text extraction for the same five formats (PDF, DOCX, TXT,
-Markdown, CSV) — no background job/queue exists; the request blocks
-until extraction finishes or fails. Callable when the document is
-`UPLOADED`, `PROCESSING` (a prior attempt was interrupted and never
-reached `PARSED`/`FAILED` — treated as retriable, not stuck), or
+Synchronous, in-request processing for the same five formats (PDF, DOCX,
+TXT, Markdown, CSV) — no background job/queue exists; the request blocks
+until the document reaches `CHUNKED` or fails at some stage. As of
+Slice 3.6, one call drives the document through **extraction → cleaning
+→ chunking**, persisting `document_chunks` rows and ending at `CHUNKED`
+on full success. Callable when the document is `UPLOADED`, `PROCESSING`
+(a prior attempt was interrupted before completing — treated as
+retriable, not stuck), `PARSED`, `CLEANED` (either interrupted
+mid-pipeline — see "Resuming an interrupted document" below), or
 `FAILED` (explicit retry). Returns `409` (`document_already_processed`)
-if the document is `PARSED` or any later lifecycle state. Returns `404`
+if the document is `CHUNKED` or any later lifecycle state. Returns `404`
 if the document doesn't exist or doesn't belong to `workspace_id`
 (same non-leaking pattern as workspace lookup itself).
 
-**This always returns `200`, even when extraction fails** — a malformed
-or corrupt document is an expected, handled outcome (`status: "FAILED"`,
-`failure_reason` set to a short, generic, storage-safe string), not a
-server error. Only a genuinely unexpected condition (auth, lookup,
-already-processed, rate limit, an unhandled server fault) produces a
-non-`200` status.
+**This always returns `200`, even when a stage fails** — a malformed or
+corrupt document, or a document whose content can't be safely chunked,
+is an expected, handled outcome (`status: "FAILED"`, `failure_reason`
+set to a short, generic, storage-safe string), not a server error. Only
+a genuinely unexpected condition (auth, lookup, already-processed, rate
+limit, an unhandled server fault) produces a non-`200` status.
 
-**Crash safety:** the `PROCESSING` transition is committed as its own
-transaction *before* extraction is attempted, so a crash or restart
-mid-extraction leaves the document honestly at `PROCESSING` (itself
-retriable) rather than falsely appearing `PARSED` or silently reverting
-to `UPLOADED`.
+**Crash safety:** each stage's success is committed as its own
+transaction *before* the next, more expensive stage is attempted
+(`PROCESSING` → commit → extraction → `PARSED` → commit → cleaning →
+`CLEANED` → commit → chunking → chunk rows + `CHUNKED` committed
+atomically together). A crash mid-stage leaves the document honestly at
+its last-completed status (all of which are retriable) rather than
+falsely appearing further along or silently reverting. A crash between
+inserting chunk rows and the final `CHUNKED` commit rolls the whole
+transaction back — a document is never observably `CHUNKED` without its
+chunks, or with only some of them.
+
+**Resuming an interrupted document:** no extracted or cleaned text
+content is persisted between requests — only the document's `status`
+(plus `page_count`/`failure_reason`) is durable. Calling `/process`
+again on a document at `PARSED` or `CLEANED` therefore always re-runs
+extraction (and, if past `PARSED`, cleaning) from scratch against the
+same stored file, relying on both stages being pure, deterministic
+functions of that input. This is a deliberate simplification — see
+`docs/DATA_MODEL.md`'s "Potential entities" section for why a separate
+job-tracking table was evaluated and judged unnecessary.
+
+**Cleaning** (`backend/app/ingestion/cleaning.py`): deterministic,
+conservative normalization only — line-ending normalization, trailing-
+whitespace and excess-blank-line cleanup. Never rewrites, summarizes, or
+removes semantic content, punctuation, or Unicode; this is not an LLM
+step and never calls one.
+
+**Chunking** (`backend/app/ingestion/chunking.py`, Slice 3.5): a
+structure-aware chunker producing ordered, gapless, zero-indexed chunks,
+each inheriting its source section's `page`/`section` value. A
+`ChunkingError` (an unreasonable resulting chunk count for the given
+configuration) is treated the same as any other stage failure —
+`FAILED` with a generic reason, not a `500`.
 
 **Security (every uploaded file is untrusted input):** extraction reads
 through `StorageProvider` only, using the server-generated storage key —
@@ -250,14 +285,30 @@ exact limits and ordering.
 
 **Rate limiting:** a dedicated `document_process` operation, same shape
 as `document_upload` (IP + authenticated user ID, Tier A, 20/60s) —
-processing is CPU-bound, not just I/O, so it gets the same defensive
-treatment as upload.
+covers the whole extraction/cleaning/chunking call, since all three are
+CPU-bound, not just I/O, so the call gets the same defensive treatment
+as upload.
+
+**Concurrency:** two concurrent `/process` calls on the same document
+reaching the final chunk-persistence step at the same time are resolved
+via `document_chunks`' own `UNIQUE(document_id, chunk_index)`
+constraint — the losing request's insert conflict is caught and the
+response reflects the winning request's actual persisted state, never a
+`500`. This can produce bounded, rate-limited duplicate extraction/
+cleaning/chunking work but never corrupted or partial state.
 
 **Audit:** `AuditEvent.DOCUMENT_PARSED` (metadata:
-`document_id`/`page_count`/`section_count`) on success,
+`document_id`/`page_count`/`section_count`) on successful extraction,
 `AuditEvent.DOCUMENT_PARSING_FAILED` (metadata: `document_id`/`reason`)
-on failure — the `reason` is the same storage-safe string returned to
-the client, never a raw exception or storage key.
+on extraction failure; `AuditEvent.DOCUMENT_CLEANING_FAILED` (metadata:
+`document_id`/`reason`) on cleaning failure — no separate success event
+for cleaning, to avoid audit noise for an internal, always-conservative
+stage; `AuditEvent.DOCUMENT_CHUNKED` (metadata:
+`document_id`/`chunk_count`) on successful chunking,
+`AuditEvent.DOCUMENT_CHUNKING_FAILED` (metadata: `document_id`/`reason`)
+on chunking failure. Every `reason` is the same storage-safe string
+returned to the client, never a raw exception, filesystem path, or
+storage key.
 
 ## Related documents
 

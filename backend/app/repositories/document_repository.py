@@ -101,3 +101,32 @@ def mark_failed(db: Session, *, document: Document, reason: str) -> Document:
     db.flush()
     db.refresh(document)
     return document
+
+
+def mark_cleaned(db: Session, *, document: Document) -> Document:
+    """No new content is stored for `CLEANED` itself -- cleaned text
+    isn't persisted anywhere (see `app/ingestion/cleaning.py`'s module
+    docstring on why re-running cleaning on retry is the deliberate
+    design, not a gap) -- this only records that the document reached
+    this durable checkpoint, so a crash before chunking completes leaves
+    it honestly at `CLEANED`, not falsely `CHUNKED`."""
+    document.status = DocumentStatus.CLEANED
+    document.failure_reason = None
+    db.add(document)
+    db.flush()
+    db.refresh(document)
+    return document
+
+
+def mark_chunked(db: Session, *, document: Document) -> Document:
+    """Callers must insert this document's `document_chunks` rows (see
+    `document_chunk_repository.bulk_create()`) in the *same* transaction
+    as this call, then commit both together -- never call this alone.
+    See `document_service.process_document()` for the exact ordering."""
+    document.status = DocumentStatus.CHUNKED
+    document.failure_reason = None
+    document.processing_completed_at = datetime.now(UTC)
+    db.add(document)
+    db.flush()
+    db.refresh(document)
+    return document

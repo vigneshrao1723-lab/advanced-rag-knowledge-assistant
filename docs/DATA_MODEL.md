@@ -4,14 +4,17 @@
 `workspace_members`, `sessions` (migration `0002`), and
 `password_reset_tokens`/`audit_logs` (migration `0003`) exist as real
 tables (GitHub Issue #2 — Authentication & Workspaces). `documents` and
-`document_chunks` (migration `0004`) also exist as real tables, but as
-**schema only** (GitHub Issue #3, Slice 3.1) — no upload API, storage,
-extraction, chunking, or embedding code exists yet, and
-`document_chunks` deliberately has no embedding column (see below). Every
-other entity below remains PROPOSED. This document records the intended
-core entities so future implementation stays consistent; entities not
-marked implemented below are not evidence that they exist. See
-[`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
+`document_chunks` (migration `0004`) also exist as real tables
+(GitHub Issue #3, Slice 3.1); as of Slice 3.6, `documents` rows are
+populated end-to-end through upload, extraction, cleaning, and chunking
+(`UPLOADED → ... → CHUNKED`), and `document_chunks` rows are persisted
+by that same pipeline — but `document_chunks` deliberately still has no
+embedding column (see below), since no embedding/vector-indexing code
+exists yet. Every other entity below remains PROPOSED. This document
+records the intended core entities so future implementation stays
+consistent; entities not marked implemented below are not evidence that
+they exist. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current
+status.
 
 ## Core entities
 
@@ -22,8 +25,8 @@ marked implemented below are not evidence that they exist. See
 | `workspace_members` | Membership + role (`OWNER`/`ADMIN`/`MEMBER`/`VIEWER`) linking users to workspaces | IMPLEMENTED |
 | `sessions` | Server-tracked login/device session backing refresh-token issuance, listing, and revocation (see [ADR 0003](DECISIONS/0003-authentication-session-architecture.md)) | IMPLEMENTED |
 | `password_reset_tokens` | Hashed, expiring, single-use password-reset tokens (raw value never persisted — see [ADR 0005](DECISIONS/0005-httponly-cookie-csrf-authentication.md) and `docs/SECURITY.md`) | IMPLEMENTED |
-| `documents` | Uploaded source files and their processing status | IMPLEMENTED (schema only — migration `0004`; upload/storage/processing code lands in later Issue #3 slices) |
-| `document_chunks` | Chunked units of a document, used for retrieval once Issue #4 exists | IMPLEMENTED (schema only — migration `0004`; **no embedding column yet**, see below) |
+| `documents` | Uploaded source files and their processing status | IMPLEMENTED (migration `0004`; upload API — Slice 3.3 — through extraction/cleaning/chunking lifecycle — Slices 3.4–3.6 — all populate real rows; embedding/vector-indexing code lands in later Issue #3 slices) |
+| `document_chunks` | Chunked units of a document, used for retrieval once Issue #4 exists | IMPLEMENTED (migration `0004`; populated by Slice 3.6's chunk-persistence step; **no embedding column yet**, see below) |
 | `collections` | Logical grouping of documents within a workspace | PROPOSED |
 | `collection_documents` | Many-to-many link between collections and documents | PROPOSED |
 | `conversations` | A chat session within a workspace | PROPOSED |
@@ -40,8 +43,23 @@ These are plausible additions identified during design but not yet
 committed to — each needs validation against real implementation needs
 before being added to the core list above:
 
-- `document_processing_jobs` — if ingestion pipeline stages need durable,
-  queryable job records beyond the `documents` status field.
+- ~~`document_processing_jobs`~~ — **evaluated during Issue #3, Slice
+  3.6 and confirmed not needed.** The ingestion pipeline (upload →
+  extraction → cleaning → chunking) now exists end-to-end, and the
+  existing `documents.status` field plus the client-triggered,
+  idempotent-on-retry `POST .../documents/{document_id}/process`
+  endpoint together already provide everything this project's
+  synchronous, single-process architecture uses: resumability (a
+  document at any non-terminal status can be safely reprocessed),
+  retry after `FAILED`, and observability (via the existing
+  `AuditEvent.DOCUMENT_*` events). A separate durable job-tracking table
+  would duplicate that state without adding a capability this
+  architecture actually exercises. This entity is not removed from this
+  list — a future slice that introduces genuinely asynchronous/queued
+  processing (which this project deliberately does not have — see
+  [ADR 0001](DECISIONS/0001-modular-monolith-over-microservices.md) on
+  the modular-monolith, no-premature-infrastructure rule) could still
+  revisit this decision.
 - `voice_sessions` — if voice interactions need state beyond what
   `conversations`/`messages` already capture.
 - `feedback` — for user feedback on generated answers, if it needs to be
