@@ -54,23 +54,32 @@ the full implementation, security, crash-safety, and test detail, and
 the two independent review sections immediately after it for the fixes
 found during PR #21's own pre-merge reviews.
 
-**GitHub Issue #3, Slice 3.5 (structure-aware chunking) is IMPLEMENTED
-and TESTED, on branch `issue-3-slice-3-5-structure-aware-chunking`**
-(cut from `2961b62`) — not yet committed/pushed/PR'd as of this line;
-see "Exact next recommended action" at the end of this file. A pure,
-in-memory `ChunkingStrategy` protocol plus one concrete
+**GitHub Issue #3, Slice 3.5 (structure-aware chunking, including its
+own two-round final correctness/security review) was committed, pushed,
+opened as PR #22, and merged into `main` as squash commit `237be97`.
+`main`/`origin/main` were at `237be97` at the point Slice 3.6 branched
+off.** A pure, in-memory `ChunkingStrategy` protocol plus one concrete
 `StructureAwareChunker` (`backend/app/ingestion/chunking.py`), turning an
-`ExtractedDocument` (Slice 3.4) into ordered `Chunk` objects — no
-database/HTTP/lifecycle dependency, nothing persisted, no document
-status transition. See "Completed work (Issue #3 — Slice 3.5:
-structure-aware chunking)" below for the full design, the
-schema-compatibility constraint that shaped it, and the two genuine
-gaps a dedicated post-implementation review found and fixed. **Do not
-start Slice 3.6 or any later Issue #3/Issue #4 work without an explicit
-go-ahead** — no chunk is wired into `document_chunks`, no lifecycle
-transition (`PARSED -> CLEANED -> CHUNKED`) happens, no embeddings, no
-background processing; this slice's own scope stops at the pure
-transformation itself.
+`ExtractedDocument` (Slice 3.4) into ordered `Chunk` objects. See
+"Completed work (Issue #3 — Slice 3.5: structure-aware chunking)" and
+"Final independent review (Issue #3 — Slice 3.5, same PR #22)" below for
+the full design, the schema-compatibility constraint that shaped it, and
+the genuine gaps found and fixed across both of that slice's reviews.
+
+**GitHub Issue #3, Slice 3.6 (processing lifecycle: cleaning stage,
+chunk persistence, and `PARSED → CLEANED → CHUNKED` continuation) is
+IMPLEMENTED and FULLY TESTED, on branch
+`issue-3-slice-3-6-ingestion-lifecycle`** (cut from `237be97`) — not yet
+committed/pushed/PR'd as of this line; see "Exact next recommended
+action" at the end of this file. Extends the existing `POST
+.../documents/{document_id}/process` endpoint
+(`app/services/document_service.py::process_document`) past `PARSED`
+through a new `backend/app/ingestion/cleaning.py` stage to `CLEANED`,
+then through `StructureAwareChunker` (Slice 3.5) to persisted
+`document_chunks` rows and `CHUNKED`. See "Completed work (Issue #3 —
+Slice 3.6: processing lifecycle)" below for the full design, transaction/
+concurrency strategy, and test detail. **Do not start Slice 3.7 or any
+Issue #4 work without an explicit go-ahead.**
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -2219,6 +2228,177 @@ genuine test/documentation gaps were found and closed.
   **473/473 passing** (471 pre-review + 2 new), **3 consecutive runs**.
   Frontend confirmed unaffected (`eslint`/`tsc --noEmit` both clean).
 
+## Completed work (Issue #3 — Slice 3.6: processing lifecycle)
+
+**Uncommitted, working-tree-only, on branch
+`issue-3-slice-3-6-ingestion-lifecycle` (cut from `237be97`).** Extends
+the existing `process_document()` service function and its endpoint —
+no new endpoint, no new migration. Reuses the existing `document_process`
+Redis rate-limit dimension, the existing MEMBER-role authorization check,
+and the existing workspace-scoped 404/409 patterns unchanged.
+
+- **`backend/app/ingestion/cleaning.py`** (new): a pure
+  `ExtractedDocument -> ExtractedDocument` transformation
+  (`clean(document)`), matching `extraction.py`/`chunking.py`'s own
+  shape — no database/HTTP/lifecycle dependency, independently unit
+  tested. Deterministic, conservative, loss-minimizing normalization
+  only: CRLF/CR → LF, per-line trailing-whitespace strip, leading/
+  trailing section whitespace strip, collapsing 3-or-more consecutive
+  blank lines down to exactly one (never to zero — a single blank line
+  is preserved, since `chunking.py`'s own paragraph-boundary detection
+  depends on it). Never rewrites, summarizes, or removes semantic
+  content, punctuation, or Unicode; within-line whitespace is untouched.
+  Deliberately has no `CleaningError` — the function is total (never
+  raises for any valid `ExtractedDocument`), matching this module's own
+  narrow, always-safe scope; the service layer's existing generic
+  exception handling is the safety net for a truly unexpected failure.
+  No third-party dependency — pure stdlib `re`.
+- **`backend/app/repositories/document_chunk_repository.py`** (new):
+  `bulk_create()` (add/flush/no-commit, same convention as every other
+  repository — the calling service controls the transaction boundary)
+  and `get_by_document()`. `chunk_index` values are taken directly from
+  `chunking.py`'s own zero-based, gapless `Chunk.chunk_index` — never
+  regenerated by the repository.
+- **`backend/app/repositories/document_repository.py`** (additive):
+  `mark_cleaned()` and `mark_chunked()`, mirroring the existing
+  `mark_parsed()`/`mark_failed()` shape exactly. `mark_chunked()`'s own
+  docstring states explicitly that callers must insert the chunk rows in
+  the same transaction and commit them together — this function alone
+  does not make that atomic.
+- **`backend/app/core/audit.py`** (additive): three new
+  `AuditEvent` constants — `DOCUMENT_CLEANING_FAILED`, `DOCUMENT_CHUNKED`,
+  `DOCUMENT_CHUNKING_FAILED`. Deliberately **no** `DOCUMENT_CLEANED`
+  success event — cleaning is an internal, always-conservative stage
+  with nothing distinct to report before chunking actually completes;
+  adding one would be audit noise, not signal.
+- **`backend/app/services/document_service.py`** (the core of this
+  slice): `process_document()` continues past its existing extraction
+  stage rather than stopping at `PARSED`/`FAILED`:
+  - **Cleaning stage**: `clean()` runs via `asyncio.to_thread()` (CPU-
+    bound, same reasoning as extraction's own established pattern) on
+    the freshly extracted `ExtractedDocument`. On success:
+    `mark_cleaned()` + `db.commit()` — a durable checkpoint before
+    chunking (the next, more expensive stage) begins. On any exception:
+    `mark_failed()` + `DOCUMENT_CLEANING_FAILED` audit event + commit,
+    returned as an ordinary `200` with a generic `failure_reason`, never
+    a raw `500`.
+  - **Chunking stage**: `StructureAwareChunker().chunk()` runs via
+    `asyncio.to_thread()` on the cleaned document. A `ChunkingError`
+    (validation/config-shape failure) or any other unexpected exception
+    both land in `mark_failed()` + `DOCUMENT_CHUNKING_FAILED` + commit,
+    same generic-`200` contract — a `ChunkingError`'s own message is
+    used as the failure reason (it is already a safe, generic,
+    user-facing string by that module's own design; an unexpected
+    exception instead gets a fixed generic string, never `str(exc)`, to
+    avoid leaking internals).
+  - **Persistence + final transition, atomic**: `document_chunk_repository.bulk_create()`
+    followed by `document_repository.mark_chunked()` followed by the
+    `DOCUMENT_CHUNKED` audit event (`chunk_count` metadata), all inside
+    one transaction, `db.commit()` once at the end. A crash between the
+    chunk inserts and the final commit rolls the whole transaction back —
+    a document can never be observed as `CHUNKED` without its chunks, or
+    with only some of them.
+  - **Concurrency**: a genuine race between two concurrent `/process`
+    calls on the same document reaching the chunk-insert step
+    simultaneously is caught via `document_chunks`' own
+    `UniqueConstraint(document_id, chunk_index)` — `IntegrityError` is
+    caught, `db.rollback()`'d, and the document is re-fetched via
+    `document_repository.get_by_id_for_workspace()` so the response
+    reflects the actual (concurrent winner's) persisted state rather
+    than erroring. This is the same established pattern already used and
+    reviewed for the upload flow's own duplicate-checksum race — no new
+    mechanism introduced. Bounded, rate-limited duplicate work from two
+    near-simultaneous calls is possible (deterministic re-extraction/
+    re-cleaning/re-chunking of the same input) but never produces
+    corrupted or partial state; this is a deliberate, documented
+    trade-off rather than added locking/queueing infrastructure.
+  - **A new helper, `_mark_failed_and_audit()`**, factors out the
+    repeated mark-failed-plus-audit-plus-commit pattern now used at
+    three failure points (extraction, cleaning, chunking) instead of
+    duplicating it inline three times.
+  - **`_REPROCESSABLE_STATUSES`** extended from `{UPLOADED, PROCESSING,
+    FAILED}` to `{UPLOADED, PROCESSING, PARSED, CLEANED, FAILED}` —
+    `CHUNKED` (and any later status) is now the terminal, `409`-rejected
+    state for this endpoint's scope, since the pipeline no longer stops
+    at `PARSED`.
+  - **A deliberate architectural simplification, documented in code and
+    here**: no extracted or cleaned *text content* is persisted anywhere
+    between requests — only the document's `status` (plus `page_count`/
+    `failure_reason`) is durable. This means resuming a document sitting
+    at `PARSED` or `CLEANED` (interrupted mid-pipeline by a crash or a
+    prior failed call) cannot literally skip already-completed stages;
+    there is no stored content to resume *from*. Instead, calling
+    `/process` again on such a document always re-runs extraction (and,
+    if past `PARSED`, cleaning) from scratch against the same stored
+    bytes. This is safe specifically because extraction and cleaning are
+    both pure, deterministic functions of the same input — re-running
+    them produces the same result, just at the cost of repeated work.
+    This was a deliberate choice to avoid introducing new
+    content-persistence infrastructure (no new column, no new table) for
+    a resumability property the existing pure/deterministic stages
+    already provide for free.
+  - **`document_processing_jobs` — evaluated, not added.** `docs/DATA_MODEL.md`
+    names this as a "potential entity" *if* the ingestion pipeline needs
+    durable, queryable job records beyond the `documents.status` field.
+    This slice's implementation confirms it does not: the single
+    `status` column plus the client-triggered, idempotent-on-retry
+    `/process` endpoint together already provide everything this
+    project's synchronous, single-process architecture needs (resumability,
+    retry, and observability via the existing audit events) — a separate
+    job-tracking table would duplicate that state without adding a
+    capability this architecture actually uses. `docs/DATA_MODEL.md` is
+    updated to record this decision and its reasoning explicitly. No new
+    ADR was written for it — the reasoning is a direct, narrow
+    application of already-documented architecture (the modular-monolith/
+    no-premature-infrastructure principle, and `docs/DATA_MODEL.md`'s own
+    framing of the entity as conditional), not a new architectural
+    decision in its own right.
+- **`backend/tests/test_document_processing.py`** (modified): six
+  pre-existing tests whose assertions assumed `PARSED` was the pipeline's
+  terminal success state were renamed and updated to assert `CHUNKED`
+  instead — an intended consequence of this slice's change, not a
+  regression (`process_document()` now continues past `PARSED` by
+  design).
+- **`backend/tests/test_cleaning.py`** (new, 17 tests): CRLF/CR
+  normalization, trailing-whitespace/leading-trailing/excess-blank-line
+  cleanup, single-blank-line preservation, within-line-whitespace/
+  punctuation/Unicode (Tamil/Kannada/Hindi/emoji-ZWJ)/combining-character
+  preservation, page/heading/page_count metadata pass-through, multiple
+  sections cleaned independently, empty/whitespace-only section and empty-
+  document handling, determinism, and idempotence
+  (`clean(clean(doc)) == clean(doc)`).
+- **`backend/tests/test_document_lifecycle.py`** (new, 17 HTTP-level
+  tests, real Postgres/Redis/filesystem, no mocks): full pipeline to
+  `CHUNKED` with persisted-chunk ordering/metadata verification (PDF,
+  TXT), no-duplicate-chunk-rows, cascade-delete of chunks on document
+  deletion, resume-from-`PARSED`, resume-from-`CLEANED` (both simulated
+  by directly setting `document.status` in the database to model an
+  interrupted prior run), `CHUNKED`-rejected-with-`409`, cleaning-failure/
+  chunking-`ChunkingError`/chunking-unexpected-exception all landing
+  safely in `FAILED` with a generic reason and never a raw `500`, exactly
+  one `DOCUMENT_CHUNKED` audit event with a correct `chunk_count`,
+  confirmation that no `DOCUMENT_CLEANED` success event exists (locking
+  in that deliberate design decision), VIEWER-role rejection (`403`),
+  cross-workspace chunk isolation (`404` plus a check that persisted
+  chunks carry the correct `workspace_id`), a concurrent-duplicate-
+  chunk-insert-race recovery test (pre-seeding a winning row to force the
+  `IntegrityError` path and asserting a clean `200`, never a `500`, with
+  no duplicate `chunk_index`), a commit-order regression test proving the
+  `CLEANED` transition commits *before* chunking is attempted (not just
+  before the response is returned), and a slow-chunking event-loop-non-
+  blocking test mirroring Slice 3.4's own precedent (`httpx.AsyncClient`
+  + `ASGITransport`, an absolute shared clock, an unrelated concurrent
+  request proven to finish without waiting on the slow chunking call).
+- **Verification**: `ruff`/`mypy` clean (103 source files). Complete
+  backend suite: **507/507 passing** (473 pre-Slice-3.6 + 34 new), **3
+  consecutive runs**, real Postgres + real Redis, no regression in any
+  existing test. No new dependency added.
+- **Documentation updated this slice**: `PROJECT_STATE.md` (Slice 3.5
+  moved to merged, Slice 3.6 described as implemented/not-yet-merged, the
+  `document_processing_jobs` decision recorded), this file, `CHANGELOG.md`,
+  `docs/DATA_MODEL.md`/`docs/API_CONTRACT.md` (where Slice 3.6 actually
+  establishes behavior).
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -2232,16 +2412,17 @@ genuine test/documentation gaps were found and closed.
   (Playwright E2E — authentication/password-recovery)" above. Covers
   only the authentication/password-recovery surface; no document/chat/
   search UI exists yet for E2E coverage to extend to.
-- **Issue #3 Slices 3.1–3.4 are merged** (`79d4787` PR #17, `941c1a7`
+- **Issue #3 Slices 3.1–3.5 are merged** (`79d4787` PR #17, `941c1a7`
   PR #18, correctness-fix `5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62`
-  PR #21). **Slice 3.5 (structure-aware chunking) is implemented and
-  tested, on branch `issue-3-slice-3-5-structure-aware-chunking` — not
-  yet committed, pushed, or opened as a PR.** No chunk is wired into
-  `document_chunks`, no lifecycle transition happens, no embedding,
-  vector indexing, or background/queued processing exists — documents
-  reach `PARSED` or `FAILED` and stop there; chunking exists only as a
-  pure, unwired, in-memory transformation. `AuditEvent.DOCUMENT_UPLOADED`/
-  `DOCUMENT_PARSED`/`DOCUMENT_PARSING_FAILED` are implemented — the
+  PR #21, `237be97` PR #22). **Slice 3.6 (processing lifecycle) is
+  implemented and fully tested, on branch
+  `issue-3-slice-3-6-ingestion-lifecycle` — not yet committed, pushed, or
+  opened as a PR.** No embedding or vector indexing exists yet —
+  documents now reach `CHUNKED` (or `FAILED`) with persisted
+  `document_chunks` rows, but embedding generation and vector indexing
+  are later slices, not started. `AuditEvent.DOCUMENT_UPLOADED`/
+  `DOCUMENT_PARSED`/`DOCUMENT_PARSING_FAILED`/`DOCUMENT_CLEANING_FAILED`/
+  `DOCUMENT_CHUNKED`/`DOCUMENT_CHUNKING_FAILED` are implemented — the
   broader document-lifecycle taxonomy (delete, etc.) still doesn't
   exist; those land with later Issue #3 slices.
 - **`client_ip()` (unconditional, no trusted-proxy handling) is still
@@ -2257,8 +2438,8 @@ genuine test/documentation gaps were found and closed.
   whole ADR exists for (§2.1) has not been exercised with more than one
   backend process under real concurrent load, since no such deployment
   exists.
-- **Issue #3, Slice 3.6 onward (lifecycle/background processing wiring
-  chunking in, embeddings, vector indexing)** — not started.
+- **Issue #3, Slice 3.7 onward (embeddings, vector indexing, and any
+  further ingestion-pipeline work)** — not started.
 - **Later RAG retrieval/generation features (Issue #4 onward)** — not
   started.
 - **Endpoint-driven concurrency test under real HTTP load** — not added
@@ -2274,7 +2455,7 @@ genuine test/documentation gaps were found and closed.
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: GitHub Issue #3 (Knowledge Ingestion), Slice 3.6
+## Next major task: GitHub Issue #3 (Knowledge Ingestion), Slice 3.7
 
 **ADR 0006's deterministic abuse-protection layer is functionally
 complete end-to-end and fully merged (Slices 1–3c).** Nothing further is
@@ -2282,32 +2463,33 @@ planned under it unless a future decision proposes one. Browser E2E
 coverage for the authentication/password-recovery flows is implemented,
 validated, and merged (PR #16, `e1c4858`).
 
-**GitHub Issue #3 (Knowledge Ingestion): Slices 3.1–3.4 are merged**
+**GitHub Issue #3 (Knowledge Ingestion): Slices 3.1–3.5 are merged**
 (PR #17 `79d4787`, PR #18 `941c1a7`, correctness-fix PR #19 `5e6fdc2`,
-PR #20 `a6762e2`, PR #21 `2961b62`). **Slice 3.5 (structure-aware
-chunking, `backend/app/ingestion/chunking.py`) is implemented and
-tested** on branch `issue-3-slice-3-5-structure-aware-chunking` (cut
-from `2961b62`) — not yet committed, pushed, or opened as a PR.
+PR #20 `a6762e2`, PR #21 `2961b62`, PR #22 `237be97`). **Slice 3.6
+(processing lifecycle: cleaning stage, chunk persistence,
+`PARSED → CLEANED → CHUNKED`) is implemented and fully tested** on
+branch `issue-3-slice-3-6-ingestion-lifecycle` (cut from `237be97`) —
+not yet committed, pushed, or opened as a PR.
 
-**Before anything else starts**: commit Slice 3.5, push the branch,
-open a PR, and get it reviewed and merged, per normal workflow — don't
-start Slice 3.6 on top of an unmerged prior slice.
+**Before anything else starts**: commit Slice 3.6, push the branch,
+open a PR, and get it reviewed — per normal workflow — don't start
+Slice 3.7 on top of an unmerged prior slice. No merge instruction has
+been given for Slice 3.6's PR; do not merge it without one.
 
 With an explicit go-ahead, the next work in this repository's own stated
 order (`PROJECT_STATE.md` "Immediate priorities") is:
 
-1. **GitHub Issue #3, Slice 3.6** — not started; not yet scoped in this
-   file. Do not assume further detail (likely the lifecycle/background-
-   processing wiring that actually calls `StructureAwareChunker` and
-   transitions `PARSED → CLEANED → CHUNKED`, given Slice 3.5's own
-   explicit scope boundary, but this is inference, not a confirmed
-   scope) without checking the Issue #3 GitHub issue and this file
-   first.
+1. **GitHub Issue #3, Slice 3.7** — not started; not yet scoped in this
+   file. Likely embeddings/vector indexing, given Slice 3.6's own
+   explicit scope boundary (chunks now persisted, nothing generates
+   embeddings for them yet), but this is inference, not a confirmed
+   scope — do not assume further detail without checking the Issue #3
+   GitHub issue and this file first.
 
 ## Blockers
 
 None currently. `gh` CLI access is confirmed working in this
-environment. Docker was not touched this session — Slice 3.5 adds no
+environment. Docker was not touched this session — Slice 3.6 adds no
 dependency and no Docker-relevant file changed (`git diff main --
 backend/pyproject.toml backend/uv.lock` is empty), so no rebuild was
 needed; Slice 3.4's own rebuild+smoke-test remains the most recent
@@ -2574,29 +2756,45 @@ was done.
   confirmed healthy and reachable; this specific fix was validated
   through the automated suite against real Postgres, not a fresh manual
   container smoke test. Committed as `1cc760f` on the same branch.
+- **Issue #3, Slice 3.6 (processing lifecycle): `uv run ruff check .`**
+  (pass) and **`uv run mypy .`** (pass, 103 source files, no new
+  findings). **34 new tests — 17 unit (`tests/test_cleaning.py`) + 17
+  HTTP-level (`tests/test_document_lifecycle.py`) — 34/34 passed**, real
+  Postgres/Redis/filesystem for the HTTP-level tests, no mocks. Six
+  pre-existing tests in `tests/test_document_processing.py` were updated
+  (not newly added) to assert `CHUNKED` instead of `PARSED` as the
+  pipeline's terminal success state — an intended consequence of this
+  slice, not a regression. **Complete backend suite: 507/507 passing**
+  (473 pre-Slice-3.6 + 34 new), **3 consecutive runs**, no regression in
+  any existing test. Frontend not re-run as a fresh command this
+  session, but no frontend file changed — expected unaffected,
+  consistent with every prior backend-only slice. Docker/Compose: not
+  rebuilt this slice — no dependency and no Docker-relevant file changed
+  (`git diff main -- backend/pyproject.toml backend/uv.lock` is empty),
+  matching the same reasoning already recorded for Slice 3.5 in
+  "Blockers" above. Not yet committed, pushed, or opened as a PR — see
+  "Exact next recommended action" below.
 
 ## Exact next recommended action
 
-Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.4
-(including Slice 3.2's and Slice 3.4's own correctness-review fixes)
-are all merged into `main` (`46ef03b` PR #11, `5391a78` PR #12,
-`026dcf3` PR #13, `42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16,
-`79d4787` PR #17, `941c1a7` PR #18, `5e6fdc2` PR #19, `a6762e2` PR #20,
-`2961b62` PR #21) — nothing pending for any of them. `main`/`origin/main`
-are at `2961b62`. **GitHub Issue #3, Slice 3.5 (structure-aware
-chunking) is implemented and tested**, on branch
-`issue-3-slice-3-5-structure-aware-chunking` (cut from `2961b62`) — not
-yet committed, pushed, or opened as a PR. See "Completed work (Issue #3
-— Slice 3.5...)" above. The next work, in order:
+Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.5
+(including Slice 3.2's and Slice 3.4's own correctness-review fixes, and
+Slice 3.5's own two-round final review) are all merged into `main`
+(`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14,
+`75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7` PR #18,
+`5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62` PR #21, `237be97` PR #22)
+— nothing pending for any of them. `main`/`origin/main` are at
+`237be97`. **GitHub Issue #3, Slice 3.6 (processing lifecycle) is
+implemented and fully tested**, on branch
+`issue-3-slice-3-6-ingestion-lifecycle` (cut from `237be97`) — not yet
+committed, pushed, or opened as a PR. See "Completed work (Issue #3 —
+Slice 3.6...)" above. The next work, in order:
 
-1. **Commit Slice 3.5** on the current branch, push it, and open a PR
-   against `main`. This slice's own real-stack validation (45 focused
-   tests, full 471-test suite × 3 runs, a dedicated post-implementation
-   quality review that found and fixed two genuine gaps — an orphaned
-   overlap fragment chunk, and a resource-safety ceiling checked only
-   once per section instead of incrementally) is already done locally.
-   Get it reviewed, confirm CI is green, and merge — do not merge
-   without review.
+1. **Commit Slice 3.6** on the current branch, push it, and open a PR
+   against `main`. This slice's own real-stack validation (34 new
+   focused tests, full 507-test suite × 3 runs, `ruff`/`mypy` clean) is
+   already done locally. Get it reviewed, confirm CI is green. **Do not
+   merge it** — no merge instruction has been given for this slice's PR.
 2. **Once merged, with an explicit go-ahead:** scope and implement
-   GitHub Issue #3, Slice 3.6 (not yet scoped in this file — see "Next
+   GitHub Issue #3, Slice 3.7 (not yet scoped in this file — see "Next
    major task" above).

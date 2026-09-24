@@ -10,11 +10,92 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-22 — Issue #3, Slice 3.5: structure-aware chunking
+### 2026-09-24 — Issue #3, Slice 3.6: processing lifecycle (cleaning + chunk persistence)
+
+*(Branch `issue-3-slice-3-6-ingestion-lifecycle`, cut from the merged
+Slice 3.5 (`237be97`, PR #22). Implemented and fully tested; not yet
+committed as of this entry.)*
+
+- Extends the existing `POST
+  .../documents/{document_id}/process` endpoint
+  (`app/services/document_service.py::process_document`) past `PARSED`
+  through a new cleaning stage to `CLEANED`, then through
+  `StructureAwareChunker` (Slice 3.5) to persisted `document_chunks`
+  rows and `CHUNKED`. No new endpoint, no new migration — reuses the
+  existing `document_process` rate-limit dimension and MEMBER-role
+  authorization unchanged.
+- Adds `backend/app/ingestion/cleaning.py`: a pure
+  `ExtractedDocument -> ExtractedDocument` transformation —
+  deterministic, conservative, loss-minimizing normalization only
+  (CRLF/CR → LF, trailing-whitespace strip, excess-blank-line collapse
+  to exactly one, never to zero). Never rewrites, summarizes, or removes
+  semantic content, punctuation, or Unicode. No third-party dependency —
+  stdlib `re` only.
+- Adds `backend/app/repositories/document_chunk_repository.py`
+  (`bulk_create()`/`get_by_document()`, same add/flush/no-commit
+  convention as every other repository) and two new
+  `document_repository.py` functions, `mark_cleaned()`/`mark_chunked()`.
+- Adds three `AuditEvent` constants: `DOCUMENT_CLEANING_FAILED`,
+  `DOCUMENT_CHUNKED`, `DOCUMENT_CHUNKING_FAILED`. Deliberately no
+  `DOCUMENT_CLEANED` success event, to avoid audit noise for an
+  internal, always-conservative stage.
+- **Transaction strategy**: each stage's success commits as its own
+  transaction before the next, more expensive stage begins
+  (`PROCESSING` → commit → extraction → `PARSED` → commit → cleaning →
+  `CLEANED` → commit → chunking → chunk rows + `CHUNKED` committed
+  atomically together). Cleaning and chunking both run via
+  `asyncio.to_thread()`, matching Slice 3.4's own established pattern
+  for extraction, so neither blocks the single event loop for other
+  concurrent requests.
+- **Concurrency**: a genuine race between two concurrent `/process`
+  calls reaching the chunk-insert step simultaneously is caught via
+  `document_chunks`' own `UniqueConstraint(document_id, chunk_index)` —
+  `IntegrityError` is caught, rolled back, and the document is
+  re-fetched so the response reflects the actual persisted state rather
+  than erroring, reusing the same pattern already established for the
+  upload flow's own duplicate-checksum race.
+- **Resumability**: a document at `PARSED` or `CLEANED` (interrupted
+  mid-pipeline) is resumed, not rejected — only `CHUNKED` and later are
+  terminal (`409`). No extracted/cleaned text is persisted between
+  requests, so resuming re-runs the already-passed, pure/deterministic
+  stages rather than skipping them — a deliberate simplification to
+  avoid new content-persistence infrastructure.
+- **`document_processing_jobs`** (the "potential entity"
+  `docs/DATA_MODEL.md` names) evaluated and confirmed not needed: the
+  existing `documents.status` field plus the client-triggered
+  `/process` endpoint's own resumability is sufficient for this
+  project's synchronous, single-process architecture. No new ADR — a
+  direct application of already-documented architecture, not a new
+  decision.
+- `backend/tests/test_cleaning.py` (new, 17 unit tests) and
+  `backend/tests/test_document_lifecycle.py` (new, 17 HTTP-level tests,
+  real Postgres/Redis/filesystem, no mocks): full pipeline to `CHUNKED`
+  with persisted-chunk ordering/metadata verification, no-duplicate-rows,
+  cascade-delete, resume-from-`PARSED`/`CLEANED`, `CHUNKED`-rejected-
+  with-`409`, cleaning/chunking failure paths landing safely in `FAILED`
+  never a raw `500`, exactly-one `DOCUMENT_CHUNKED` audit event,
+  VIEWER-role rejection, cross-workspace chunk isolation, a concurrent-
+  duplicate-chunk-insert-race recovery test, a commit-order regression
+  test proving `CLEANED` commits before chunking is attempted, and a
+  slow-chunking event-loop-non-blocking test. Six pre-existing tests in
+  `tests/test_document_processing.py` updated (not newly added) to
+  assert `CHUNKED` instead of `PARSED` as the pipeline's terminal
+  success state — an intended consequence of this slice, not a
+  regression.
+- `ruff`/`mypy` clean (103 source files). Complete backend suite:
+  **507/507 passing** (473 pre-existing + 34 new), 3 consecutive runs.
+  No dependency added, so no Docker rebuild was needed.
+- Docs updated in the same working tree: `PROJECT_STATE.md`,
+  `HANDOFF.md`, `docs/DATA_MODEL.md`, `docs/API_CONTRACT.md`. No new ADR.
+
+## [Unreleased — committed]
+
+### 2026-09-22 — `feat: add structure-aware chunking (Issue #3, Slice 3.5)` (`06577aa`, docs `9afc69c`/`fb44dc1`/`8e8401b`), merged as `237be97`
 
 *(Branch `issue-3-slice-3-5-structure-aware-chunking`, cut from the
-merged Slice 3.4 (`2961b62`, PR #21). Implemented and tested; not yet
-committed as of this entry.)*
+merged Slice 3.4 (`2961b62`, PR #21). Opened as **PR #22**, verified
+green on GitHub Actions CI, and **merged into `main` as squash commit
+`237be97`**.)*
 
 - Adds `backend/app/ingestion/chunking.py`: a `ChunkingConfig` (all
   sizes are character counts, not tokens), a `Chunk` output dataclass
@@ -121,8 +202,6 @@ one 20 MiB section, confirmed linear across 5/20/50 MiB) — accepted as
 bounded by extraction's own pre-existing cap, not a code defect. `ruff`/
 `mypy` clean. 2 new regression tests. Complete backend suite:
 **473/473 passing** (471 pre-review + 2 new), 3 consecutive runs.
-
-## [Unreleased — committed]
 
 ### 2026-09-22 — `feat: add document text extraction (Issue #3, Slice 3.4)` (`b01cd24`/`8f72916`, review fixes `105ec72`/`eb14287`), merged as `2961b62`
 
