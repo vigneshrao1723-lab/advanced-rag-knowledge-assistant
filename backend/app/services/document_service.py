@@ -1,4 +1,4 @@
-"""Document upload and processing orchestration (Issue #3, Slices 3.3–3.6).
+"""Document upload and processing orchestration (Issue #3, Slices 3.3–3.7).
 
 **Upload** (Slice 3.3) ordering: validate (extension/MIME, no body read
 needed) -> stream-read the body (bounded, computing the checksum as it
@@ -8,25 +8,32 @@ event -> commit. Storage always succeeds before anything is written to
 Postgres — see `_persist_document()` for exactly how a failure after the
 storage write is compensated for.
 
-**Processing** (Slices 3.4–3.6): `process_document()` drives a document
+**Processing** (Slices 3.4–3.7): `process_document()` drives a document
 through the full synchronous pipeline -- extraction (Slice 3.4) ->
 cleaning (Slice 3.6, `app.ingestion.cleaning`) -> chunking (Slice 3.6,
-`app.ingestion.chunking`) -- committing a durable checkpoint after each
+`app.ingestion.chunking`) -> embedding + indexing (Slice 3.7,
+`app.ingestion.embedding`) -- committing a durable checkpoint after each
 stage *before* the next stage's work begins, so a crash at any point
 leaves the document honestly at its last completed stage, never falsely
-further along. See that function's own docstring for the exact ordering
-and why there is deliberately no persistence of extracted/cleaned text
-between stages -- resuming a document from `PARSED`/`CLEANED` re-runs
-the already-passed stages (idempotent, deterministic) rather than
+further along. See that function's own docstring for the exact ordering.
+
+There is deliberately no persistence of extracted/cleaned *text* between
+stages -- resuming a document from `PARSED`/`CLEANED` re-runs
+extraction/cleaning from scratch (idempotent, deterministic) rather than
 attempting to skip them, since nothing but the status itself is durable
-between requests.
+between requests. `document_chunks` rows themselves, once persisted at
+`CHUNKED`, are real durable state, though -- resuming from
+`CHUNKED`/`EMBEDDED`/`INDEXED` does *not* re-run extraction/cleaning/
+chunking; it fetches the already-persisted chunks and continues straight
+into embedding (idempotent overwrite of any existing vectors, since the
+embedding provider is a pure function of chunk content).
 
 Extraction/cleaning/chunking all read/operate only through the existing
 StorageProvider and the server-generated storage key, never a raw
 filesystem path and never the client-supplied filename beyond recovering
-its (already-validated-at-upload) extension. No embedding, vector
-indexing, or state transition beyond `CHUNKED`/`FAILED` happens here or
-anywhere in this slice.
+its (already-validated-at-upload) extension. Embedding never leaves this
+process either -- `LocalHashingEmbeddingProvider` (Slice 3.7) is
+deterministic and offline, no external network call, no API key.
 """
 
 from __future__ import annotations
@@ -47,8 +54,10 @@ from app.core.audit import record as record_audit_event
 from app.ingestion import chunking, extraction
 from app.ingestion.chunking import Chunk, ChunkingError
 from app.ingestion.cleaning import clean as clean_extracted_document
+from app.ingestion.embedding import EmbeddingError, EmbeddingProvider, embed_with_retry
 from app.ingestion.extraction import ExtractedDocument, ExtractionError
 from app.models.document import Document, DocumentStatus
+from app.models.document_chunk import DocumentChunk
 from app.repositories import document_chunk_repository, document_repository
 from app.schemas.document import DocumentRead
 from app.services.storage_provider import StorageError, StorageProvider
@@ -347,29 +356,53 @@ async def upload_document(
 
 
 # A document can be (re)processed from UPLOADED (first attempt),
-# PROCESSING/PARSED/CLEANED (a prior attempt was interrupted -- e.g. a
-# crash or restart -- partway through the pipeline and never reached
-# CHUNKED/FAILED, so it's treated as retriable rather than stuck
-# forever), or FAILED (explicit retry after a fixable failure). CHUNKED
-# and every later lifecycle state (EMBEDDED/INDEXED/READY) are refused
-# with 409 -- the full pipeline this slice covers has already completed.
+# PROCESSING/PARSED/CLEANED/CHUNKED/EMBEDDED/INDEXED (a prior attempt was
+# interrupted -- e.g. a crash or restart -- partway through the pipeline
+# and never reached READY/FAILED, so it's treated as retriable rather
+# than stuck forever), or FAILED (explicit retry after a fixable
+# failure). Only READY is refused with 409 -- the full pipeline is
+# terminal there.
 #
 # Resuming from PARSED or CLEANED does not skip the stages already
 # passed: nothing but the document's own `status` is durable between
-# requests (extracted/cleaned text is never persisted, deliberately --
-# see the module docstring), so process_document() below always restarts
-# from extraction regardless of which of these statuses it found. This
-# is safe because extraction/cleaning/chunking are all pure,
-# deterministic functions of the same stored bytes -- re-running an
-# already-passed stage produces the identical result, at the cost of
-# some redundant CPU work on a retry, never incorrect output.
+# requests for *extracted/cleaned text* (deliberately -- see the module
+# docstring), so process_document() below always restarts from
+# extraction regardless of which of these statuses it found. This is
+# safe because extraction/cleaning/chunking are all pure, deterministic
+# functions of the same stored bytes -- re-running an already-passed
+# stage produces the identical result, at the cost of some redundant CPU
+# work on a retry, never incorrect output.
+#
+# Resuming from CHUNKED/EMBEDDED/INDEXED is different: `document_chunks`
+# rows ARE real durable state once persisted, so process_document() skips
+# extraction/cleaning/chunking entirely for these three statuses and
+# fetches the already-persisted chunks, continuing straight into
+# embedding. This is also safe to always redo from scratch (never
+# partial-completion-aware) because the embedding provider is a pure,
+# deterministic function of chunk content -- re-embedding an
+# already-embedded document just overwrites each vector with the
+# identical value, never incorrect or inconsistent output.
 _REPROCESSABLE_STATUSES: Final = frozenset(
     {
         DocumentStatus.UPLOADED,
         DocumentStatus.PROCESSING,
         DocumentStatus.PARSED,
         DocumentStatus.CLEANED,
+        DocumentStatus.CHUNKED,
+        DocumentStatus.EMBEDDED,
+        DocumentStatus.INDEXED,
         DocumentStatus.FAILED,
+    }
+)
+
+# Statuses for which document_chunks rows already exist -- process_document()
+# skips extraction/cleaning/chunking for these and jumps straight to the
+# embedding phase using the already-persisted chunks.
+_ALREADY_CHUNKED_STATUSES: Final = frozenset(
+    {
+        DocumentStatus.CHUNKED,
+        DocumentStatus.EMBEDDED,
+        DocumentStatus.INDEXED,
     }
 )
 
@@ -419,6 +452,28 @@ def _read_and_extract(
     return extraction.extract(extension=extension, content=content)
 
 
+def _embed_chunks(
+    provider: EmbeddingProvider, chunks: list[DocumentChunk], *, batch_size: int
+) -> list[list[float]]:
+    """Synchronous, CPU-bound (and, for a future networked provider,
+    I/O-bound too) -- deliberately a single plain function, matching
+    `_read_and_extract()`'s own shape, so it can be run via
+    `asyncio.to_thread()` in `process_document()` below. Batches chunk
+    content into groups of at most `batch_size` texts per
+    `embed_with_retry()` call -- bounds a single provider call's size,
+    which matters for a future networked provider with its own
+    request-size limits even though `LocalHashingEmbeddingProvider` has
+    none; this way the batching behavior is already exercised and correct
+    once a real provider is plugged in, not left untested until then.
+    Returns one embedding per input chunk, same order.
+    """
+    embeddings: list[list[float]] = []
+    for start in range(0, len(chunks), batch_size):
+        batch = chunks[start : start + batch_size]
+        embeddings.extend(embed_with_retry(provider, [chunk.content for chunk in batch]))
+    return embeddings
+
+
 def _mark_failed_and_audit(
     db: Session,
     *,
@@ -449,37 +504,47 @@ async def process_document(
     document_id: uuid.UUID,
     triggered_by: uuid.UUID,
     storage: StorageProvider,
+    embedding_provider: EmbeddingProvider,
+    embedding_batch_size: int = 64,
     ip_address: str | None = None,
 ) -> DocumentRead:
     """Drives a document through the full synchronous pipeline -- run
     within the request, not a background job: per this slice's own
     scope, the minimum execution mechanism needed is "call each stage
     while handling the request", not a new queue/worker infrastructure.
-    Every CPU-bound stage (extraction, cleaning, chunking) runs via
-    `asyncio.to_thread()` in a worker thread, never directly on the
-    event loop -- see `_read_and_extract()`'s docstring for why that
+    Every CPU-bound stage (extraction, cleaning, chunking, embedding)
+    runs via `asyncio.to_thread()` in a worker thread, never directly on
+    the event loop -- see `_read_and_extract()`'s docstring for why that
     distinction matters even without a background job; the same
-    reasoning applies identically to cleaning and chunking, both of
-    which operate on the same up-to-20-MiB-text input class.
+    reasoning applies identically to cleaning, chunking, and embedding.
 
     Each stage's success is committed as its own transaction, *before*
     the next stage's work begins -- PROCESSING before extraction, PARSED
     before cleaning, CLEANED before chunking, CHUNKED together with its
-    `document_chunks` rows in one final atomic commit. A crash or kill at
-    any point leaves the document honestly at its last completed stage
-    (which `_REPROCESSABLE_STATUSES` above treats as retriable) rather
-    than silently vanishing mid-request while claiming a stage it never
-    reached.
+    `document_chunks` rows in one atomic commit, EMBEDDED together with
+    every chunk's embedding vector in one atomic commit, then INDEXED,
+    then READY. A crash or kill at any point leaves the document honestly
+    at its last completed stage (which `_REPROCESSABLE_STATUSES` above
+    treats as retriable) rather than silently vanishing mid-request while
+    claiming a stage it never reached.
+
+    A document already at CHUNKED, EMBEDDED, or INDEXED skips extraction/
+    cleaning/chunking entirely (its `document_chunks` rows already exist
+    -- see `_ALREADY_CHUNKED_STATUSES` above) and goes straight to the
+    embedding phase using those already-persisted rows.
 
     A failure at any stage is an expected, handled outcome, not a server
     error: it is recorded as FAILED with a short, generic, storage-safe
     reason, audited with a stage-specific event type, and returned as an
     ordinary 200 response -- never raised as an HTTPException and never
-    left silently unrecorded. There is no separate `DOCUMENT_CLEANED`
-    success audit event: cleaning is an internal, always-conservative
-    normalization step with nothing distinct to report before chunking
-    actually completes -- auditing it separately would only add noise,
-    not information; its *failure* is still audited explicitly below.
+    left silently unrecorded. There is no separate `DOCUMENT_CLEANED` or
+    `DOCUMENT_INDEXED` success audit event: cleaning and indexing are
+    both internal checkpoints with nothing distinct to report on their
+    own (indexing in particular does no separate work -- see
+    `document_repository.mark_indexed()`) -- auditing them separately
+    would only add noise, not information; a *failure* during embedding
+    is still audited explicitly below, and the pipeline's overall success
+    is audited once, at `DOCUMENT_READY`.
     """
     document = document_repository.get_by_id_for_workspace(
         db, workspace_id=workspace_id, document_id=document_id
@@ -489,9 +554,134 @@ async def process_document(
     if document.status not in _REPROCESSABLE_STATUSES:
         raise _document_already_processed_error()
 
+    already_chunked = document.status in _ALREADY_CHUNKED_STATUSES
+
     document = document_repository.mark_processing(db, document=document)
     db.commit()
 
+    if already_chunked:
+        persisted_chunks = document_chunk_repository.get_by_document(
+            db, document_id=document.id
+        )
+    else:
+        persisted_chunks, failed_read = await _extract_clean_and_chunk(
+            db,
+            document=document,
+            storage=storage,
+            triggered_by=triggered_by,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+        )
+        if failed_read is not None:
+            return failed_read
+        document = document_repository.get_by_id_for_workspace(
+            db, workspace_id=workspace_id, document_id=document.id
+        )
+        assert document is not None
+
+    if not persisted_chunks:
+        # A real, reachable outcome, not a bug: chunking.py's own
+        # `_chunk_section()` returns no chunks for an empty/whitespace-
+        # only section, so a document with no extractable text (an empty
+        # file, or e.g. a scanned, text-layer-less PDF) legitimately
+        # chunks to zero rows -- chunking itself did not fail. Such a
+        # document has nothing to embed and can never be meaningfully
+        # retrieved, so it is reported as a clear, honest failure here
+        # rather than silently marked READY with zero chunks (which
+        # would look successful while being permanently unretrievable).
+        document = _mark_failed_and_audit(
+            db,
+            document=document,
+            reason="The document contains no extractable text content to process.",
+            event_type=AuditEvent.DOCUMENT_EMBEDDING_FAILED,
+            triggered_by=triggered_by,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+        )
+        return _to_document_read(document)
+
+    embeddings: list[list[float]] | None = None
+    reason: str | None = None
+    try:
+        embeddings = await asyncio.to_thread(
+            _embed_chunks,
+            embedding_provider,
+            persisted_chunks,
+            batch_size=embedding_batch_size,
+        )
+    except EmbeddingError as exc:
+        # embedding.py's own messages are already short and generic by
+        # construction -- see that module's docstring.
+        reason = str(exc)
+    except Exception:  # noqa: BLE001 - any other provider failure must not crash the request
+        logger.exception(
+            "document_processing_unexpected_failure",
+            extra={"document_id": str(document.id), "stage": "embedding"},
+        )
+        reason = "Processing failed due to an unexpected error."
+
+    if embeddings is None:
+        assert reason is not None
+        document = _mark_failed_and_audit(
+            db,
+            document=document,
+            reason=reason,
+            event_type=AuditEvent.DOCUMENT_EMBEDDING_FAILED,
+            triggered_by=triggered_by,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+        )
+        return _to_document_read(document)
+
+    document_chunk_repository.set_embeddings(
+        db,
+        chunks=persisted_chunks,
+        embeddings=embeddings,
+        model=embedding_provider.model_name,
+        dimension=embedding_provider.dimension,
+    )
+    document = document_repository.mark_embedded(db, document=document)
+    db.commit()
+
+    document = document_repository.mark_indexed(db, document=document)
+    db.commit()
+
+    document = document_repository.mark_ready(db, document=document)
+    record_audit_event(
+        db,
+        event_type=AuditEvent.DOCUMENT_READY,
+        user_id=triggered_by,
+        workspace_id=workspace_id,
+        ip_address=ip_address,
+        metadata={
+            "document_id": str(document.id),
+            "chunk_count": len(persisted_chunks),
+            "embedding_model": embedding_provider.model_name,
+            "embedding_dimension": embedding_provider.dimension,
+        },
+    )
+    db.commit()
+
+    return _to_document_read(document)
+
+
+async def _extract_clean_and_chunk(
+    db: Session,
+    *,
+    document: Document,
+    storage: StorageProvider,
+    triggered_by: uuid.UUID,
+    workspace_id: uuid.UUID,
+    ip_address: str | None,
+) -> tuple[list[DocumentChunk], DocumentRead | None]:
+    """The extraction -> cleaning -> chunking portion of the pipeline,
+    factored out of `process_document()` so that function's own control
+    flow (branch on already-chunked, then converge on the shared
+    embedding phase) stays readable. Returns `(chunks, None)` on success,
+    or `([], failure_response)` when a stage failed -- the caller returns
+    `failure_response` immediately in that case, matching every other
+    stage's "return a 200 with FAILED status" contract.
+    """
     extracted: ExtractedDocument | None = None
     reason: str | None = None
     try:
@@ -530,7 +720,7 @@ async def process_document(
             workspace_id=workspace_id,
             ip_address=ip_address,
         )
-        return _to_document_read(document)
+        return [], _to_document_read(document)
 
     document = document_repository.mark_parsed(
         db, document=document, page_count=extracted.page_count
@@ -566,7 +756,7 @@ async def process_document(
             workspace_id=workspace_id,
             ip_address=ip_address,
         )
-        return _to_document_read(document)
+        return [], _to_document_read(document)
 
     document = document_repository.mark_cleaned(db, document=document)
     db.commit()
@@ -596,7 +786,7 @@ async def process_document(
             workspace_id=workspace_id,
             ip_address=ip_address,
         )
-        return _to_document_read(document)
+        return [], _to_document_read(document)
 
     try:
         document_chunk_repository.bulk_create(
@@ -623,13 +813,15 @@ async def process_document(
         # identical, deterministic chunk set from the same stored bytes,
         # so returning the winner's now-committed state is correct, not
         # a stale/wrong result -- never a raised error for this case.
-        refreshed = document_repository.get_by_id_for_workspace(
-            db, workspace_id=workspace_id, document_id=document.id
-        )
-        if refreshed is not None:
-            document = refreshed
 
-    return _to_document_read(document)
+    # Always re-fetch the authoritative, now-committed rows from the
+    # database rather than trusting the local `chunks` (dataclass) list or
+    # this request's own `bulk_create()` return value -- in the
+    # IntegrityError-recovery path above, those reflect this request's
+    # own (uncommitted, rolled-back) attempt, not the concurrent winner's
+    # actually-persisted rows.
+    persisted_chunks = document_chunk_repository.get_by_document(db, document_id=document.id)
+    return persisted_chunks, None
 
 
 __all__ = ["process_document", "upload_document"]

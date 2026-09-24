@@ -60,3 +60,30 @@ def get_by_document(db: Session, *, document_id: uuid.UUID) -> list[DocumentChun
             .order_by(DocumentChunk.chunk_index)
         ).scalars()
     )
+
+
+def set_embeddings(
+    db: Session,
+    *,
+    chunks: list[DocumentChunk],
+    embeddings: list[list[float]],
+    model: str,
+    dimension: int,
+) -> None:
+    """Updates already-persisted rows in place (`chunks` from
+    `get_by_document()`/`bulk_create()`) -- never inserts. `embeddings`
+    must be the same length as `chunks`, in the same order (the caller,
+    `document_service.py`, is responsible for that pairing; this function
+    trusts it rather than re-deriving it, since re-deriving would require
+    guessing at a correspondence this function has no independent way to
+    verify). Follows the existing add/flush/no-commit convention -- the
+    caller commits this together with the document's own `EMBEDDED`
+    status transition in one transaction, matching `bulk_create()`'s own
+    atomicity contract for `CHUNKED`.
+    """
+    for chunk, embedding in zip(chunks, embeddings, strict=True):
+        chunk.embedding = embedding
+        chunk.embedding_model = model
+        chunk.embedding_dimension = dimension
+        db.add(chunk)
+    db.flush()

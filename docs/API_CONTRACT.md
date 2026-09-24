@@ -145,13 +145,14 @@ from Issue #1: `{"error": {"code", "message", "request_id"}}` — see
 
 ## Implemented: `/api/v1/workspaces/{workspace_id}/documents`
 
-**Upload + full processing pipeline** (GitHub Issue #3, Slices 3.3–3.6) —
+**Upload + full processing pipeline** (GitHub Issue #3, Slices 3.3–3.7) —
 list/search/filter/sort/rename/delete/re-index/download/metadata are not
 implemented yet. Documents reach `UPLOADED` (upload), then progress
-through `PROCESSING → PARSED → CLEANED → CHUNKED` (or `FAILED` at any
-stage) via the same `/process` endpoint; chunks are persisted to
-`document_chunks` once `CHUNKED` is reached. No embedding or vector
-indexing exists yet.
+through `PROCESSING → PARSED → CLEANED → CHUNKED → EMBEDDED → INDEXED →
+READY` (or `FAILED` at any stage) via the same `/process` endpoint;
+chunks are persisted to `document_chunks` once `CHUNKED` is reached, and
+each chunk's embedding vector once `EMBEDDED` is reached. No retrieval
+code reads this data yet (Issue #4).
 
 | Endpoint | Min. role | Body | Response |
 |---|---|---|---|
@@ -208,39 +209,44 @@ successful upload, metadata limited to `document_id`/`filename`/
 `mime_type`/`size_bytes`/`checksum_sha256` — never the storage key, a
 filesystem path, or file content.
 
-### `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` (Slices 3.4–3.6)
+### `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` (Slices 3.4–3.7)
 
 Synchronous, in-request processing for the same five formats (PDF, DOCX,
 TXT, Markdown, CSV) — no background job/queue exists; the request blocks
-until the document reaches `CHUNKED` or fails at some stage. As of
-Slice 3.6, one call drives the document through **extraction → cleaning
-→ chunking**, persisting `document_chunks` rows and ending at `CHUNKED`
-on full success. Callable when the document is `UPLOADED`, `PROCESSING`
-(a prior attempt was interrupted before completing — treated as
-retriable, not stuck), `PARSED`, `CLEANED` (either interrupted
+until the document reaches `READY` or fails at some stage. One call
+drives the document through **extraction → cleaning → chunking →
+embedding → indexing**, persisting `document_chunks` rows (and their
+embedding vectors) and ending at `READY` on full success. Callable when
+the document is `UPLOADED`, `PROCESSING` (a prior attempt was
+interrupted before completing — treated as retriable, not stuck),
+`PARSED`, `CLEANED`, `CHUNKED`, `EMBEDDED`, `INDEXED` (each interrupted
 mid-pipeline — see "Resuming an interrupted document" below), or
 `FAILED` (explicit retry). Returns `409` (`document_already_processed`)
-if the document is `CHUNKED` or any later lifecycle state. Returns `404`
+if the document is `READY` — the only terminal status. Returns `404`
 if the document doesn't exist or doesn't belong to `workspace_id`
 (same non-leaking pattern as workspace lookup itself).
 
 **This always returns `200`, even when a stage fails** — a malformed or
-corrupt document, or a document whose content can't be safely chunked,
-is an expected, handled outcome (`status: "FAILED"`, `failure_reason`
-set to a short, generic, storage-safe string), not a server error. Only
-a genuinely unexpected condition (auth, lookup, already-processed, rate
-limit, an unhandled server fault) produces a non-`200` status.
+corrupt document, a document whose content can't be safely chunked, a
+document with no extractable text at all, or an embedding-provider
+failure, is an expected, handled outcome (`status: "FAILED"`,
+`failure_reason` set to a short, generic, storage-safe string), not a
+server error. Only a genuinely unexpected condition (auth, lookup,
+already-processed, rate limit, an unhandled server fault) produces a
+non-`200` status.
 
 **Crash safety:** each stage's success is committed as its own
 transaction *before* the next, more expensive stage is attempted
 (`PROCESSING` → commit → extraction → `PARSED` → commit → cleaning →
 `CLEANED` → commit → chunking → chunk rows + `CHUNKED` committed
-atomically together). A crash mid-stage leaves the document honestly at
-its last-completed status (all of which are retriable) rather than
-falsely appearing further along or silently reverting. A crash between
-inserting chunk rows and the final `CHUNKED` commit rolls the whole
-transaction back — a document is never observably `CHUNKED` without its
-chunks, or with only some of them.
+atomically together → embedding → chunk embedding vectors + `EMBEDDED`
+committed atomically together → `INDEXED` → `READY`). A crash mid-stage
+leaves the document honestly at its last-completed status (all of which
+are retriable) rather than falsely appearing further along or silently
+reverting. A crash between inserting chunk rows (or writing embedding
+vectors) and the corresponding status commit rolls the whole transaction
+back — a document is never observably `CHUNKED` without its chunks, or
+`EMBEDDED` with only some of them embedded.
 
 **Resuming an interrupted document:** no extracted or cleaned text
 content is persisted between requests — only the document's `status`
@@ -250,13 +256,43 @@ extraction (and, if past `PARSED`, cleaning) from scratch against the
 same stored file, relying on both stages being pure, deterministic
 functions of that input. This is a deliberate simplification — see
 `docs/DATA_MODEL.md`'s "Potential entities" section for why a separate
-job-tracking table was evaluated and judged unnecessary.
+job-tracking table was evaluated and judged unnecessary. A document at
+`CHUNKED`, `EMBEDDED`, or `INDEXED` is different: its `document_chunks`
+rows already exist as real durable state, so resuming skips extraction/
+cleaning/chunking entirely and re-embeds the already-persisted chunks
+(also idempotent, since the embedding provider is a pure function of
+chunk content).
+
+**A document with no extractable text** (chunking legitimately produces
+zero chunks — an empty file, or e.g. a scanned, text-layer-less PDF) is
+reported as `FAILED` with a clear reason ("The document contains no
+extractable text content to process."), not silently marked `READY`
+with nothing to retrieve.
 
 **Cleaning** (`backend/app/ingestion/cleaning.py`): deterministic,
 conservative normalization only — line-ending normalization, trailing-
 whitespace and excess-blank-line cleanup. Never rewrites, summarizes, or
 removes semantic content, punctuation, or Unicode; this is not an LLM
 step and never calls one.
+
+**Embedding** (`backend/app/ingestion/embedding.py`, Slice 3.7): the
+`EmbeddingProvider` abstraction's shipped implementation,
+`LocalHashingEmbeddingProvider`, is deterministic, offline, and
+dependency-free (a hashed-bag-of-words vector, L2-normalized, 384
+dimensions) — no external API, no API key, so the pipeline is testable
+and demoable without a paid provider. `embed_with_retry()` retries a
+transient provider failure with exponential backoff before giving up.
+Chunk texts are sent to the provider in batches of
+`embedding_batch_size` (default 64). Every embedded chunk's vector,
+model name, and dimension are stored on `document_chunks` (migration
+`0005`) — see `docs/DATA_MODEL.md`.
+
+**Indexing:** pgvector's HNSW index (`vector_cosine_ops`) on
+`document_chunks.embedding` is maintained transactionally by Postgres as
+part of the same commit that writes each embedding vector — there is no
+separate index-build step. The `INDEXED` status transition exists to
+preserve the documented lifecycle and give downstream consumers an
+explicit, audited signal, not because additional work happens there.
 
 **Chunking** (`backend/app/ingestion/chunking.py`, Slice 3.5): a
 structure-aware chunker producing ordered, gapless, zero-indexed chunks,
@@ -285,9 +321,9 @@ exact limits and ordering.
 
 **Rate limiting:** a dedicated `document_process` operation, same shape
 as `document_upload` (IP + authenticated user ID, Tier A, 20/60s) —
-covers the whole extraction/cleaning/chunking call, since all three are
-CPU-bound, not just I/O, so the call gets the same defensive treatment
-as upload.
+covers the whole extraction/cleaning/chunking/embedding call, since all
+of these are CPU-bound, not just I/O, so the call gets the same
+defensive treatment as upload.
 
 **Concurrency:** two concurrent `/process` calls on the same document
 reaching the final chunk-persistence step at the same time are resolved
@@ -295,7 +331,11 @@ via `document_chunks`' own `UNIQUE(document_id, chunk_index)`
 constraint — the losing request's insert conflict is caught and the
 response reflects the winning request's actual persisted state, never a
 `500`. This can produce bounded, rate-limited duplicate extraction/
-cleaning/chunking work but never corrupted or partial state.
+cleaning/chunking/embedding work but never corrupted or partial state.
+Concurrent embedding-vector writes for the same already-persisted chunk
+rows are a plain idempotent `UPDATE` (no unique constraint involved) —
+both requests compute the identical, deterministic vector from the same
+chunk content, so there is nothing to reconcile.
 
 **Audit:** `AuditEvent.DOCUMENT_PARSED` (metadata:
 `document_id`/`page_count`/`section_count`) on successful extraction,
@@ -306,9 +346,14 @@ for cleaning, to avoid audit noise for an internal, always-conservative
 stage; `AuditEvent.DOCUMENT_CHUNKED` (metadata:
 `document_id`/`chunk_count`) on successful chunking,
 `AuditEvent.DOCUMENT_CHUNKING_FAILED` (metadata: `document_id`/`reason`)
-on chunking failure. Every `reason` is the same storage-safe string
-returned to the client, never a raw exception, filesystem path, or
-storage key.
+on chunking failure; `AuditEvent.DOCUMENT_EMBEDDING_FAILED` (metadata:
+`document_id`/`reason`) on embedding failure or a zero-extractable-
+content document — no separate success event for indexing, since it
+performs no distinct work (see "Indexing" above); `AuditEvent.DOCUMENT_READY`
+(metadata: `document_id`/`chunk_count`/`embedding_model`/
+`embedding_dimension`) once, on the pipeline's overall successful
+completion. Every `reason` is the same storage-safe string returned to
+the client, never a raw exception, filesystem path, or storage key.
 
 ## Related documents
 

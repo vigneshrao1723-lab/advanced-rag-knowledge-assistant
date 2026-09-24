@@ -296,9 +296,51 @@ just at upload time.
   (`AuditEvent.DOCUMENT_PARSED` on success,
   `AuditEvent.DOCUMENT_PARSING_FAILED` on failure — metadata never
   includes a raw exception, filesystem path, or storage key).
-- **Not yet implemented**, deliberately out of this slice's scope:
-  chunking, embeddings, vector indexing, and any background/queued
-  processing (extraction is synchronous, within the request).
+- Chunking, embeddings, and vector indexing are implemented — see below.
+  All remain synchronous, within the request; no background/queued
+  processing exists anywhere in this pipeline.
+
+**Implemented (Issue #3, Slices 3.5–3.7 — chunking, cleaning, embedding,
+indexing,** `backend/app/ingestion/chunking.py` +
+`backend/app/ingestion/cleaning.py` + `backend/app/ingestion/embedding.py`
+**):**
+
+- **Chunking resource limits**: a `_MAX_CHUNKS_PER_DOCUMENT` ceiling
+  (checked incrementally, not just once per section) bounds a single
+  document's chunk count regardless of chunk-size configuration; every
+  chunk size is itself bounded by `max_chunk_size`. Chunking is a pure,
+  offline transformation — no network call, no filesystem access, no
+  database dependency — so it inherits no new attack surface beyond the
+  already-bounded extracted-text size (20 MiB, see above).
+- **Cleaning is total and conservative by construction**: `clean()`
+  never raises for any valid input, never removes semantic content,
+  punctuation, or Unicode, and performs only safe, reversible-in-intent
+  normalization (line endings, whitespace, blank-line runs) — there is
+  no code path in this module that can leak, execute, or otherwise treat
+  document content as anything other than inert text.
+- **Embedding never leaves the process**: `LocalHashingEmbeddingProvider`
+  makes no network call and needs no API key — document content is
+  never sent to an external service at this stage. `embed_with_retry()`'s
+  backoff/retry path only applies to a future networked provider's own
+  transient failures; the shipped provider cannot fail transiently.
+  Embedding vectors are numeric only — no chunk text or metadata beyond
+  what `document_chunks` already stores is exposed by this stage.
+- **Indexing (pgvector HNSW) introduces no new attack surface**: the
+  index is maintained transactionally by Postgres itself as part of the
+  same `UPDATE` that writes each embedding vector; no separate process,
+  endpoint, or credential is involved.
+- **Zero-extractable-content documents fail explicitly**: a document
+  with no chunks (an empty file, or content that extracts to nothing)
+  is reported as `FAILED` with a clear, generic reason rather than
+  silently reaching `READY` — this is a correctness/UX property, not a
+  security control, but it avoids a document silently existing in a
+  state where retrieval could return nothing without explanation.
+- Rate-limited and audited exactly as extraction is (same
+  `document_process` operation covers the whole pipeline in one call);
+  new audit events: `AuditEvent.DOCUMENT_CHUNKED`/`DOCUMENT_CHUNKING_FAILED`/
+  `DOCUMENT_CLEANING_FAILED`/`DOCUMENT_EMBEDDING_FAILED`/`DOCUMENT_READY` —
+  metadata never includes raw chunk content, embedding vectors, a raw
+  exception, filesystem path, or storage key.
 
 ## Prompt injection defense
 

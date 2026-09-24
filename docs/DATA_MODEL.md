@@ -4,13 +4,14 @@
 `workspace_members`, `sessions` (migration `0002`), and
 `password_reset_tokens`/`audit_logs` (migration `0003`) exist as real
 tables (GitHub Issue #2 — Authentication & Workspaces). `documents` and
-`document_chunks` (migration `0004`) also exist as real tables
-(GitHub Issue #3, Slice 3.1); as of Slice 3.6, `documents` rows are
-populated end-to-end through upload, extraction, cleaning, and chunking
-(`UPLOADED → ... → CHUNKED`), and `document_chunks` rows are persisted
-by that same pipeline — but `document_chunks` deliberately still has no
-embedding column (see below), since no embedding/vector-indexing code
-exists yet. Every other entity below remains PROPOSED. This document
+`document_chunks` (migration `0004`, extended by migration `0005`) also
+exist as real tables (GitHub Issue #3, Slice 3.1); as of Slice 3.7,
+`documents` rows are populated end-to-end through the full documented
+ingestion lifecycle (`UPLOADED → ... → READY`), and `document_chunks`
+rows — including their `pgvector` embedding column, populated by
+`LocalHashingEmbeddingProvider` — are persisted by that same pipeline.
+No retrieval/generation code reads this data yet (Issue #4). Every other
+entity below remains PROPOSED. This document
 records the intended core entities so future implementation stays
 consistent; entities not marked implemented below are not evidence that
 they exist. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current
@@ -25,8 +26,8 @@ status.
 | `workspace_members` | Membership + role (`OWNER`/`ADMIN`/`MEMBER`/`VIEWER`) linking users to workspaces | IMPLEMENTED |
 | `sessions` | Server-tracked login/device session backing refresh-token issuance, listing, and revocation (see [ADR 0003](DECISIONS/0003-authentication-session-architecture.md)) | IMPLEMENTED |
 | `password_reset_tokens` | Hashed, expiring, single-use password-reset tokens (raw value never persisted — see [ADR 0005](DECISIONS/0005-httponly-cookie-csrf-authentication.md) and `docs/SECURITY.md`) | IMPLEMENTED |
-| `documents` | Uploaded source files and their processing status | IMPLEMENTED (migration `0004`; upload API — Slice 3.3 — through extraction/cleaning/chunking lifecycle — Slices 3.4–3.6 — all populate real rows; embedding/vector-indexing code lands in later Issue #3 slices) |
-| `document_chunks` | Chunked units of a document, used for retrieval once Issue #4 exists | IMPLEMENTED (migration `0004`; populated by Slice 3.6's chunk-persistence step; **no embedding column yet**, see below) |
+| `documents` | Uploaded source files and their processing status | IMPLEMENTED (migration `0004`; the full ingestion pipeline — upload through embedding/indexing, Slices 3.3–3.7 — populates real rows all the way to `READY`) |
+| `document_chunks` | Chunked units of a document, used for retrieval once Issue #4 exists | IMPLEMENTED (migration `0004` + `0005`; populated by Slice 3.6's chunk-persistence step and Slice 3.7's embedding step, including the `pgvector` `embedding` column) |
 | `collections` | Logical grouping of documents within a workspace | PROPOSED |
 | `collection_documents` | Many-to-many link between collections and documents | PROPOSED |
 | `conversations` | A chat session within a workspace | PROPOSED |
@@ -98,13 +99,23 @@ schema is actually built.
 - `section` — IMPLEMENTED (migration `0004`)
 - `chunk_index` — IMPLEMENTED (migration `0004`)
 - `content` — IMPLEMENTED (migration `0004`)
-- embedding vector (pgvector column) — **PROPOSED, deliberately not yet
-  added.** Choosing a `VECTOR(n)` column now would lock the schema to an
-  embedding model/dimension before the `EmbeddingProvider` abstraction is
-  designed; adding it is planned as a small additive migration in a later
-  Issue #3 slice, once that choice is actually made.
-- embedding model/version metadata — PROPOSED, same reason as above (see
-  [`docs/RAG_DESIGN.md`](RAG_DESIGN.md) §"Embeddings")
+- `embedding` (pgvector `Vector(384)`, nullable) — **IMPLEMENTED**
+  (migration `0005`, GitHub Issue #3 Slice 3.7): populated once a
+  document reaches `EMBEDDED`. 384 is `LocalHashingEmbeddingProvider`'s
+  dimension (`backend/app/ingestion/embedding.py`) — chosen to match
+  common small real embedding models (e.g. all-MiniLM-L6-v2/BGE-small)
+  so a future swap to one of those needs no further migration; a
+  different-dimension model would. An HNSW index (`vector_cosine_ops`)
+  covers this column — chosen over IVFFlat since it needs no separate
+  training/list-count step and stays correct under this project's
+  incremental (not bulk-loaded) ingestion.
+- `embedding_model`/`embedding_dimension` (Text/Integer, nullable) —
+  **IMPLEMENTED** (migration `0005`), per-row provenance (see
+  [`docs/RAG_DESIGN.md`](RAG_DESIGN.md) §"Embeddings" — "tracking of
+  which model/version/dimension produced each embedding — this matters
+  because changing the embedding model invalidates prior vectors"): a
+  future model swap can identify exactly which rows an old model
+  produced, rather than guessing from the column's fixed width alone.
 
 ## Related documents
 

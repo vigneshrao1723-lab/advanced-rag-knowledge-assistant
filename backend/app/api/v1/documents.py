@@ -1,8 +1,9 @@
-"""Document upload and processing endpoints (Issue #3, Slices 3.3/3.4).
+"""Document upload and processing endpoints (Issue #3, Slices 3.3–3.7).
 
-Upload is schema-only through UPLOADED. Process moves a document to
-PARSED or FAILED via synchronous text extraction. See
-app/services/document_service.py for both orchestration strategies.
+Upload is schema-only through UPLOADED. Process drives a document through
+the full pipeline (extraction -> cleaning -> chunking -> embedding ->
+indexing) to READY or FAILED. See app/services/document_service.py for
+both orchestration strategies.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from app.core.rate_limit import (
     enforce_document_upload_rate_limit,
 )
 from app.core.redis_client import get_redis_client
+from app.ingestion.embedding import EmbeddingProvider, get_embedding_provider
 from app.models.workspace_member import WorkspaceRole
 from app.schemas.document import DocumentRead
 from app.services import document_service
@@ -68,14 +70,18 @@ async def process_document(
     ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.MEMBER)),
     db: Session = Depends(get_db),
     storage: StorageProvider = Depends(get_storage_provider),
+    embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
     redis_client: redis.Redis | None = Depends(get_redis_client),
 ) -> DocumentRead:
     enforce_document_process_rate_limit(request, user_id=ctx.user.id, redis_client=redis_client)
+    settings = get_settings()
     return await document_service.process_document(
         db,
         workspace_id=ctx.workspace.id,
         document_id=document_id,
         triggered_by=ctx.user.id,
         storage=storage,
+        embedding_provider=embedding_provider,
+        embedding_batch_size=settings.embedding_batch_size,
         ip_address=client_ip(request),
     )

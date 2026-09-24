@@ -28,7 +28,6 @@ import pytest
 import redis
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pypdf import PdfWriter
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
@@ -49,13 +48,66 @@ from tests.conftest import csrf_headers
 _PASSWORD = "correct horse battery staple"
 
 
-def _blank_pdf(*, pages: int = 1) -> bytes:
-    writer = PdfWriter()
-    for _ in range(pages):
-        writer.add_blank_page(width=200, height=200)
-    buffer = io.BytesIO()
-    writer.write(buffer)
-    return buffer.getvalue()
+def _pdf_with_text(*, pages: int = 1, text: str = "Hello world.") -> bytes:
+    """Hand-built (not via `PdfWriter`, which has no simple API for real
+    text content -- only blank pages) so every page has genuinely
+    extractable text, not just a valid-but-empty page. Needed since
+    Slice 3.7 treats a document with zero extractable text (which a
+    blank page produces) as a real, honest failure -- see
+    `app/services/document_service.py`'s "no extractable text content"
+    handling -- and these tests need to reach READY, not FAILED. Byte
+    offsets are computed here, not hand-copied, so this stays correct if
+    `pages`/`text` ever change."""
+    objects: list[bytes] = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    ]
+    page_object_numbers = list(range(3, 3 + pages))
+    kids = " ".join(f"{n} 0 R" for n in page_object_numbers)
+    objects.append(
+        f"2 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {pages} >>\nendobj\n".encode("ascii")
+    )
+    content_object_number = 3 + pages
+    font_object_number = content_object_number + 1
+    for page_number in page_object_numbers:
+        objects.append(
+            (
+                f"{page_number} 0 obj\n<< /Type /Page /Parent 2 0 R "
+                f"/MediaBox [0 0 200 200] "
+                f"/Resources << /Font << /F1 {font_object_number} 0 R >> >> "
+                f"/Contents {content_object_number} 0 R >>\nendobj\n"
+            ).encode("ascii")
+        )
+    stream = f"BT /F1 24 Tf 10 100 Td ({text}) Tj ET".encode("latin-1")
+    objects.append(
+        b"%d 0 obj\n<< /Length %d >>\nstream\n" % (content_object_number, len(stream))
+        + stream
+        + b"\nendstream\nendobj\n"
+    )
+    objects.append(
+        f"{font_object_number} 0 obj\n<< /Type /Font /Subtype /Type1 "
+        f"/BaseFont /Helvetica >>\nendobj\n".encode("ascii")
+    )
+
+    header = b"%PDF-1.4\n"
+    body = b""
+    offsets = [0]
+    pos = len(header)
+    for obj in objects:
+        offsets.append(pos)
+        body += obj
+        pos += len(obj)
+
+    xref_offset = len(header) + len(body)
+    object_count = len(objects) + 1
+    xref = b"xref\n0 %d\n0000000000 65535 f \n" % object_count
+    for offset in offsets[1:]:
+        xref += b"%010d 00000 n \n" % offset
+
+    trailer = b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF" % (
+        object_count,
+        xref_offset,
+    )
+    return header + body + xref + trailer
 
 
 def _docx_with_heading() -> bytes:
@@ -67,7 +119,7 @@ def _docx_with_heading() -> bytes:
     return buffer.getvalue()
 
 
-_PDF_BYTES = _blank_pdf(pages=2)
+_PDF_BYTES = _pdf_with_text(pages=2)
 _MALFORMED_PDF_BYTES = b"%PDF-1.4\n" + b"garbage" * 5  # passes the upload signature check only
 _DOCX_BYTES = _docx_with_heading()
 _MALFORMED_DOCX_BYTES = b"PK\x03\x04" + b"\x00" * 40  # passes the upload signature check only
@@ -168,10 +220,10 @@ def _audit_rows(db_session: DbSession, *, event_type: str, workspace_id: str) ->
     )
 
 
-# --- per-format success: transitions to PARSED -----------------------------
+# --- per-format success: transitions all the way to READY ------------------
 
 
-def test_pdf_processes_to_chunked_with_correct_page_count(
+def test_pdf_processes_to_ready_with_correct_page_count(
     client: TestClient, db_session: DbSession
 ) -> None:
     _register(client)
@@ -187,19 +239,19 @@ def test_pdf_processes_to_chunked_with_correct_page_count(
     response = _process(client, workspace["id"], document["id"])
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["status"] == "CHUNKED"
+    assert body["status"] == "READY"
     assert body["page_count"] == 2
     assert body["failure_reason"] is None
     assert "storage_key" not in body
 
     row = db_session.get(Document, uuid.UUID(document["id"]))
     assert row is not None
-    assert row.status == DocumentStatus.CHUNKED
+    assert row.status == DocumentStatus.READY
     assert row.processing_started_at is not None
     assert row.processing_completed_at is not None
 
 
-def test_docx_processes_to_chunked(client: TestClient) -> None:
+def test_docx_processes_to_ready(client: TestClient) -> None:
     _register(client)
     workspace = _create_workspace(client)
     document = _upload(
@@ -213,11 +265,11 @@ def test_docx_processes_to_chunked(client: TestClient) -> None:
     response = _process(client, workspace["id"], document["id"])
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["status"] == "CHUNKED"
+    assert body["status"] == "READY"
     assert body["page_count"] is None
 
 
-def test_txt_processes_to_chunked(client: TestClient) -> None:
+def test_txt_processes_to_ready(client: TestClient) -> None:
     _register(client)
     workspace = _create_workspace(client)
     document = _upload(
@@ -226,10 +278,10 @@ def test_txt_processes_to_chunked(client: TestClient) -> None:
 
     response = _process(client, workspace["id"], document["id"])
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "CHUNKED"
+    assert response.json()["status"] == "READY"
 
 
-def test_markdown_processes_to_chunked(client: TestClient) -> None:
+def test_markdown_processes_to_ready(client: TestClient) -> None:
     _register(client)
     workspace = _create_workspace(client)
     document = _upload(
@@ -238,10 +290,10 @@ def test_markdown_processes_to_chunked(client: TestClient) -> None:
 
     response = _process(client, workspace["id"], document["id"])
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "CHUNKED"
+    assert response.json()["status"] == "READY"
 
 
-def test_csv_processes_to_chunked(client: TestClient) -> None:
+def test_csv_processes_to_ready(client: TestClient) -> None:
     _register(client)
     workspace = _create_workspace(client)
     document = _upload(
@@ -250,7 +302,7 @@ def test_csv_processes_to_chunked(client: TestClient) -> None:
 
     response = _process(client, workspace["id"], document["id"])
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "CHUNKED"
+    assert response.json()["status"] == "READY"
 
 
 def test_successful_processing_emits_exactly_one_document_parsed_audit_event(
@@ -673,7 +725,7 @@ def test_nonexistent_document_id_rejected_with_404(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_processing_an_already_chunked_document_is_rejected_with_409(client: TestClient) -> None:
+def test_processing_an_already_ready_document_is_rejected_with_409(client: TestClient) -> None:
     _register(client)
     workspace = _create_workspace(client)
     document = _upload(
@@ -686,7 +738,7 @@ def test_processing_an_already_chunked_document_is_rejected_with_409(client: Tes
 
     first = _process(client, workspace["id"], document["id"])
     assert first.status_code == 200
-    assert first.json()["status"] == "CHUNKED"
+    assert first.json()["status"] == "READY"
 
     second = _process(client, workspace["id"], document["id"])
     assert second.status_code == 409

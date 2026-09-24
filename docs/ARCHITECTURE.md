@@ -117,7 +117,7 @@ advanced-rag-knowledge-assistant/
 │   │   ├── schemas/              # Pydantic request/response schemas — implemented (auth, user, workspace)
 │   │   ├── repositories/         # data access layer — implemented (user/session/workspace/workspace_member)
 │   │   ├── services/              # business logic orchestration — implemented (auth_service, workspace_service)
-│   │   ├── ingestion/             # parse/clean/chunk/embed/index — PLANNED (Issue #3)
+│   │   ├── ingestion/             # parse/clean/chunk/embed/index — IMPLEMENTED (Issue #3, Slices 3.1–3.7)
 │   │   ├── retrieval/             # dense, BM25, fusion, rerank, filters — PLANNED (Issue #4)
 │   │   ├── generation/            # context builder, LLM calls, citations — PLANNED (Issue #4)
 │   │   ├── voice/                 # STT/TTS integration — PLANNED (Issue #6)
@@ -204,7 +204,13 @@ chat, search, switch workspace, evaluations, settings.
 
 Interfaces defined (or to be defined) in `backend/app/services/`:
 
-- `EmbeddingProvider` — PROPOSED
+- `EmbeddingProvider` — **IMPLEMENTED** (Issue #3, Slice 3.7):
+  `backend/app/ingestion/embedding.py`. A `Protocol` plus one real
+  implementation today, `LocalHashingEmbeddingProvider` (deterministic,
+  offline, no external API/key — a hashed-bag-of-words vector), selected
+  via the `embedding_provider` setting (`Literal["local"]`, matching
+  `StorageProvider`/`EmailProvider`'s own precedent). No commercial
+  vendor selected yet.
 - `Reranker` — PROPOSED
 - `LLMProvider` — PROPOSED
 - `SpeechToTextProvider` — PROPOSED

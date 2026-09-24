@@ -405,3 +405,73 @@ the *documented* default (what the design says for an outage) actually
 agree before wiring the literal design into code — here they didn't, and
 the ADR had already flagged it as an open decision precisely because it
 hadn't been resolved yet.
+
+## 2026-09-24 — A new "zero extractable content" safety check broke two existing PDF test fixtures, correctly
+
+**Symptom:** After adding Slice 3.7's embedding stage, three tests that
+had passed unchanged through Slices 3.4/3.5/3.6 started failing:
+`test_pdf_processes_to_ready_with_correct_page_count`,
+`test_pdf_reaches_ready_with_persisted_chunks`, and
+`test_processing_an_already_ready_document_is_rejected_with_409` all
+asserted `status == "READY"` but got `status == "FAILED"`.
+
+**Root cause:** Both `tests/test_document_processing.py` and
+`tests/test_document_lifecycle.py` share a PDF fixture built via
+`pypdf.PdfWriter().add_blank_page(width=200, height=200)` — a real,
+valid, single/multi-page PDF, but with **no text content on any page**
+(`add_blank_page` creates an empty page; it doesn't write anything into
+it). Every test through Slice 3.6 only ever asserted `page_count` and
+lifecycle `status`, never chunk *content*, so this was invisible: a
+blank-page PDF extracts to sections with empty text, and
+`chunking.py`'s own `_chunk_section()` correctly returns `[]` for an
+empty section — so this fixture had *always* chunked to zero rows, it
+just never mattered until Slice 3.7 added a real safety check
+(`process_document()`: a document with zero persisted chunks has
+nothing to embed and can never be retrieved, so it's now reported as an
+honest `FAILED` rather than silently reaching `READY`). The new check is
+correct; the fixture's long-standing "blank" content was the actual gap,
+newly exposed rather than newly introduced.
+
+**Failed attempts:** Considered weakening or removing the zero-chunk
+check to make the existing fixtures pass unmodified — rejected: a
+document that silently reaches `READY` with zero retrievable chunks is
+a worse, more confusing production outcome (looks successful, is
+functionally useless) than an honest, generic `FAILED`. The check itself
+was correct; only the fixture's fitness for the tests using it was in
+question. Considered adding `reportlab` (or another PDF-generation
+library) as a new test dependency to draw real text easily — rejected as
+unnecessary: this project's own "don't introduce a dependency unless
+necessary" convention, and a byte-correct minimal PDF is small and
+well-understood enough to hand-build.
+
+**Fix:** Replaced `_blank_pdf()` in both test files with
+`_pdf_with_text()` — a hand-built PDF (catalog/pages/page/content-
+stream/font objects, `xref` table, `trailer`) whose content stream
+contains a real `Tj` text-showing operator, so `pypdf` extracts genuine
+text from it. Byte offsets for the `xref` table are computed in Python
+as each object is appended, not hand-copied/hardcoded, specifically to
+avoid introducing a second, worse class of hard-to-debug bug (an
+off-by-one in a hand-maintained offset table) while fixing the first.
+Verified independently via a standalone `pypdf.PdfReader` round-trip
+(`extract_text() == "Hello World"`) before wiring it into either test
+file. `PdfWriter`/`io` imports were removed from both files once nothing
+else used them.
+
+**Verification:** All three previously-failing tests pass again,
+asserting `READY` correctly. Every other test using the same shared
+`_PDF_BYTES` constant (rate-limiting, crash-safety, authorization,
+audit-event tests — none of which cared about final chunk content) was
+re-run and remained unaffected. Full backend suite: 527/527 passing, 3
+consecutive runs.
+
+**Prevention/lesson:** **a "successful" test fixture that was never
+inspected past a coarse-grained assertion (status/page_count only) can
+be hiding a degenerate input** (here: real-but-empty content) that a
+later, more thorough downstream check will correctly reject. When a new
+safety/correctness check starts failing a previously-green test, verify
+which side is actually wrong — the new check, or the old fixture's
+fitness for what it's now being asked to prove — before weakening the
+check. Also: when constructing a binary file format by hand for a test
+fixture, compute any offset/length table programmatically rather than
+hardcoding it, so the fixture-construction code itself can't introduce
+the exact class of subtle bug the check under test is meant to catch.
