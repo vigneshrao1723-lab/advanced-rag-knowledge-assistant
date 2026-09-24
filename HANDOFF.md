@@ -67,19 +67,51 @@ the full design, the schema-compatibility constraint that shaped it, and
 the genuine gaps found and fixed across both of that slice's reviews.
 
 **GitHub Issue #3, Slice 3.6 (processing lifecycle: cleaning stage,
-chunk persistence, and `PARSED → CLEANED → CHUNKED` continuation) is
-IMPLEMENTED and FULLY TESTED, on branch
-`issue-3-slice-3-6-ingestion-lifecycle`** (cut from `237be97`) — not yet
-committed/pushed/PR'd as of this line; see "Exact next recommended
-action" at the end of this file. Extends the existing `POST
+chunk persistence, and `PARSED → CLEANED → CHUNKED` continuation) was
+committed, pushed, opened as PR #23, and merged into `main` as squash
+commit `aa68079`. `main`/`origin/main` were at `aa68079` at the point
+Slice 3.7 branched off.** Extends the existing `POST
 .../documents/{document_id}/process` endpoint
 (`app/services/document_service.py::process_document`) past `PARSED`
 through a new `backend/app/ingestion/cleaning.py` stage to `CLEANED`,
 then through `StructureAwareChunker` (Slice 3.5) to persisted
 `document_chunks` rows and `CHUNKED`. See "Completed work (Issue #3 —
 Slice 3.6: processing lifecycle)" below for the full design, transaction/
-concurrency strategy, and test detail. **Do not start Slice 3.7 or any
-Issue #4 work without an explicit go-ahead.**
+concurrency strategy, and test detail.
+
+**⚠ Execution mode changed: we are now on an explicit 5-day completion
+timeline** (Issues #3 through #8 — authentication/workspaces, this
+ingestion pipeline, core RAG retrieval/generation, product UI, voice,
+evaluation/security/observability, and final deployment/integration —
+all to be finished as one coherent, demonstrable MVP). **This changes
+the standing git-workflow default for the rest of this timeline: PRs are
+now merged promptly once reviewed and CI-green, without waiting for a
+separate per-PR merge instruction**, unless a genuine architectural
+blocker requires pausing for review first (`CLAUDE.md` §4's
+architectural-review triggers still apply and still require stopping).
+Speed is explicitly secondary to correctness/security/data-integrity —
+see the project's own "5-day rule": implement the smallest correct
+version of each feature, test the critical path, validate security,
+commit, update this documentation, and move forward; defer (not skip,
+and always document) genuinely non-critical polish rather than let it
+block the critical path.
+
+**GitHub Issue #3, Slice 3.7 (embedding generation + vector indexing,
+`CHUNKED → EMBEDDED → INDEXED → READY` — completing Issue #3's full
+documented ingestion lifecycle) is IMPLEMENTED and FULLY TESTED, on
+branch `issue-3-slice-3-7-embeddings-indexing`** (cut from `aa68079`) —
+not yet committed/pushed/PR'd as of this line; see "Exact next
+recommended action" at the end of this file. Extends
+`process_document()` past `CHUNKED` through a new
+`backend/app/ingestion/embedding.py` module (a deterministic, offline
+`EmbeddingProvider` — no paid external API required) to `EMBEDDED`, then
+through a real pgvector HNSW index (migration `0005`, no separate build
+step needed) to `INDEXED`, then `READY`. See "Completed work (Issue #3 —
+Slice 3.7: embedding + vector indexing)" below for the full design,
+transaction/concurrency strategy, and test detail. **Once this merges,
+Issue #3 (Knowledge Ingestion) is functionally complete end-to-end
+(`UPLOADED → READY`) — proceed directly to Issue #4 (core RAG:
+retrieval/generation) per the 5-day plan, without a separate go-ahead.**
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -2399,6 +2431,182 @@ and the existing workspace-scoped 404/409 patterns unchanged.
   `docs/DATA_MODEL.md`/`docs/API_CONTRACT.md` (where Slice 3.6 actually
   establishes behavior).
 
+## Completed work (Issue #3 — Slice 3.7: embedding + vector indexing)
+
+**Uncommitted, working-tree-only, on branch
+`issue-3-slice-3-7-embeddings-indexing` (cut from `aa68079`).** Extends
+`process_document()` past `CHUNKED` through `EMBEDDED`/`INDEXED` to
+`READY` — completing GitHub Issue #3's full documented ingestion
+lifecycle. No new endpoint.
+
+- **`backend/app/ingestion/embedding.py`** (new): `EmbeddingProvider`
+  protocol (`model_name`/`model_version`/`dimension`/`embed_batch()`),
+  `EmbeddingError`/`EmbeddingTransientError` exceptions,
+  `embed_with_retry()` (exponential backoff, retries only
+  `EmbeddingTransientError`, bounded attempts), and one concrete
+  implementation, `LocalHashingEmbeddingProvider` — deterministic,
+  offline, no external API/key: tokenizes on Unicode word boundaries,
+  hashes each token via `blake2b` (stable across process restarts,
+  unlike Python's randomized built-in `hash()`), accumulates a ±1
+  feature-hashed vector (the same "hashing trick" scikit-learn's
+  `HashingVectorizer` uses), L2-normalizes it. 384 dimensions — chosen
+  to match common small real embedding models (all-MiniLM-L6-v2/
+  BGE-small) so a future swap needs no further migration. Chosen
+  specifically so the whole pipeline is testable/demoable without a
+  paid external API; the `EmbeddingProvider` abstraction lets a real
+  hosted provider be added later (branch in `get_embedding_provider()`,
+  matching `get_storage_provider()`'s/`get_email_provider()`'s own
+  precedent) without touching any caller.
+- **`backend/alembic/versions/0005_add_document_chunk_embeddings.py`**
+  (new): adds `document_chunks.embedding` (`pgvector` `Vector(384)`,
+  nullable), `embedding_model`/`embedding_dimension` (Text/Integer,
+  nullable, per-row provenance), and an **HNSW** index
+  (`vector_cosine_ops`) — chosen over IVFFlat since it needs no
+  separate training/list-count step and stays correct under this
+  project's incremental (not bulk-loaded) ingestion pattern. **Verified
+  reversible directly, not just assumed**: `alembic downgrade 0004`
+  (columns/index removed, confirmed via `sqlalchemy.inspect`) then
+  `alembic upgrade head` (both recreated, index confirmed present via a
+  direct `pg_indexes` query), followed by a clean full-suite re-run.
+- **`backend/app/models/document_chunk.py`** (modified): the three new
+  mapped columns (`pgvector.sqlalchemy.Vector(384)` for `embedding`).
+- **`backend/app/core/config.py`** (modified): `embedding_provider:
+  Literal["local"]` (matches `storage_provider`'s pattern) and
+  `embedding_batch_size: int = 64` (validated `> 0`).
+- **`backend/app/repositories/document_chunk_repository.py`**
+  (modified): `set_embeddings()` — updates already-persisted rows in
+  place (never inserts), same add/flush/no-commit convention as every
+  other repository; trusts the caller's `chunks`/`embeddings` pairing
+  (`zip(..., strict=True)`) rather than re-deriving it.
+- **`backend/app/repositories/document_repository.py`** (modified):
+  `mark_embedded()` (same atomicity contract as `mark_chunked()` —
+  callers must update every chunk's embedding in the *same* transaction
+  and commit together), `mark_indexed()` (no separate work — pgvector's
+  HNSW index is maintained transactionally by the same `UPDATE`
+  `mark_embedded()`'s caller already committed; this transition exists
+  only to preserve the documented lifecycle and give an explicit,
+  auditable signal), `mark_ready()` (the pipeline's terminal success
+  state).
+- **`backend/app/core/audit.py`** (modified): two new constants,
+  `DOCUMENT_EMBEDDING_FAILED`, `DOCUMENT_READY`. Deliberately no
+  `DOCUMENT_INDEXED` event — indexing performs no distinct work to
+  report (same "no audit noise for an internal checkpoint" philosophy
+  as Slice 3.6's missing `DOCUMENT_CLEANED`).
+- **`backend/app/services/document_service.py`** (the core of this
+  slice): `process_document()` restructured —
+  - `_ALREADY_CHUNKED_STATUSES` (`CHUNKED`/`EMBEDDED`/`INDEXED`): a
+    document at any of these already has real, durable
+    `document_chunks` rows, so `process_document()` **skips**
+    extraction/cleaning/chunking entirely for these statuses (unlike
+    `PARSED`/`CLEANED`, where nothing but `status` is durable and the
+    text stages must always re-run) and fetches the existing chunks via
+    `document_chunk_repository.get_by_document()` before continuing
+    straight into embedding. The extraction→cleaning→chunking portion
+    was factored into a new helper, `_extract_clean_and_chunk()`, so
+    `process_document()`'s own top-level control flow (branch on
+    already-chunked, converge on the shared embedding phase) stays
+    readable.
+  - `_REPROCESSABLE_STATUSES` extended to include `CHUNKED`/`EMBEDDED`/
+    `INDEXED` — only `READY` is now the terminal, `409`-rejected state.
+  - **Embedding phase**: `_embed_chunks()` (new helper) batches chunk
+    content into groups of `embedding_batch_size`, calling
+    `embed_with_retry()` per batch, run via `asyncio.to_thread()` —
+    matching extraction/cleaning/chunking's own established
+    non-blocking-event-loop pattern. On success:
+    `document_chunk_repository.set_embeddings()` +
+    `document_repository.mark_embedded()` + commit, **atomically
+    together** (a crash between writing vectors and committing
+    `EMBEDDED` rolls the whole transaction back — a document is never
+    observably `EMBEDDED` with only some chunks vectorized). On
+    failure (`EmbeddingError` or any unexpected exception): `FAILED` +
+    `DOCUMENT_EMBEDDING_FAILED` audit event + commit, same generic-`200`
+    contract as every other stage.
+  - **A genuine design question resolved, not assumed**: a document
+    whose chunking legitimately produces **zero** chunks (an empty
+    file, or e.g. a scanned, text-layer-less PDF — confirmed reachable,
+    not hypothetical, by `chunking.py`'s own `_chunk_section()`, which
+    correctly returns `[]` for empty/whitespace-only sections) has
+    nothing to embed and can never be meaningfully retrieved. Rather
+    than silently marking it `READY` with zero chunks (which would look
+    successful while being permanently unretrievable), this is reported
+    as an honest `FAILED` with a clear, specific reason ("The document
+    contains no extractable text content to process."), audited as
+    `DOCUMENT_EMBEDDING_FAILED`. See `SOLVING.md` for how this was
+    actually discovered (an existing test fixture, not a design review).
+  - `document_repository.mark_indexed()` then `mark_ready()` +
+    `DOCUMENT_READY` audit event (metadata: `chunk_count`/
+    `embedding_model`/`embedding_dimension`) + commit, each its own
+    transaction, completing the pipeline.
+  - **Concurrency**: two concurrent `/process` calls writing embeddings
+    for the same already-persisted chunk rows are a plain, idempotent
+    `UPDATE` (no unique constraint involved, unlike the chunk-insert
+    race) — both compute the identical, deterministic vector from the
+    same chunk content, so there is nothing to reconcile; no new
+    locking/queueing mechanism was added, per this project's own
+    "document bounded-safe concurrent duplicate work rather than adding
+    unnecessary infrastructure" principle.
+- **`backend/app/api/v1/documents.py`** (modified): the `/process`
+  endpoint gained `embedding_provider: EmbeddingProvider =
+  Depends(get_embedding_provider)`, matching `StorageProvider`'s own DI
+  pattern exactly (testable via `app.dependency_overrides`, though no
+  test needed an override since the local provider is already fast and
+  deterministic); `embedding_batch_size` is read from settings and
+  passed through explicitly, matching `max_upload_size_bytes`'s own
+  convention.
+- **`backend/tests/test_embedding.py`** (new, 14 unit tests, no
+  database/HTTP/filesystem): dimension, cross-instance determinism,
+  different-text-differs, L2-normalization, empty/whitespace-text
+  zero-vector, Unicode, batch-order-matches-input-order, case
+  insensitivity, provider self-description, and `embed_with_retry()`'s
+  three behaviors (returns on first success, retries only
+  `EmbeddingTransientError` with backoff then succeeds, gives up after
+  `max_attempts`, does *not* retry a non-transient exception).
+- **`backend/tests/test_document_lifecycle.py`** (extended, +6 tests,
+  3 existing tests extended with embedding-shape assertions): embedding-
+  provider-failure → `FAILED` + chunks preserved + no embedding written
+  + exactly one `DOCUMENT_EMBEDDING_FAILED` audit row; zero-extractable-
+  content → `FAILED` with the exact clear reason; exactly one
+  `DOCUMENT_READY` audit event with correct `chunk_count`/
+  `embedding_model`/`embedding_dimension` metadata; resume-from-`CHUNKED`
+  **proven** to skip re-chunking (asserts the exact same chunk row IDs
+  survive the resume, not a fresh duplicate set); resume-from-`EMBEDDED`
+  reaches `READY`; `READY`-rejected-with-`409` after a resumed run
+  (complementing `test_document_processing.py`'s equivalent for a
+  fresh, non-resumed document — the old, now-incorrect
+  "already-chunked-rejected-with-409" test was replaced, since `CHUNKED`
+  is no longer terminal). The three existing full-pipeline-success tests
+  now also assert `embedding is not None`/`len(embedding) == 384`/
+  `embedding_model == "local-hashing"`/`embedding_dimension == 384`/
+  L2-normalized magnitude ≈ 1.0.
+- **`backend/tests/test_document_processing.py`** (3 tests renamed/
+  updated): the Slice 3.4-era per-format success tests and the
+  already-processed-rejection test now assert `READY`, not `CHUNKED` —
+  an intended consequence of this slice, not a regression.
+- **A genuine test-fixture bug found and fixed during this slice's own
+  validation** (not a production defect — see `SOLVING.md` for the full
+  root-cause writeup): both test files' shared `_blank_pdf()` helper
+  produced a PDF with a real page but **zero extractable text**
+  (`PdfWriter().add_blank_page()`), which every prior slice's tests
+  happily accepted as a valid "successful" PDF fixture since nothing
+  before Slice 3.7 ever inspected chunk *content*. Once Slice 3.7's
+  zero-chunk safety check landed, these same fixtures legitimately
+  failed at that check — correctly, not spuriously. Fixed by replacing
+  the fixture with a hand-built `_pdf_with_text()` (byte offsets
+  computed in code, not hand-copied) that embeds a real, minimal
+  content stream, verified independently via `pypdf.PdfReader` before
+  being wired into the tests.
+- **Verification**: `ruff`/`mypy` clean (106 source files). Complete
+  backend suite: **527/527 passing** (507 pre-Slice-3.7 + 20 new), **3
+  consecutive runs**, real Postgres + real Redis, no regression in any
+  existing test. No new dependency (`pgvector` already present since
+  Slice 3.1).
+- **Documentation updated this slice**: `PROJECT_STATE.md` (Slice 3.6
+  moved to merged, Slice 3.7 described as implemented/not-yet-merged,
+  the 5-day timeline noted), this file, `CHANGELOG.md`,
+  `docs/DATA_MODEL.md`/`docs/API_CONTRACT.md`/`docs/RAG_DESIGN.md`/
+  `docs/ARCHITECTURE.md`/`docs/SECURITY.md` (where Slice 3.7 actually
+  establishes behavior), `SOLVING.md` (the blank-PDF-fixture discovery).
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -2412,19 +2620,18 @@ and the existing workspace-scoped 404/409 patterns unchanged.
   (Playwright E2E — authentication/password-recovery)" above. Covers
   only the authentication/password-recovery surface; no document/chat/
   search UI exists yet for E2E coverage to extend to.
-- **Issue #3 Slices 3.1–3.5 are merged** (`79d4787` PR #17, `941c1a7`
+- **Issue #3 Slices 3.1–3.6 are merged** (`79d4787` PR #17, `941c1a7`
   PR #18, correctness-fix `5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62`
-  PR #21, `237be97` PR #22). **Slice 3.6 (processing lifecycle) is
-  implemented and fully tested, on branch
-  `issue-3-slice-3-6-ingestion-lifecycle` — not yet committed, pushed, or
-  opened as a PR.** No embedding or vector indexing exists yet —
-  documents now reach `CHUNKED` (or `FAILED`) with persisted
-  `document_chunks` rows, but embedding generation and vector indexing
-  are later slices, not started. `AuditEvent.DOCUMENT_UPLOADED`/
-  `DOCUMENT_PARSED`/`DOCUMENT_PARSING_FAILED`/`DOCUMENT_CLEANING_FAILED`/
-  `DOCUMENT_CHUNKED`/`DOCUMENT_CHUNKING_FAILED` are implemented — the
-  broader document-lifecycle taxonomy (delete, etc.) still doesn't
-  exist; those land with later Issue #3 slices.
+  PR #21, `237be97` PR #22, `aa68079` PR #23). **Slice 3.7 (embedding +
+  vector indexing) is implemented and fully tested, on branch
+  `issue-3-slice-3-7-embeddings-indexing` — not yet committed, pushed, or
+  opened as a PR.** `AuditEvent.DOCUMENT_UPLOADED`/`DOCUMENT_PARSED`/
+  `DOCUMENT_PARSING_FAILED`/`DOCUMENT_CLEANING_FAILED`/`DOCUMENT_CHUNKED`/
+  `DOCUMENT_CHUNKING_FAILED`/`DOCUMENT_EMBEDDING_FAILED`/`DOCUMENT_READY`
+  are implemented — the broader document-lifecycle taxonomy (delete,
+  etc.) still doesn't exist; those land with later Issue #3 slices, if
+  ever prioritized. **Once Slice 3.7 merges, no ingestion-pipeline work
+  remains blocking Issue #4** — proceed directly, per the 5-day plan.
 - **`client_ip()` (unconditional, no trusted-proxy handling) is still
   used elsewhere** — `app/api/v1/auth.py`'s audit/session IP recording
   and `app/core/dependencies.py`'s authorization-denial audit events
@@ -2438,10 +2645,8 @@ and the existing workspace-scoped 404/409 patterns unchanged.
   whole ADR exists for (§2.1) has not been exercised with more than one
   backend process under real concurrent load, since no such deployment
   exists.
-- **Issue #3, Slice 3.7 onward (embeddings, vector indexing, and any
-  further ingestion-pipeline work)** — not started.
 - **Later RAG retrieval/generation features (Issue #4 onward)** — not
-  started.
+  started. This is the very next work once Slice 3.7 merges.
 - **Endpoint-driven concurrency test under real HTTP load** — not added
   in the Slice 2 review-fix pass either; the property is proven at the
   engine level (`test_redis_rate_limiter.py`, merged with Slice 1) and
@@ -2455,46 +2660,55 @@ and the existing workspace-scoped 404/409 patterns unchanged.
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: GitHub Issue #3 (Knowledge Ingestion), Slice 3.7
+## Next major task: GitHub Issue #4 (Core RAG: retrieval + generation)
 
 **ADR 0006's deterministic abuse-protection layer is functionally
-complete end-to-end and fully merged (Slices 1–3c).** Nothing further is
-planned under it unless a future decision proposes one. Browser E2E
+complete end-to-end and fully merged (Slices 1–3c).** Browser E2E
 coverage for the authentication/password-recovery flows is implemented,
-validated, and merged (PR #16, `e1c4858`).
+validated, and merged (PR #16, `e1c4858`). **GitHub Issue #3 (Knowledge
+Ingestion) is functionally complete end-to-end** once Slice 3.7 merges —
+Slices 3.1–3.6 are merged (PR #17 `79d4787`, PR #18 `941c1a7`,
+correctness-fix PR #19 `5e6fdc2`, PR #20 `a6762e2`, PR #21 `2961b62`,
+PR #22 `237be97`, PR #23 `aa68079`), and Slice 3.7 (embedding + vector
+indexing, `CHUNKED → EMBEDDED → INDEXED → READY`) is implemented and
+fully tested on branch `issue-3-slice-3-7-embeddings-indexing` (cut from
+`aa68079`) — not yet committed, pushed, or opened as a PR.
 
-**GitHub Issue #3 (Knowledge Ingestion): Slices 3.1–3.5 are merged**
-(PR #17 `79d4787`, PR #18 `941c1a7`, correctness-fix PR #19 `5e6fdc2`,
-PR #20 `a6762e2`, PR #21 `2961b62`, PR #22 `237be97`). **Slice 3.6
-(processing lifecycle: cleaning stage, chunk persistence,
-`PARSED → CLEANED → CHUNKED`) is implemented and fully tested** on
-branch `issue-3-slice-3-6-ingestion-lifecycle` (cut from `237be97`) —
-not yet committed, pushed, or opened as a PR.
+**Before anything else starts**: commit Slice 3.7, push the branch,
+open a PR, confirm CI green, and **merge it promptly** — the 5-day
+timeline (see "Current task" above) authorizes merging as soon as a
+slice/issue is reviewed and CI-green, without waiting for a separate
+per-PR instruction.
 
-**Before anything else starts**: commit Slice 3.6, push the branch,
-open a PR, and get it reviewed — per normal workflow — don't start
-Slice 3.7 on top of an unmerged prior slice. No merge instruction has
-been given for Slice 3.6's PR; do not merge it without one.
-
-With an explicit go-ahead, the next work in this repository's own stated
-order (`PROJECT_STATE.md` "Immediate priorities") is:
-
-1. **GitHub Issue #3, Slice 3.7** — not started; not yet scoped in this
-   file. Likely embeddings/vector indexing, given Slice 3.6's own
-   explicit scope boundary (chunks now persisted, nothing generates
-   embeddings for them yet), but this is inference, not a confirmed
-   scope — do not assume further detail without checking the Issue #3
-   GitHub issue and this file first.
+**Immediately after merging, with no further go-ahead needed** (per the
+5-day plan's own Day 1→Day 2 transition): begin GitHub Issue #4 — the
+minimum complete retrieval → generation pipeline (dense retrieval over
+the now-real `document_chunks.embedding` column, lexical/BM25 retrieval
+via Postgres full-text search — no second search engine, per ADR 0001/
+0002 — fusion, workspace-scoped metadata filtering, reranking, context
+construction, LLM generation, citations). Inspect
+`docs/RAG_DESIGN.md`/`docs/API_CONTRACT.md`/the Issue #4 GitHub issue
+before implementing — do not assume further detail. Critical, explicitly
+restated security requirement for this next issue: retrieved document
+content is untrusted data, never instructions — see
+`docs/SECURITY.md` §"Prompt injection defense"; workspace boundaries
+must be enforced at retrieval query time (a `WHERE workspace_id = ...`
+clause on every vector/lexical query), not only checked in the API
+layer above it.
 
 ## Blockers
 
 None currently. `gh` CLI access is confirmed working in this
-environment. Docker was not touched this session — Slice 3.6 adds no
-dependency and no Docker-relevant file changed (`git diff main --
+environment. Docker was not touched this session — Slice 3.7 adds no
+new pip dependency (`pgvector` was already present since Slice 3.1) and
+no Docker-relevant file changed (`git diff main --
 backend/pyproject.toml backend/uv.lock` is empty), so no rebuild was
 needed; Slice 3.4's own rebuild+smoke-test remains the most recent
 Docker verification, stated explicitly rather than implying a fresh one
-was done.
+was done. The migration itself (`0005`) was verified directly against
+the real running Postgres (downgrade/upgrade round-trip, HNSW index
+confirmed present), which is a stronger check than a Docker rebuild
+would add on its own.
 
 ## Tests run
 
@@ -2772,29 +2986,55 @@ was done.
   rebuilt this slice — no dependency and no Docker-relevant file changed
   (`git diff main -- backend/pyproject.toml backend/uv.lock` is empty),
   matching the same reasoning already recorded for Slice 3.5 in
-  "Blockers" above. Not yet committed, pushed, or opened as a PR — see
-  "Exact next recommended action" below.
+  "Blockers" above. Since merged — PR #23, squash commit `aa68079`,
+  CI 4/4 green.
+- **Issue #3, Slice 3.7 (embedding + vector indexing): `uv run ruff
+  check .`** (pass) and **`uv run mypy .`** (pass, 106 source files, no
+  new findings). **20 new tests — 14 unit (`tests/test_embedding.py`) +
+  6 new HTTP-level (`tests/test_document_lifecycle.py`), plus 3 existing
+  tests extended with embedding-shape assertions — all passed**, real
+  Postgres/Redis/filesystem for the HTTP-level tests, no mocks. 3
+  pre-existing tests in `tests/test_document_processing.py` updated
+  (not newly added) to assert `READY` instead of `CHUNKED` as the
+  pipeline's terminal success state — an intended consequence of this
+  slice, not a regression. Migration `0005` verified reversible
+  directly against the real database (`alembic downgrade 0004` /
+  `upgrade head`, columns and the HNSW index confirmed removed then
+  recreated via direct schema/`pg_indexes` queries), not just assumed
+  from the migration file's own correctness. **Complete backend suite:
+  527/527 passing** (507 pre-Slice-3.7 + 20 new), **3 consecutive
+  runs**, no regression in any existing test. Frontend not re-run as a
+  fresh command this session, but no frontend file changed — expected
+  unaffected, consistent with every prior backend-only slice. Docker/
+  Compose: not rebuilt this slice (see "Blockers" above for why). Not
+  yet committed, pushed, or opened as a PR — see "Exact next
+  recommended action" below.
 
 ## Exact next recommended action
 
-Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.5
+Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.6
 (including Slice 3.2's and Slice 3.4's own correctness-review fixes, and
 Slice 3.5's own two-round final review) are all merged into `main`
 (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14,
 `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7` PR #18,
-`5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62` PR #21, `237be97` PR #22)
-— nothing pending for any of them. `main`/`origin/main` are at
-`237be97`. **GitHub Issue #3, Slice 3.6 (processing lifecycle) is
-implemented and fully tested**, on branch
-`issue-3-slice-3-6-ingestion-lifecycle` (cut from `237be97`) — not yet
+`5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62` PR #21, `237be97` PR #22,
+`aa68079` PR #23) — nothing pending for any of them. `main`/`origin/main`
+are at `aa68079`. **GitHub Issue #3, Slice 3.7 (embedding + vector
+indexing) is implemented and fully tested**, on branch
+`issue-3-slice-3-7-embeddings-indexing` (cut from `aa68079`) — not yet
 committed, pushed, or opened as a PR. See "Completed work (Issue #3 —
-Slice 3.6...)" above. The next work, in order:
+Slice 3.7...)" above. The next work, in order:
 
-1. **Commit Slice 3.6** on the current branch, push it, and open a PR
-   against `main`. This slice's own real-stack validation (34 new
-   focused tests, full 507-test suite × 3 runs, `ruff`/`mypy` clean) is
-   already done locally. Get it reviewed, confirm CI is green. **Do not
-   merge it** — no merge instruction has been given for this slice's PR.
-2. **Once merged, with an explicit go-ahead:** scope and implement
-   GitHub Issue #3, Slice 3.7 (not yet scoped in this file — see "Next
-   major task" above).
+1. **Commit Slice 3.7** on the current branch, push it, and open a PR
+   against `main`. This slice's own real-stack validation (20 new
+   focused tests, full 527-test suite × 3 runs, `ruff`/`mypy` clean,
+   migration reversibility verified directly) is already done locally.
+   Get CI green, then **merge it promptly** — the 5-day timeline
+   authorizes this without waiting for a separate per-PR instruction
+   (see "Current task"/"Next major task" above).
+2. **Immediately after merging, with no further go-ahead needed:**
+   switch to `main`, pull, confirm a clean tree, then begin GitHub
+   Issue #4 (core RAG: retrieval + generation) per the 5-day plan's
+   Day 2 scope — see "Next major task" above for the concrete starting
+   points and the standing prompt-injection/workspace-isolation
+   security requirements that apply to it.

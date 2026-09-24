@@ -10,11 +10,80 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-24 — Issue #3, Slice 3.6: processing lifecycle (cleaning + chunk persistence)
+### 2026-09-24 — Issue #3, Slice 3.7: embedding generation + vector indexing
+
+*(Branch `issue-3-slice-3-7-embeddings-indexing`, cut from the merged
+Slice 3.6 (`aa68079`, PR #23). Implemented and fully tested; not yet
+committed as of this entry. Completes GitHub Issue #3's full documented
+ingestion lifecycle, `UPLOADED → ... → READY`. This project is now on
+an explicit 5-day completion timeline covering Issues #3 through #8 —
+see `HANDOFF.md`.)*
+
+- Extends `process_document()` (`app/services/document_service.py`)
+  past `CHUNKED` through `EMBEDDED`/`INDEXED` to `READY`. No new
+  endpoint — reuses the existing `document_process` rate-limit
+  dimension and MEMBER-role authorization unchanged.
+- Adds `backend/app/ingestion/embedding.py`: an `EmbeddingProvider`
+  protocol (`model_name`/`model_version`/`dimension`/`embed_batch()`)
+  plus one concrete implementation, `LocalHashingEmbeddingProvider` — a
+  deterministic, offline, dependency-free 384-dimension hashed-bag-of-
+  words embedding (L2-normalized), no API key or network call, so the
+  whole pipeline is testable/demoable without a paid external provider.
+  `embed_with_retry()` retries a transient provider failure
+  (`EmbeddingTransientError`) with exponential backoff before giving
+  up.
+- Adds migration `0005`: `document_chunks.embedding` (`pgvector`
+  `Vector(384)`, nullable), `embedding_model`/`embedding_dimension`
+  (per-row provenance), and an HNSW index (`vector_cosine_ops`) —
+  chosen over IVFFlat since it needs no separate training/list-count
+  step. Verified reversible directly against the real database
+  (`alembic downgrade`/`upgrade` round-tripped, index confirmed present
+  via `pg_indexes` after re-upgrade).
+- **Resumability**: a document at `CHUNKED`/`EMBEDDED`/`INDEXED`
+  (interrupted mid-pipeline) skips extraction/cleaning/chunking
+  entirely — its `document_chunks` rows already exist as real durable
+  state — and re-embeds from the already-persisted chunks. Only `READY`
+  is now terminal (`409`).
+- **A document with zero extractable text** (chunking legitimately
+  produces zero chunks — an empty file, or e.g. a scanned, text-layer-
+  less PDF) fails explicitly with a clear reason, rather than silently
+  reaching `READY` with nothing to retrieve.
+- Adds two `AuditEvent` constants: `DOCUMENT_EMBEDDING_FAILED`,
+  `DOCUMENT_READY`. Deliberately no `DOCUMENT_INDEXED` event — indexing
+  performs no distinct work (pgvector's HNSW index is maintained
+  transactionally by the same commit that writes each embedding
+  vector).
+- `backend/tests/test_embedding.py` (new, 14 unit tests) and 6 new
+  HTTP-level tests added to `backend/tests/test_document_lifecycle.py`
+  (embedding-failure handling, zero-content failure, `DOCUMENT_READY`
+  audit event, resume-from-`CHUNKED` proven to skip re-chunking,
+  resume-from-`EMBEDDED`, `READY`-rejection) plus 3 existing tests
+  extended with embedding-shape assertions. 3 pre-existing tests in
+  `tests/test_document_processing.py` updated from asserting `CHUNKED`
+  to `READY` — an intended consequence of this slice, not a regression.
+  A shared PDF test fixture across both files was replaced with a
+  hand-built one containing genuinely extractable text, after the new
+  zero-chunk safety check correctly caught the old contentless-blank-
+  page fixture (see `SOLVING.md`).
+- `ruff`/`mypy` clean (106 source files). Complete backend suite:
+  **527/527 passing** (507 pre-existing + 20 new), 3 consecutive runs.
+  No new dependency (`pgvector` already present since Slice 3.1).
+- Docs updated in the same working tree: `PROJECT_STATE.md`,
+  `HANDOFF.md`, `docs/DATA_MODEL.md`, `docs/API_CONTRACT.md`,
+  `docs/RAG_DESIGN.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`,
+  `SOLVING.md`. No new ADR — the HNSW-vs-IVFFlat choice and dimension
+  rationale are recorded directly in the migration/model docstrings and
+  `docs/DATA_MODEL.md`, a direct, narrow application of already-
+  documented architecture (ADR 0002), not a new decision.
+
+## [Unreleased — committed]
+
+### 2026-09-24 — `feat: add processing lifecycle (Issue #3, Slice 3.6)` (`8f0af7c`, docs `2998909`), merged as `aa68079`
 
 *(Branch `issue-3-slice-3-6-ingestion-lifecycle`, cut from the merged
-Slice 3.5 (`237be97`, PR #22). Implemented and fully tested; not yet
-committed as of this entry.)*
+Slice 3.5 (`237be97`, PR #22). Opened as **PR #23**, verified green on
+GitHub Actions CI, and **merged into `main` as squash commit
+`aa68079`**.)*
 
 - Extends the existing `POST
   .../documents/{document_id}/process` endpoint
@@ -87,8 +156,6 @@ committed as of this entry.)*
   No dependency added, so no Docker rebuild was needed.
 - Docs updated in the same working tree: `PROJECT_STATE.md`,
   `HANDOFF.md`, `docs/DATA_MODEL.md`, `docs/API_CONTRACT.md`. No new ADR.
-
-## [Unreleased — committed]
 
 ### 2026-09-22 — `feat: add structure-aware chunking (Issue #3, Slice 3.5)` (`06577aa`, docs `9afc69c`/`fb44dc1`/`8e8401b`), merged as `237be97`
 

@@ -1,8 +1,10 @@
 # RAG Design
 
-**Status:** PROPOSED — describes the intended retrieval-augmented generation
-pipeline. No part of this pipeline is implemented yet; see
-[`PROJECT_STATE.md`](../PROJECT_STATE.md).
+**Status:** PARTIALLY IMPLEMENTED — describes the intended retrieval-
+augmented generation pipeline. The ingestion pipeline (parsing through
+embeddings/indexing, GitHub Issue #3) is implemented; retrieval,
+reranking, generation, and citations (Issue #4 onward) are not yet. See
+[`PROJECT_STATE.md`](../PROJECT_STATE.md) for exact status.
 
 ## Core flow
 
@@ -60,6 +62,12 @@ UPLOADED → PROCESSING → PARSED → CLEANED → CHUNKED → EMBEDDED → INDE
   with batching, retry handling, rate-limit awareness, and tracking of
   which model/version/dimension produced each embedding — this matters
   because changing the embedding model invalidates prior vectors.
+  **IMPLEMENTED** (GitHub Issue #3, Slice 3.7,
+  `backend/app/ingestion/embedding.py`): the shipped implementation,
+  `LocalHashingEmbeddingProvider`, is deterministic and offline (no
+  commercial vendor selected yet — see "Provider abstractions" below),
+  so the whole ingestion pipeline is testable/demoable without a paid
+  external API.
 
 ## Retrieval
 
