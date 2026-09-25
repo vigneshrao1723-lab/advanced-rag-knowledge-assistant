@@ -97,21 +97,29 @@ and always document) genuinely non-critical polish rather than let it
 block the critical path.
 
 **GitHub Issue #3, Slice 3.7 (embedding generation + vector indexing,
-`CHUNKED → EMBEDDED → INDEXED → READY` — completing Issue #3's full
-documented ingestion lifecycle) is IMPLEMENTED and FULLY TESTED, on
-branch `issue-3-slice-3-7-embeddings-indexing`** (cut from `aa68079`) —
-not yet committed/pushed/PR'd as of this line; see "Exact next
-recommended action" at the end of this file. Extends
-`process_document()` past `CHUNKED` through a new
+`CHUNKED → EMBEDDED → INDEXED → READY`) was committed, pushed, opened as
+PR #24, and merged into `main` as squash commit `7241ec8`.
+`main`/`origin/main` were at `7241ec8` at the point Slice 4.1 branched
+off.** Extends `process_document()` past `CHUNKED` through a new
 `backend/app/ingestion/embedding.py` module (a deterministic, offline
 `EmbeddingProvider` — no paid external API required) to `EMBEDDED`, then
 through a real pgvector HNSW index (migration `0005`, no separate build
 step needed) to `INDEXED`, then `READY`. See "Completed work (Issue #3 —
 Slice 3.7: embedding + vector indexing)" below for the full design,
-transaction/concurrency strategy, and test detail. **Once this merges,
-Issue #3 (Knowledge Ingestion) is functionally complete end-to-end
-(`UPLOADED → READY`) — proceed directly to Issue #4 (core RAG:
-retrieval/generation) per the 5-day plan, without a separate go-ahead.**
+transaction/concurrency strategy, and test detail. **GitHub Issue #3
+(Knowledge Ingestion) is now functionally complete end-to-end
+(`UPLOADED → READY`).**
+
+**GitHub Issue #4 (Hybrid RAG Pipeline) has started, per the 5-day
+plan's Day 2 scope. Slice 4.1** (`conversations`/`messages`/`citations`/
+`retrieval_events` schema, migration `0006`) **is IMPLEMENTED and FULLY
+TESTED, on branch `issue-4-slice-4-1-conversation-schema`** (cut from
+`7241ec8`) — not yet committed/pushed/PR'd as of this line; see "Exact
+next recommended action" at the end of this file. The minimal
+persistence shape needed for the rest of Issue #4 (retrieval + reranking
++ generation + citations) to write a result somewhere — see "Completed
+work (Issue #4 — Slice 4.1: conversation/message/citation/
+retrieval-event schema)" below for the full design.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -2607,6 +2615,84 @@ lifecycle. No new endpoint.
   `docs/ARCHITECTURE.md`/`docs/SECURITY.md` (where Slice 3.7 actually
   establishes behavior), `SOLVING.md` (the blank-PDF-fixture discovery).
 
+## Completed work (Issue #4 — Slice 4.1: conversation/message/citation/retrieval-event schema)
+
+**Uncommitted, working-tree-only, on branch
+`issue-4-slice-4-1-conversation-schema` (cut from `7241ec8`).** Schema
+only — no service/API code reads or writes these tables yet; that is
+the rest of Issue #4 (Slices 4.2+). Per the Issue #4 GitHub issue's own
+"Explicit deliverables": `conversations`, `messages`, `citations`,
+`retrieval_events` SQLAlchemy models + migration.
+
+- **`backend/alembic/versions/0006_add_conversations_messages_citations_retrieval_events.py`**
+  (new): creates all four tables in one migration, in FK-dependency
+  order (`conversations` → `messages` → `citations`, `retrieval_events`
+  last since it references both `conversations` and `messages`).
+  `message_role` is a native Postgres enum (`USER`/`ASSISTANT`),
+  matching `workspace_role`'s convention. Verified reversible directly:
+  `alembic downgrade 0005` / `upgrade head` round-tripped cleanly, all
+  four tables confirmed removed then recreated via direct
+  `sqlalchemy.inspect()` queries.
+- **`backend/app/models/conversation.py`** (new): `Conversation` —
+  `workspace_id` (FK CASCADE), `created_by` (FK users, **SET NULL** —
+  matches `Document.uploaded_by`'s precedent: a conversation should
+  outlive the account that started it), `title` (nullable — auto-titling
+  and rename are Issue #5).
+- **`backend/app/models/message.py`** (new): `Message` + `MessageRole`
+  enum. `workspace_id` is denormalized (reachable via `conversation_id`
+  but stored directly anyway), matching `DocumentChunk.workspace_id`'s
+  own precedent exactly — every workspace-scoped retrieval/security
+  query needs to filter without an extra join.
+  `role`/`content`/`created_at`.
+- **`backend/app/models/citation.py`** (new): `Citation` — `ON DELETE
+  CASCADE` from both `messages` and `document_chunks` (a citation has no
+  independent meaning once either is gone, matching the project's
+  existing "child dies with parent" convention). `document_id`/`page`/
+  `section` are captured redundantly at citation-creation time (copied
+  from the cited chunk), so `docs/REQUIREMENTS.md`'s "each citation
+  references document, page, and section" is answerable directly from
+  this row without a join. `workspace_id` denormalized too, same
+  reasoning as `messages`. `rank` — 0-based position within its
+  message's citation list, for deterministic display ordering (not a
+  relevance score; that lives on `retrieval_events`).
+- **`backend/app/models/retrieval_event.py`** (new): `RetrievalEvent` —
+  `conversation_id`/`message_id` use **`ON DELETE SET NULL`**, not
+  CASCADE, matching `AuditLog`'s own precedent: an observability/
+  evaluation record should outlive the conversation/message it was made
+  for. Both nullable — a standalone `/search` call has no conversation/
+  message to attach to. `query_text` (the original user query, always
+  preserved) is a separate column from `rewritten_query_text`
+  (nullable, set only when rewriting actually changed the query) — per
+  docs/REQUIREMENTS.md "Query handling": "preserving the original user
+  query for transparency/debugging." `results` is `JSONB` (a ranked-
+  candidate-list snapshot: `[{chunk_id, document_id, score, rank}, ...]`),
+  matching `AuditLog.event_metadata`'s existing `JSONB` precedent — no
+  new column-type pattern introduced. `method` is a plain string, not a
+  native enum, matching `AuditLog.event_type`'s own reasoning (this
+  taxonomy will grow).
+- **`backend/app/models/__init__.py`** (modified): registers all four
+  new models on `Base.metadata` (required for Alembic/tests to see
+  them), matching the existing registration pattern exactly.
+- **`backend/tests/test_conversation_schema.py`** (new, 23 tests,
+  mirrors `tests/test_document_schema.py`'s own structure): table
+  existence (parametrized across all four tables), FK validity/rejection
+  for each table, cascade-delete chains (`conversations`→`messages`→
+  `citations`, `document_chunks`→`citations`, `workspaces`→each new
+  table), `ON DELETE SET NULL` behavior (`conversations.created_by`,
+  `retrieval_events.conversation_id`), both `MessageRole` values
+  persisting correctly, `retrieval_events.results` `JSONB` round-trip,
+  `rewritten_query_text` staying distinct from `query_text`, nullable-
+  field defaults, database-assigned timestamps — real Postgres, no
+  mocks.
+- **Verification**: `ruff`/`mypy` clean (112 source files). Complete
+  backend suite: **550/550 passing** (527 pre-Slice-4.1 + 23 new), **3
+  consecutive runs**, real Postgres, no regression in any existing
+  test. No new dependency.
+- **Documentation updated this slice**: `PROJECT_STATE.md` (Slice 3.7
+  moved to merged, Issue #3 marked functionally complete, Slice 4.1
+  described as implemented/not-yet-merged), this file, `CHANGELOG.md`,
+  `docs/DATA_MODEL.md`.
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -2620,18 +2706,22 @@ lifecycle. No new endpoint.
   (Playwright E2E — authentication/password-recovery)" above. Covers
   only the authentication/password-recovery surface; no document/chat/
   search UI exists yet for E2E coverage to extend to.
-- **Issue #3 Slices 3.1–3.6 are merged** (`79d4787` PR #17, `941c1a7`
+- **Issue #3 (all seven slices) is merged** (`79d4787` PR #17, `941c1a7`
   PR #18, correctness-fix `5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62`
-  PR #21, `237be97` PR #22, `aa68079` PR #23). **Slice 3.7 (embedding +
-  vector indexing) is implemented and fully tested, on branch
-  `issue-3-slice-3-7-embeddings-indexing` — not yet committed, pushed, or
-  opened as a PR.** `AuditEvent.DOCUMENT_UPLOADED`/`DOCUMENT_PARSED`/
-  `DOCUMENT_PARSING_FAILED`/`DOCUMENT_CLEANING_FAILED`/`DOCUMENT_CHUNKED`/
-  `DOCUMENT_CHUNKING_FAILED`/`DOCUMENT_EMBEDDING_FAILED`/`DOCUMENT_READY`
-  are implemented — the broader document-lifecycle taxonomy (delete,
-  etc.) still doesn't exist; those land with later Issue #3 slices, if
-  ever prioritized. **Once Slice 3.7 merges, no ingestion-pipeline work
-  remains blocking Issue #4** — proceed directly, per the 5-day plan.
+  PR #21, `237be97` PR #22, `aa68079` PR #23, `7241ec8` PR #24) — the
+  full ingestion pipeline (`UPLOADED → READY`) is functionally complete.
+  `AuditEvent.DOCUMENT_UPLOADED`/`DOCUMENT_PARSED`/`DOCUMENT_PARSING_FAILED`/
+  `DOCUMENT_CLEANING_FAILED`/`DOCUMENT_CHUNKED`/`DOCUMENT_CHUNKING_FAILED`/
+  `DOCUMENT_EMBEDDING_FAILED`/`DOCUMENT_READY` are implemented — the
+  broader document-lifecycle taxonomy (delete, etc.) still doesn't
+  exist; those land with a later Issue #3 slice, if ever prioritized.
+- **Issue #4 (Hybrid RAG Pipeline) has started**: Slice 4.1
+  (`conversations`/`messages`/`citations`/`retrieval_events` schema) is
+  implemented and fully tested, on branch
+  `issue-4-slice-4-1-conversation-schema` — not yet committed, pushed,
+  or opened as a PR. **No retrieval, reranking, generation, or citation
+  code exists yet — only the schema to eventually persist results
+  into.** No API endpoint reads or writes these tables.
 - **`client_ip()` (unconditional, no trusted-proxy handling) is still
   used elsewhere** — `app/api/v1/auth.py`'s audit/session IP recording
   and `app/core/dependencies.py`'s authorization-denial audit events
@@ -2645,8 +2735,8 @@ lifecycle. No new endpoint.
   whole ADR exists for (§2.1) has not been exercised with more than one
   backend process under real concurrent load, since no such deployment
   exists.
-- **Later RAG retrieval/generation features (Issue #4 onward)** — not
-  started. This is the very next work once Slice 3.7 merges.
+- **RAG retrieval/reranking/generation code (Issue #4, Slices 4.2+)** —
+  not started. This is the very next work once Slice 4.1 merges.
 - **Endpoint-driven concurrency test under real HTTP load** — not added
   in the Slice 2 review-fix pass either; the property is proven at the
   engine level (`test_redis_rate_limiter.py`, merged with Slice 1) and
@@ -2660,37 +2750,51 @@ lifecycle. No new endpoint.
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: GitHub Issue #4 (Core RAG: retrieval + generation)
+## Next major task: GitHub Issue #4 (Core RAG: retrieval + generation), Slice 4.2 onward
 
 **ADR 0006's deterministic abuse-protection layer is functionally
 complete end-to-end and fully merged (Slices 1–3c).** Browser E2E
 coverage for the authentication/password-recovery flows is implemented,
 validated, and merged (PR #16, `e1c4858`). **GitHub Issue #3 (Knowledge
-Ingestion) is functionally complete end-to-end** once Slice 3.7 merges —
-Slices 3.1–3.6 are merged (PR #17 `79d4787`, PR #18 `941c1a7`,
-correctness-fix PR #19 `5e6fdc2`, PR #20 `a6762e2`, PR #21 `2961b62`,
-PR #22 `237be97`, PR #23 `aa68079`), and Slice 3.7 (embedding + vector
-indexing, `CHUNKED → EMBEDDED → INDEXED → READY`) is implemented and
-fully tested on branch `issue-3-slice-3-7-embeddings-indexing` (cut from
-`aa68079`) — not yet committed, pushed, or opened as a PR.
+Ingestion) is fully merged and functionally complete end-to-end**
+(PR #17 `79d4787` through PR #24 `7241ec8`).
 
-**Before anything else starts**: commit Slice 3.7, push the branch,
+**GitHub Issue #4 (Hybrid RAG Pipeline) has started.** Slice 4.1
+(`conversations`/`messages`/`citations`/`retrieval_events` schema) is
+implemented and fully tested on branch
+`issue-4-slice-4-1-conversation-schema` (cut from `7241ec8`) — not yet
+committed, pushed, or opened as a PR.
+
+**Before anything else starts**: commit Slice 4.1, push the branch,
 open a PR, confirm CI green, and **merge it promptly** — the 5-day
 timeline (see "Current task" above) authorizes merging as soon as a
 slice/issue is reviewed and CI-green, without waiting for a separate
 per-PR instruction.
 
-**Immediately after merging, with no further go-ahead needed** (per the
-5-day plan's own Day 1→Day 2 transition): begin GitHub Issue #4 — the
-minimum complete retrieval → generation pipeline (dense retrieval over
-the now-real `document_chunks.embedding` column, lexical/BM25 retrieval
-via Postgres full-text search — no second search engine, per ADR 0001/
-0002 — fusion, workspace-scoped metadata filtering, reranking, context
-construction, LLM generation, citations). Inspect
-`docs/RAG_DESIGN.md`/`docs/API_CONTRACT.md`/the Issue #4 GitHub issue
-before implementing — do not assume further detail. Critical, explicitly
-restated security requirement for this next issue: retrieved document
-content is untrusted data, never instructions — see
+**Immediately after merging, with no further go-ahead needed:**
+continue Issue #4 with Slice 4.2 onward — the retrieval module
+(`backend/app/retrieval/`): dense retrieval over the real
+`document_chunks.embedding` column (pgvector cosine distance via the
+HNSW index, migration `0005`), lexical/BM25 retrieval via Postgres
+full-text search (no second search engine, per ADR 0001/0002's own
+stated consequence), Reciprocal Rank Fusion, workspace-scoped metadata
+filtering, a `Reranker` abstraction + one implementation, then the
+generation module (`backend/app/generation/`): an `LLMProvider`
+abstraction + one deterministic/local implementation (matching
+`EmbeddingProvider`'s own precedent — no paid API required for the
+pipeline to be fully testable/demoable), a context builder (evidence
+ranking, dedup, token-budget management), grounded generation, and a
+citation engine writing into the Slice 4.1 schema. Then minimal API
+endpoints (`/api/v1/search`, `/api/v1/retrieval`, minimal
+`/api/v1/conversations`) to invoke it, evaluation hooks (a small
+fixture set + a runnable script producing real metric numbers per
+`docs/EVALUATION.md`), a prompt-injection test corpus, and vendor
+ADR(s) recording the provider selections — see the Issue #4 GitHub
+issue (`gh issue view 4`) for the complete, authoritative deliverables
+list; inspect `docs/RAG_DESIGN.md`/`docs/API_CONTRACT.md` before
+implementing — do not assume further detail beyond what's written
+there. **Critical, explicitly restated security requirement**: retrieved
+document content is untrusted data, never instructions — see
 `docs/SECURITY.md` §"Prompt injection defense"; workspace boundaries
 must be enforced at retrieval query time (a `WHERE workspace_id = ...`
 clause on every vector/lexical query), not only checked in the API
@@ -2699,16 +2803,14 @@ layer above it.
 ## Blockers
 
 None currently. `gh` CLI access is confirmed working in this
-environment. Docker was not touched this session — Slice 3.7 adds no
-new pip dependency (`pgvector` was already present since Slice 3.1) and
-no Docker-relevant file changed (`git diff main --
-backend/pyproject.toml backend/uv.lock` is empty), so no rebuild was
-needed; Slice 3.4's own rebuild+smoke-test remains the most recent
-Docker verification, stated explicitly rather than implying a fresh one
-was done. The migration itself (`0005`) was verified directly against
-the real running Postgres (downgrade/upgrade round-trip, HNSW index
-confirmed present), which is a stronger check than a Docker rebuild
-would add on its own.
+environment. Docker was not touched this session — Slice 4.1 adds no
+new pip dependency and no Docker-relevant file changed (`git diff main
+-- backend/pyproject.toml backend/uv.lock` is empty), so no rebuild was
+needed. The migration itself (`0006`) was verified directly against
+the real running Postgres (downgrade/upgrade round-trip, all four new
+tables confirmed removed then recreated). Slice 3.7's own migration
+(`0005`) was verified the same way, with the HNSW index confirmed
+present — a stronger check than a Docker rebuild would add on its own.
 
 ## Tests run
 
@@ -3006,35 +3108,49 @@ would add on its own.
   runs**, no regression in any existing test. Frontend not re-run as a
   fresh command this session, but no frontend file changed — expected
   unaffected, consistent with every prior backend-only slice. Docker/
-  Compose: not rebuilt this slice (see "Blockers" above for why). Not
-  yet committed, pushed, or opened as a PR — see "Exact next
-  recommended action" below.
+  Compose: not rebuilt this slice (see "Blockers" above for why). Since
+  merged — PR #24, squash commit `7241ec8`, CI 4/4 green.
+- **Issue #4, Slice 4.1 (conversation/message/citation/retrieval-event
+  schema): `uv run ruff check .`** (pass) and **`uv run mypy .`** (pass,
+  112 source files, no new findings). **23 new tests
+  (`tests/test_conversation_schema.py`) — 23/23 passed**, real Postgres,
+  no mocks. Migration `0006` verified reversible directly against the
+  real database (`alembic downgrade 0005` / `upgrade head`, all four
+  tables confirmed removed then recreated via direct schema inspection).
+  **Complete backend suite: 550/550 passing** (527 pre-Slice-4.1 + 23
+  new), **3 consecutive runs**, no regression in any existing test.
+  Frontend not re-run as a fresh command this session, but no frontend
+  file changed — expected unaffected. Docker/Compose: not rebuilt this
+  slice — no new dependency, no Docker-relevant file changed. Not yet
+  committed, pushed, or opened as a PR — see "Exact next recommended
+  action" below.
 
 ## Exact next recommended action
 
-Redis Slices 1/2/3a/3b/3c, Playwright E2E, and Issue #3 Slices 3.1–3.6
-(including Slice 3.2's and Slice 3.4's own correctness-review fixes, and
-Slice 3.5's own two-round final review) are all merged into `main`
-(`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14,
-`75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7` PR #18,
-`5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62` PR #21, `237be97` PR #22,
-`aa68079` PR #23) — nothing pending for any of them. `main`/`origin/main`
-are at `aa68079`. **GitHub Issue #3, Slice 3.7 (embedding + vector
-indexing) is implemented and fully tested**, on branch
-`issue-3-slice-3-7-embeddings-indexing` (cut from `aa68079`) — not yet
-committed, pushed, or opened as a PR. See "Completed work (Issue #3 —
-Slice 3.7...)" above. The next work, in order:
+Redis Slices 1/2/3a/3b/3c, Playwright E2E, and all of Issue #3
+(Slices 3.1–3.7, including Slice 3.2's and Slice 3.4's own
+correctness-review fixes, and Slice 3.5's own two-round final review)
+are all merged into `main` (`46ef03b` PR #11, `5391a78` PR #12,
+`026dcf3` PR #13, `42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16,
+`79d4787` PR #17, `941c1a7` PR #18, `5e6fdc2` PR #19, `a6762e2` PR #20,
+`2961b62` PR #21, `237be97` PR #22, `aa68079` PR #23, `7241ec8` PR #24)
+— nothing pending for any of them. `main`/`origin/main` are at
+`7241ec8`. **GitHub Issue #4, Slice 4.1 (conversation/message/citation/
+retrieval-event schema) is implemented and fully tested**, on branch
+`issue-4-slice-4-1-conversation-schema` (cut from `7241ec8`) — not yet
+committed, pushed, or opened as a PR. See "Completed work (Issue #4 —
+Slice 4.1...)" above. The next work, in order:
 
-1. **Commit Slice 3.7** on the current branch, push it, and open a PR
-   against `main`. This slice's own real-stack validation (20 new
-   focused tests, full 527-test suite × 3 runs, `ruff`/`mypy` clean,
+1. **Commit Slice 4.1** on the current branch, push it, and open a PR
+   against `main`. This slice's own real-stack validation (23 new
+   focused tests, full 550-test suite × 3 runs, `ruff`/`mypy` clean,
    migration reversibility verified directly) is already done locally.
    Get CI green, then **merge it promptly** — the 5-day timeline
    authorizes this without waiting for a separate per-PR instruction
    (see "Current task"/"Next major task" above).
 2. **Immediately after merging, with no further go-ahead needed:**
-   switch to `main`, pull, confirm a clean tree, then begin GitHub
-   Issue #4 (core RAG: retrieval + generation) per the 5-day plan's
-   Day 2 scope — see "Next major task" above for the concrete starting
-   points and the standing prompt-injection/workspace-isolation
-   security requirements that apply to it.
+   switch to `main`, pull, confirm a clean tree, then continue Issue #4
+   with Slice 4.2 (retrieval module) per the 5-day plan's Day 2 scope —
+   see "Next major task" above for the concrete starting points and the
+   standing prompt-injection/workspace-isolation security requirements
+   that apply to it.

@@ -10,14 +10,61 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-24 — Issue #3, Slice 3.7: embedding generation + vector indexing
+### 2026-09-25 — Issue #4, Slice 4.1: conversation/message/citation/retrieval-event schema
+
+*(Branch `issue-4-slice-4-1-conversation-schema`, cut from the merged
+Slice 3.7 (`7241ec8`, PR #24). Implemented and fully tested; not yet
+committed as of this entry. GitHub Issue #3 (Knowledge Ingestion) is now
+fully merged and functionally complete end-to-end; this begins Issue #4
+per the project's 5-day completion timeline — see `HANDOFF.md`.)*
+
+- Adds migration `0006`: `conversations`, `messages`, `citations`,
+  `retrieval_events` tables — the minimal persistence shape Issue #4
+  needs to eventually write a retrieval/generation result somewhere.
+  Schema only; no service/API code reads or writes these tables yet.
+- `message_role` is a native Postgres enum (`USER`/`ASSISTANT`),
+  matching `workspace_role`'s existing convention.
+- `workspace_id` is denormalized onto `messages`/`citations`/
+  `retrieval_events` (matching `document_chunks.workspace_id`'s own
+  precedent) so every workspace-scoped query can filter without an
+  extra join.
+- `citations` denormalizes `document_id`/`page`/`section` from the
+  cited chunk at write time, so a citation answers "which document/
+  page/section" directly without a join; `ON DELETE CASCADE` from both
+  `messages` and `document_chunks`.
+- `retrieval_events.conversation_id`/`message_id` use `ON DELETE SET
+  NULL` (matching `audit_logs`' own precedent — an observability record
+  should outlive what it describes); `query_text` (the original user
+  query) is a separate column from `rewritten_query_text`, so the
+  original is always preserved per `docs/REQUIREMENTS.md` "Query
+  handling"; `results` is `JSONB` (matching `audit_logs.event_metadata`'s
+  existing precedent).
+- Verified reversible directly against the real database (`alembic
+  downgrade`/`upgrade` round-tripped, all four tables confirmed removed
+  then recreated via direct schema inspection).
+- `backend/tests/test_conversation_schema.py` (new, 23 tests, mirrors
+  `tests/test_document_schema.py`'s own structure): table existence, FK
+  validity/rejection, cascade-delete chains, `ON DELETE SET NULL`
+  behavior, enum persistence, `JSONB` round-trip, nullable defaults,
+  database-assigned timestamps — real Postgres, no mocks.
+- `ruff`/`mypy` clean (112 source files). Complete backend suite:
+  **550/550 passing** (527 pre-existing + 23 new), 3 consecutive runs.
+  No new dependency.
+- Docs updated in the same working tree: `PROJECT_STATE.md`,
+  `HANDOFF.md`, `docs/DATA_MODEL.md`. No new ADR — this schema is a
+  direct application of already-documented requirements
+  (`docs/REQUIREMENTS.md` "Chat"/"Citations"/"Observability"), not a
+  new architectural decision.
+
+## [Unreleased — committed]
+
+### 2026-09-24 — `feat: add embedding generation and vector indexing (Issue #3, Slice 3.7)` (`a576527`, docs `8e93c4c`), merged as `7241ec8`
 
 *(Branch `issue-3-slice-3-7-embeddings-indexing`, cut from the merged
-Slice 3.6 (`aa68079`, PR #23). Implemented and fully tested; not yet
-committed as of this entry. Completes GitHub Issue #3's full documented
-ingestion lifecycle, `UPLOADED → ... → READY`. This project is now on
-an explicit 5-day completion timeline covering Issues #3 through #8 —
-see `HANDOFF.md`.)*
+Slice 3.6 (`aa68079`, PR #23). Opened as **PR #24**, verified green on
+GitHub Actions CI, and **merged into `main` as squash commit
+`7241ec8`**. Completes GitHub Issue #3's full documented ingestion
+lifecycle, `UPLOADED → ... → READY`.)*
 
 - Extends `process_document()` (`app/services/document_service.py`)
   past `CHUNKED` through `EMBEDDED`/`INDEXED` to `READY`. No new
@@ -75,8 +122,6 @@ see `HANDOFF.md`.)*
   rationale are recorded directly in the migration/model docstrings and
   `docs/DATA_MODEL.md`, a direct, narrow application of already-
   documented architecture (ADR 0002), not a new decision.
-
-## [Unreleased — committed]
 
 ### 2026-09-24 — `feat: add processing lifecycle (Issue #3, Slice 3.6)` (`8f0af7c`, docs `2998909`), merged as `aa68079`
 

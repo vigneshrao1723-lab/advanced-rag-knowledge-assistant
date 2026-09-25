@@ -10,8 +10,10 @@ exist as real tables (GitHub Issue #3, Slice 3.1); as of Slice 3.7,
 ingestion lifecycle (`UPLOADED → ... → READY`), and `document_chunks`
 rows — including their `pgvector` embedding column, populated by
 `LocalHashingEmbeddingProvider` — are persisted by that same pipeline.
-No retrieval/generation code reads this data yet (Issue #4). Every other
-entity below remains PROPOSED. This document
+`conversations`/`messages`/`citations`/`retrieval_events` (migration
+`0006`, GitHub Issue #4 Slice 4.1) also exist as real tables, schema
+only — no retrieval/generation code reads or writes them yet. Every
+other entity below remains PROPOSED. This document
 records the intended core entities so future implementation stays
 consistent; entities not marked implemented below are not evidence that
 they exist. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current
@@ -30,10 +32,10 @@ status.
 | `document_chunks` | Chunked units of a document, used for retrieval once Issue #4 exists | IMPLEMENTED (migration `0004` + `0005`; populated by Slice 3.6's chunk-persistence step and Slice 3.7's embedding step, including the `pgvector` `embedding` column) |
 | `collections` | Logical grouping of documents within a workspace | PROPOSED |
 | `collection_documents` | Many-to-many link between collections and documents | PROPOSED |
-| `conversations` | A chat session within a workspace | PROPOSED |
-| `messages` | Individual messages within a conversation (user + assistant) | PROPOSED |
-| `citations` | Links between a generated answer/message and the evidence (chunks) it cites | PROPOSED |
-| `retrieval_events` | Record of a retrieval operation (query, method, results, scores) for observability/evaluation | PROPOSED |
+| `conversations` | A chat session within a workspace | IMPLEMENTED (migration `0006`, GitHub Issue #4 Slice 4.1 — schema only, no retrieval/generation code reads/writes it yet) |
+| `messages` | Individual messages within a conversation (user + assistant) | IMPLEMENTED (migration `0006`; native `message_role` enum, `USER`/`ASSISTANT`) |
+| `citations` | Links between a generated answer/message and the evidence (chunks) it cites | IMPLEMENTED (migration `0006`; denormalizes `document_id`/`page`/`section` from the cited chunk at write time) |
+| `retrieval_events` | Record of a retrieval operation (query, method, results, scores) for observability/evaluation | IMPLEMENTED (migration `0006`; `results` is `JSONB`, `rewritten_query_text` kept separate from `query_text` so the original query is always preserved) |
 | `evaluation_runs` | A configured evaluation experiment (embedding model, chunking strategy, retrieval method, etc.) | PROPOSED |
 | `evaluation_results` | Computed metrics for an `evaluation_run` | PROPOSED |
 | `audit_logs` | Security-relevant action log (see [`docs/SECURITY.md`](SECURITY.md)) | IMPLEMENTED (auth/workspace event types; document-related events land with Issue #3) |
