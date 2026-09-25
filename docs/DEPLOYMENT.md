@@ -61,6 +61,10 @@ committed; see `PROJECT_STATE.md` and `git status`.
   missing the `X-CSRF-Token` header — both against the real backend
   middleware), and the full forgot-password → Mailpit → reset-password →
   post-reset login → session-revocation flow.
+- `frontend/e2e/documents-chat.spec.ts` (Issue #5, Slice 5.1): the
+  primary product flow end-to-end — register → create a workspace →
+  upload a real document → poll for `READY` → open Chat → ask a
+  question → a real grounded answer appears with its citation.
 - `frontend/e2e/fixtures/mailpit.ts` reads the password-reset email
   through Mailpit's own REST API (`http://localhost:8025`, already
   exposed by `infra/compose/docker-compose.yml`) — real SMTP capture,

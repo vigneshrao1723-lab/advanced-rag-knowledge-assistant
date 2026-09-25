@@ -173,14 +173,17 @@ minor) test-fixture fix that eliminated a spurious
 plan's Day 3 scope. Slice 5.1** (document list/get backend endpoints,
 a real Documents page, and a real Chat/conversation page —
 `backend/app/api/v1/documents.py`, `app/api/v1/conversations.py`,
-`frontend/app/documents/page.tsx`, `frontend/app/chat/page.tsx`) **is
-IMPLEMENTED and FULLY TESTED, on branch
-`issue-5-slice-5-1-documents-conversations-api`** (cut from `fd2041c`)
-— not yet committed/pushed/PR'd as of this line; see "Exact next
-recommended action" at the end of this file. See "Completed work
-(Issue #5 — Slice 5.1: document endpoints + Documents/Chat pages)"
-below for the full design, including a real citations-in-history bug
-found and fixed along the way.
+`frontend/app/documents/page.tsx`, `frontend/app/chat/page.tsx`) **was
+committed, pushed, opened as PR #29, and merged into `main` as squash
+commit `2ad720f`.** `main`/`origin/main` are at `2ad720f`. After
+merging, the Documents/Chat pages were manually exercised end-to-end in
+a real browser against a freshly rebuilt Docker stack via a new
+Playwright spec (`frontend/e2e/documents-chat.spec.ts`, 20/20 Playwright
+tests passing) — not yet committed; see "Exact next recommended action"
+at the end of this file. See "Completed work (Issue #5 — Slice 5.1:
+document endpoints + Documents/Chat pages)" below for the full design,
+including a real citations-in-history bug found and fixed along the
+way.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -3193,9 +3196,9 @@ measurable, and a broader prompt-injection test corpus.
 
 ## Completed work (Issue #5 — Slice 5.1: document endpoints + Documents/Chat pages)
 
-**Uncommitted, working-tree-only, on branch
-`issue-5-slice-5-1-documents-conversations-api` (cut from `fd2041c`).**
-The frontend inspection at the start of this slice found a real gap:
+**Committed, pushed, opened as PR #29, and merged into `main` as squash
+commit `2ad720f`.** The frontend inspection at the start of this slice
+found a real gap:
 `backend/app/api/v1/documents.py` had only `POST` (upload) and `POST
 .../process` — no way to list a workspace's documents or poll a single
 document's status, which the Product Experience requirements (document
@@ -3305,14 +3308,25 @@ pages against it.
   - Frontend total this slice: 10 new tests. Full suite: **58/58
     passing**, `eslint` clean, `tsc --noEmit` clean, `next build`
     succeeds.
-- **Not yet done this slice** (see "Explicitly NOT done" below for the
-  full list): manually exercising these pages against a running backend
-  in a real browser (dev server + real Postgres/Redis) — component
-  tests with mocked `api-client` calls were run, per this file's
-  verification requirements that only claims what was actually done;
-  `/chat/[id]` and `/documents/[id]` deep-link/detail routes remain
-  `PageStub`s; "source inspection" (viewing a cited chunk/document's
-  actual content) is not implemented — citations render as
+- **Post-merge: manually exercised end-to-end in a real browser**
+  (after merge, PR #29 → `2ad720f`). The `backend`/`frontend` Docker
+  images were rebuilt from the merged code (the running containers were
+  38 hours stale) and a new Playwright spec,
+  `frontend/e2e/documents-chat.spec.ts`, drives the real primary flow
+  through a real Chromium browser against the real rebuilt stack:
+  register → create workspace → upload a real `.txt` document → poll
+  for `READY` → open Chat → new conversation → ask a question → a real
+  grounded answer appears with its citation's filename visible.
+  **20/20 Playwright tests pass** (19 pre-existing auth/password-recovery
+  + this 1 new one) — confirms Issue #5's stated primary flow (LOGIN →
+  WORKSPACE → UPLOAD → READY → CHAT → ASK → ANSWER → CITATIONS) actually
+  works end-to-end, not just against mocked component tests. Not yet
+  committed — see "Exact next recommended action" for the follow-up to
+  commit this spec.
+- **Still not done** (see "Explicitly NOT done" below for the full
+  list): `/chat/[id]` and `/documents/[id]` deep-link/detail routes
+  remain `PageStub`s; "source inspection" (viewing a cited chunk/
+  document's actual content) is not implemented — citations render as
   filename/page/section text only, since no backend endpoint exists yet
   to fetch chunk/document content for display.
 - **Verification**: backend — `ruff check`/`mypy app` clean, full suite
@@ -3378,9 +3392,10 @@ pages against it.
   backend process under real concurrent load, since no such deployment
   exists.
 - **Issue #5 (product experience)** — Slice 5.1 (document
-  list/get endpoints, Documents page, Chat page) is implemented and
-  tested, not yet merged — see "Completed work (Issue #5 — Slice 5.1)"
-  above. Remaining within Issue #5: per-conversation/per-document deep
+  list/get endpoints, Documents page, Chat page) is merged (`2ad720f`,
+  PR #29) and manually verified end-to-end in a real browser — see
+  "Completed work (Issue #5 — Slice 5.1)" above. Remaining within Issue
+  #5: per-conversation/per-document deep
   links (`/chat/[id]`, `/documents/[id]` remain `PageStub`s), real
   "source inspection" (viewing a cited chunk/document's actual content —
   no backend endpoint exists yet), rename/delete/search conversations,
@@ -3414,36 +3429,38 @@ ingested documents already returns a real grounded answer with
 citations, end-to-end, plus real evaluation numbers and a tested
 prompt-injection defense.
 
-**GitHub Issue #5 (Product Experience), Slice 5.1 is implemented and
-fully tested** on branch `issue-5-slice-5-1-documents-conversations-api`
-(cut from `fd2041c`) — not yet committed, pushed, or opened as a PR. See
-"Completed work (Issue #5 — Slice 5.1)" above for the full design: a
-real Documents page (upload/list/status/retry) and a real Chat page
-(conversation list, message thread, citations), backed by two new
-backend endpoints (`GET .../documents`, `GET .../documents/{id}`) and
-one more (`GET .../conversations`), plus a real citations-in-conversation-
-history bug fix.
+**GitHub Issue #5 (Product Experience), Slice 5.1 was committed,
+pushed, opened as PR #29, and merged into `main` as squash commit
+`2ad720f`.** See "Completed work (Issue #5 — Slice 5.1)" above for the
+full design: a real Documents page (upload/list/status/retry) and a
+real Chat page (conversation list, message thread, citations), backed
+by two new backend endpoints (`GET .../documents`, `GET
+.../documents/{id}`) and one more (`GET .../conversations`), plus a
+real citations-in-conversation-history bug fix. **After merging, this
+was manually exercised end-to-end in a real (Chromium) browser** against
+a freshly rebuilt Docker stack via a new Playwright spec
+(`frontend/e2e/documents-chat.spec.ts`) — 20/20 Playwright tests pass,
+confirming the primary flow (LOGIN → WORKSPACE → UPLOAD → READY → CHAT
+→ ASK → ANSWER → CITATIONS) genuinely works, not just against mocked
+component tests.
 
-**Before anything else starts**: commit Slice 5.1, push the branch,
+**Before anything else starts**: commit the new
+`e2e/documents-chat.spec.ts` (and this documentation update), push,
 open a PR, confirm CI green, and **merge it promptly** — the 5-day
 timeline (see "Current task" above) authorizes merging as soon as a
 slice/issue is reviewed and CI-green, without waiting for a separate
 per-PR instruction.
 
-**Immediately after merging**: manually exercise the Documents/Chat
-pages against a running backend in a real browser (dev server + real
-Postgres/Redis) — this slice verified them with component tests
-(mocked `api-client`) plus `next build`, but not yet a live click-through,
-so say so explicitly rather than re-claiming that verification happened.
-Then continue Issue #5's remaining priority items per the 5-day plan:
-citation/source rendering is done (filename/page/section text); real
-"source inspection" (viewing a cited chunk/document's actual content)
-still needs a backend endpoint to fetch chunk/document text before it
-can be built for real; conversation history is done (list + reload with
-citations); feedback, rename/delete conversations, and responsive-mobile
-polish remain. Then move to Issue #6 (voice), #7 (security/evaluation/
-observability), #8 (finalization) per the 5-day plan. Use the existing
-frontend architecture/design system (`frontend/app/`,
+**Then**: continue Issue #5's remaining priority items per the 5-day
+plan: citation/source rendering is done (filename/page/section text);
+real "source inspection" (viewing a cited chunk/document's actual
+content) still needs a backend endpoint to fetch chunk/document text
+before it can be built for real; conversation history is done (list +
+reload with citations); feedback, rename/delete conversations, and
+responsive-mobile polish remain. Then move to Issue #6 (voice), #7
+(security/evaluation/observability), #8 (finalization) per the 5-day
+plan. Use the existing frontend architecture/design system
+(`frontend/app/`,
 `frontend/lib/api-client.ts`'s existing `credentials: "include"` + CSRF-
 header pattern) — do not invent a new one. Inspect `docs/API_CONTRACT.md`
 before implementing further — do not assume detail beyond what it
@@ -3843,55 +3860,59 @@ Postgres — a stronger check than a Docker rebuild would add on its own.
   changed. Slice 4.4 has since been committed, pushed, opened as PR #28,
   and merged (`fd2041c`).
 - **Issue #5, Slice 5.1 (document list/get endpoints, Documents/Chat
-  pages) — uncommitted, working tree only.** Backend: `cd backend && uv
-  run ruff check .` (pass), `uv run mypy app` (pass, 93 source files),
-  `uv run pytest -q` — **678/678 passing** (669 pre-slice + 9 new: 6 in
-  the new `tests/test_document_listing.py`, 3 in `test_conversations.py`
-  including the citations-in-history regression test), no regression in
-  any existing test. Frontend: `npm run lint` (pass), `npx tsc --noEmit`
-  (pass), `npm run test -- --run` — **58/58 passing** (48 pre-slice + 10
-  new: 5 in `app/documents/page.test.tsx`, 5 in `app/chat/page.test.tsx`),
-  `npm run build` (succeeds, all routes compile including the now-real
-  `/documents` and `/chat`). Not yet manually exercised against a live
-  backend in a browser. Docker/Compose: not rebuilt this slice — no new
-  dependency, no new migration, no Docker-relevant file changed. Not yet
-  committed, pushed, or opened as a PR — see "Exact next recommended
-  action" below.
+  pages) — committed, pushed, opened as PR #29, merged (`2ad720f`).**
+  Backend: `cd backend && uv run ruff check .` (pass), `uv run mypy app`
+  (pass, 93 source files), `uv run pytest -q` — **678/678 passing** (669
+  pre-slice + 9 new: 6 in the new `tests/test_document_listing.py`, 3 in
+  `test_conversations.py` including the citations-in-history regression
+  test), no regression in any existing test. Frontend: `npm run lint`
+  (pass), `npx tsc --noEmit` (pass), `npm run test -- --run` — **58/58
+  passing** (48 pre-slice + 10 new: 5 in `app/documents/page.test.tsx`,
+  5 in `app/chat/page.test.tsx`), `npm run build` (succeeds, all routes
+  compile including the now-real `/documents` and `/chat`). CI green
+  4/4 (backend, frontend, Docker build, Playwright E2E). Re-run on
+  `main` post-merge: **678/678 backend, 58/58 frontend, still clean.**
+- **Post-merge manual browser verification (real Docker stack, real
+  Chromium)**: `docker compose build backend frontend` (the running
+  containers were 38 hours stale) then `docker compose up -d backend
+  frontend`, confirmed `/api/v1/health/ready` and `/documents` both
+  reachable. New spec `frontend/e2e/documents-chat.spec.ts` — register →
+  create workspace → upload a real `.txt` document → poll for `READY` →
+  open Chat → ask a question → grounded, cited answer appears. **Full
+  Playwright suite: 20/20 passing** (19 pre-existing + 1 new), one clean
+  run. Not yet committed — see "Exact next recommended action" below.
 
 ## Exact next recommended action
 
 Redis Slices 1/2/3a/3b/3c, Playwright E2E, all of Issue #3 (Slices
-3.1–3.7), and all of Issue #4 (Slices 4.1–4.4) are merged into `main`
-(`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14,
-`75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7` PR #18,
-`5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62` PR #21, `237be97` PR #22,
-`aa68079` PR #23, `7241ec8` PR #24, `5e4a626` PR #25, `378fec4` PR #26,
-`54b08b2` PR #27, `fd2041c` PR #28) — nothing pending for any of them.
-`main`/`origin/main` are at `fd2041c`. **GitHub Issue #4 (Hybrid RAG
-Pipeline) is functionally complete.** **GitHub Issue #5, Slice 5.1
-(document list/get endpoints, real Documents/Chat pages) is implemented
-and fully tested**, on branch
-`issue-5-slice-5-1-documents-conversations-api` (cut from `fd2041c`) —
-not yet committed, pushed, or opened as a PR. See "Completed work
-(Issue #5 — Slice 5.1...)" above. The next work, in order:
+3.1–3.7), all of Issue #4 (Slices 4.1–4.4), and Issue #5 Slice 5.1 are
+merged into `main` (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13,
+`42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17,
+`941c1a7` PR #18, `5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62` PR #21,
+`237be97` PR #22, `aa68079` PR #23, `7241ec8` PR #24, `5e4a626` PR #25,
+`378fec4` PR #26, `54b08b2` PR #27, `fd2041c` PR #28, `2ad720f` PR #29)
+— nothing pending for any of them. `main`/`origin/main` are at
+`2ad720f`. **GitHub Issue #4 (Hybrid RAG Pipeline) is functionally
+complete. GitHub Issue #5's Slice 5.1 (document list/get endpoints,
+real Documents/Chat pages) is merged and has been manually exercised
+end-to-end in a real browser** via a new Playwright spec,
+`frontend/e2e/documents-chat.spec.ts` (20/20 Playwright tests passing,
+run against a freshly rebuilt real Docker stack) — **not yet committed**.
+See "Completed work (Issue #5 — Slice 5.1...)" above. The next work, in
+order:
 
-1. **Commit Slice 5.1** on the current branch, push it, and open a PR
-   against `main`. This slice's own validation (9 new backend tests,
-   full 678-test backend suite, `ruff`/`mypy` clean; 10 new frontend
-   tests, full 58-test frontend suite, `eslint`/`tsc --noEmit` clean,
-   `next build` succeeds) is already done locally. Get CI green, then
-   **merge it promptly** — the 5-day timeline authorizes this without
-   waiting for a separate per-PR instruction (see "Current task"/"Next
-   major task" above).
+1. **Commit the new `frontend/e2e/documents-chat.spec.ts`** (and this
+   documentation reconciliation) on a new small branch, push, open a
+   PR, confirm CI green (the `e2e` job will pick up the new spec
+   automatically), and **merge it promptly** — the 5-day timeline
+   authorizes this without waiting for a separate per-PR instruction
+   (see "Current task"/"Next major task" above).
 2. **Immediately after merging, with no further go-ahead needed:**
    switch to `main`, pull, confirm a clean tree, delete the merged
-   branch locally and on `origin`. Manually exercise the Documents/Chat
-   pages against a running backend in a real browser (dev server + real
-   Postgres/Redis) — not yet done, see "Completed work (Issue #5 —
-   Slice 5.1...)"'s "Not yet done this slice" note. Then continue
-   Issue #5's remaining scope (source inspection needs a new backend
-   endpoint first; feedback; rename/delete conversations; the
-   `/chat/[id]`/`/documents/[id]` stub routes) or move to Issue #6
-   (voice) if Issue #5's primary flow (LOGIN → WORKSPACE → UPLOAD →
-   READY → CHAT → ASK → CITATIONS) is judged sufficiently demonstrated
-   — see "Next major task" above for detail.
+   branch locally and on `origin`. Continue Issue #5's remaining scope
+   (source inspection needs a new backend endpoint first; feedback;
+   rename/delete conversations; the `/chat/[id]`/`/documents/[id]` stub
+   routes) or move to Issue #6 (voice) if Issue #5's primary flow
+   (LOGIN → WORKSPACE → UPLOAD → READY → CHAT → ASK → CITATIONS,
+   already confirmed working end-to-end in a real browser) is judged
+   sufficiently demonstrated — see "Next major task" above for detail.
