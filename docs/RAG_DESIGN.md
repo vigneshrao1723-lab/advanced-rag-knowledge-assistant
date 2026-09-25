@@ -106,32 +106,62 @@ not yet wired to any API endpoint (a later Issue #4 slice).
 ## Query handling
 
 - **Query understanding**: interpret intent, not just raw text matching.
+  **NOT YET IMPLEMENTED** beyond what retrieval/reranking already do.
 - **Conversational query handling**: use prior conversation turns as
-  context for follow-up questions.
+  context for follow-up questions. **NOT YET IMPLEMENTED** — Slice 4.3's
+  `post_message()` always retrieves using the current message's own
+  text; it does not yet incorporate earlier turns in the same
+  conversation.
 - **Query rewriting**: transform the query for better retrieval (e.g.,
   resolving pronouns from context) while **preserving the original query**
   so users and evaluators can see what was actually asked vs. what was
-  searched.
+  searched. **NOT YET IMPLEMENTED** for the same reason: a meaningful
+  rewrite needs conversation history (above). `hybrid_search()`
+  (Slice 4.2) already accepts an optional pre-computed
+  `rewritten_query_text` and always records both it and the original
+  distinctly on `RetrievalEvent`, ready for a future conversation-aware
+  caller to use.
 
 ## Generation
 
+**IMPLEMENTED** (GitHub Issue #4, Slice 4.3, `backend/app/generation/`).
+
 - **Context builder**: assembles the top-K evidence into a prompt context —
-  ranking evidence, removing duplicates, and respecting a token budget.
+  ranking evidence, removing duplicates, and respecting a token budget —
+  `context_builder.py`'s `build_context()` (character-count budget,
+  exact-content dedup, preserves input ranking order).
 - **Grounded generation**: the LLM is instructed to answer from the
-  provided evidence, not from unconstrained prior knowledge.
+  provided evidence, not from unconstrained prior knowledge —
+  `service.py`'s `generate_answer()`, via the `LLMProvider` abstraction
+  (`llm_provider.py`). The shipped implementation,
+  `LocalGroundedExtractiveProvider`, is grounded *by construction*: it
+  returns only the provided evidence, quoted and citation-marked, never
+  paraphrased or extended beyond it — see
+  [ADR 0007](DECISIONS/0007-local-providers-for-embedding-reranking-generation.md)
+  for why no commercial LLM vendor is selected yet.
 - **Citation generation**: each claim in the answer is tied back to the
-  specific evidence chunk(s) that support it.
+  specific evidence chunk(s) that support it — `citation_engine.py`'s
+  `create_citations()`, persisting `Citation` rows (Slice 4.1 schema)
+  against the exact chunks the built context actually included.
 
 Retrieved content is untrusted input to this stage — see
 [`docs/SECURITY.md`](SECURITY.md) §"Prompt injection defense" for the
 non-negotiable rule that instruction-like text inside a retrieved chunk must
-never override system instructions.
+never override system instructions. `LLMProvider.generate()`'s own
+signature enforces the structural separation this requires (`system_prompt`/
+`context`/`query` as three distinct arguments, never one concatenated
+string) — see `app/generation/__init__.py`'s docstring.
 
 ## Citations
 
+**IMPLEMENTED** (Slice 4.3) — `Citation` rows carry `document_id`/
+`page`/`section` (copied from the cited chunk at write time) and `rank`
+(the citation's position, matching its `[n]` marker in the generated
+answer's own text).
+
 - Each citation references document, page, and section.
 - Citations are clickable in the UI and link to the exact location in a
-  document viewer.
+  document viewer. **NOT YET IMPLEMENTED** — no UI exists yet (Issue #5).
 
 ## Collections
 

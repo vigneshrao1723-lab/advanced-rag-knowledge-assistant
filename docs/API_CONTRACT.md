@@ -49,7 +49,7 @@ exist. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 | `/api/v1/ingestion` | Ingestion pipeline status/control for a document |
 | `/api/v1/search` | Standalone search mode (snippets, evidence, scores, retrieval method) |
 | `/api/v1/retrieval` | Lower-level retrieval operations (used internally by chat/search) |
-| `/api/v1/conversations` | Chat sessions, messages, regenerate/retry, feedback |
+| `/api/v1/conversations` | Chat sessions, messages, regenerate/retry, feedback — nested under `/workspaces/{workspace_id}/`, matching this table's own existing convention. Minimal ask flow (create conversation, post a message and get a grounded answer, list messages) **implemented** (Issue #4 Slice 4.3); rename/delete/search/regenerate/feedback not yet implemented (Issue #5). |
 | `/api/v1/evaluations` | Trigger and inspect evaluation runs and results |
 | `/api/v1/voice` | STT/TTS session endpoints, integrated with conversations |
 | `/api/v1/health` | Liveness/readiness checks (**implemented**, Issue #1) |
@@ -354,6 +354,55 @@ performs no distinct work (see "Indexing" above); `AuditEvent.DOCUMENT_READY`
 `embedding_dimension`) once, on the pipeline's overall successful
 completion. Every `reason` is the same storage-safe string returned to
 the client, never a raw exception, filesystem path, or storage key.
+
+## Implemented: `/api/v1/workspaces/{workspace_id}/conversations`
+
+**Minimal chat/ask flow** (GitHub Issue #4, Slice 4.3) — rename/delete/
+search conversations, regenerate/retry, and feedback
+(docs/REQUIREMENTS.md "Chat") are not implemented yet (Issue #5).
+
+| Endpoint | Min. role | Body | Response |
+|---|---|---|---|
+| `POST /api/v1/workspaces/{workspace_id}/conversations` | MEMBER | none | `201` `ConversationRead` |
+| `POST /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages` | MEMBER | `{content}` | `201` `MessageRead`, or `404`/`422`/`429`/`500` (see below) |
+| `GET /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages` | VIEWER | none | `200` `list[MessageRead]`, or `404` |
+
+`ConversationRead`: `{id, title, created_at, updated_at}`.
+
+`MessageRead`: `{id, role, content, created_at, citations}`, where
+`citations` is `list[CitationRead]` — `{document_id, page, section, rank}`
+(never the chunk's raw content or ID; `rank` is the citation's 1-based
+position in the answer, matching its `[n]` marker in `content`).
+
+`MessageCreate` (request body for posting a message):
+`{content}` — a non-empty string, capped at 4000 characters (this
+becomes the retrieval/generation query, not stored document content, so
+there is no ingestion-style large-input case to support here).
+
+**Posting a message runs the full pipeline synchronously, within the
+request**: the user's message is persisted first, then retrieval
+(`app/retrieval/service.py::hybrid_search`, Slice 4.2) and generation
+(`app/generation/service.py::generate_answer`, this slice) run off the
+event loop via `asyncio.to_thread()`, then the assistant's answer and
+its citations are persisted together in one final transaction. A
+document not yet `READY` (still mid-ingestion) is invisible to
+retrieval — its content never appears in an answer.
+
+**No relevant evidence found**: the response is still `201` with a
+fixed, honest answer ("I don't have enough information in the available
+documents to answer this question.") and an empty `citations` list —
+never fabricated content, never an error.
+
+**Security**: retrieved document content is untrusted input to
+generation — see `docs/SECURITY.md` §"Prompt injection defense" and
+§"Retrieval workspace isolation". `POST .../messages` is a `404`, not a
+`403`, for a conversation belonging to another workspace (same
+non-leaking pattern as every other workspace-scoped lookup in this API).
+
+**Rate limiting**: a dedicated `conversation_message` operation, same
+shape as `document_process` (IP + authenticated user ID, Tier A,
+20/60s) — posting a message is CPU-bound (embedding the query,
+reranking, generation), same defensive treatment as ingestion.
 
 ## Related documents
 

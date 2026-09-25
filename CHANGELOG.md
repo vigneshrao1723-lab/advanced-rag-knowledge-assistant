@@ -10,11 +10,71 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-25 — Issue #4, Slice 4.2: retrieval module (dense/lexical/fusion/reranking)
+### 2026-09-25 — Issue #4, Slice 4.3: generation module + conversations ask-flow endpoint
+
+*(Branch `issue-4-slice-4-3-generation`, cut from the merged Slice 4.2
+(`378fec4`, PR #26). Implemented and fully tested; not yet committed as
+of this entry. **First slice where a real question against real
+ingested documents returns a real grounded answer with citations
+end-to-end — Issue #4's primary Definition-of-Done item.**)*
+
+- Adds `backend/app/generation/`: `context_builder.py`'s
+  `build_context()` (packs ranked evidence into a `[n]`-citation-marked
+  string, exact-content dedup, character budget with first-block-always-
+  included truncation), `llm_provider.py`'s `LLMProvider` protocol +
+  `LocalGroundedExtractiveProvider` (deterministic, offline — returns
+  the provided evidence verbatim rather than paraphrasing it, grounded
+  and prompt-injection-immune *by construction*), `service.py`'s
+  `generate_answer()` (a fixed system prompt framing the evidence
+  section as untrusted data, structurally separate from `context`/
+  `query`), and `citation_engine.py`'s `create_citations()`.
+- Adds `backend/app/repositories/{citation,conversation,message}_repository.py`
+  and `backend/app/services/conversation_service.py`: `create_conversation()`,
+  `post_message()` (persists the user message, runs retrieval +
+  generation off the event loop via `asyncio.to_thread()`, persists the
+  assistant message + citations atomically), `list_messages()`.
+- Adds `POST /api/v1/workspaces/{workspace_id}/conversations` (MEMBER),
+  `POST .../conversations/{conversation_id}/messages` (MEMBER,
+  rate-limited via a new `conversation_message` Tier A dimension),
+  `GET .../conversations/{conversation_id}/messages` (VIEWER).
+- No evidence found → a fixed, honest "I don't have enough information"
+  answer with zero citations, never a fabricated one.
+- No new migration (reuses Slice 4.1's schema unchanged); no new
+  dependency.
+- Adds [ADR 0007](docs/DECISIONS/0007-local-providers-for-embedding-reranking-generation.md):
+  records the deliberate decision that `EmbeddingProvider`/`Reranker`/
+  `LLMProvider` all use local, deterministic implementations with no
+  commercial vendor selected yet, satisfying Issue #4's Definition-of-
+  Done requirement for a vendor ADR. Also fixes the stale
+  `docs/DECISIONS/README.md` ADR index (was missing 0004–0006).
+- `backend/tests/test_generation.py` (new, 13 unit tests) and
+  `backend/tests/test_conversations.py` (new, 12 HTTP-level tests, real
+  Postgres/Redis/filesystem, no mocks, exercising the complete Issue #3
+  ingestion pipeline before asking a question): a real grounded answer
+  with real citations against real ingested content; no-evidence
+  handling; conversation-not-found `404`; message ordering; VIEWER-can-
+  list-not-post; cross-workspace conversation `404`; a dedicated
+  cross-workspace-content-leakage test; a dedicated prompt-injection
+  test (a document whose entire content is an injection attempt still
+  produces a normal, well-formed response); rate-limit enforcement;
+  empty-content validation.
+- `ruff`/`mypy` clean (133 source files). Complete backend suite:
+  **598/598 passing** (573 pre-existing + 25 new), 3 consecutive runs.
+- Docs updated in the same working tree: `PROJECT_STATE.md`,
+  `HANDOFF.md`, `docs/API_CONTRACT.md` (new "Implemented: conversations"
+  section), `docs/RAG_DESIGN.md`, `docs/ARCHITECTURE.md`,
+  `docs/DATA_MODEL.md`, `docs/DECISIONS/README.md`.
+- **Explicitly deferred to the next slice**: evaluation hooks, a
+  broader prompt-injection test corpus, conversational context/query
+  rewriting.
+
+## [Unreleased — committed]
+
+### 2026-09-25 — `feat: add retrieval module (Issue #4, Slice 4.2)` (`820c145`, docs `6ec291c`), merged as `378fec4`
 
 *(Branch `issue-4-slice-4-2-retrieval`, cut from the merged Slice 4.1
-(`5e4a626`, PR #25). Implemented and fully tested; not yet committed as
-of this entry.)*
+(`5e4a626`, PR #25). Opened as **PR #26**, verified green on GitHub
+Actions CI, and **merged into `main` as squash commit `378fec4`**.)*
 
 - Adds `backend/app/retrieval/`: `dense_search()` (pgvector
   `cosine_distance()`, backed by the existing HNSW index),
@@ -67,8 +127,6 @@ of this entry.)*
   a real reranker/LLM vendor selection (if one is ever added) is the
   kind of choice that would warrant one, per the Issue #4 GitHub
   issue's own Definition of Done.
-
-## [Unreleased — committed]
 
 ### 2026-09-25 — `feat: add conversation/message/citation/retrieval-event schema (Issue #4, Slice 4.1)` (`035f1b6`, docs `b9878f0`), merged as `5e4a626`
 

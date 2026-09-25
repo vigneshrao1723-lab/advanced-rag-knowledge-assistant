@@ -136,6 +136,12 @@ upload_rate_limiter = FixedWindowRateLimiter(limit=20, window_seconds=60)
 # just a per-workspace cost. Same numbers as upload pending real usage
 # data; Tier A for the same reason (a defensive control, not UX).
 process_rate_limiter = FixedWindowRateLimiter(limit=20, window_seconds=60)
+# Issue #4, Slice 4.3 — posting a conversation message (retrieval +
+# generation). Same reasoning as document processing: CPU-bound
+# (embedding the query, reranking) and a real per-call compute cost
+# (a future real LLM/reranker provider would also be a metered external
+# call) -- Tier A, same numbers pending real usage data.
+conversation_message_rate_limiter = FixedWindowRateLimiter(limit=20, window_seconds=60)
 
 
 def client_ip(request: Request) -> str:
@@ -624,6 +630,32 @@ def enforce_document_process_rate_limit(
         dimensions=dimensions,
         redis_client=redis_client,
         fallback=process_rate_limiter,
+        fallback_key=str(user_id),
+        fail_open_on_redis_error=False,
+    )
+
+
+def enforce_conversation_message_rate_limit(
+    request: Request,
+    *,
+    user_id: uuid.UUID,
+    redis_client: redis.Redis | None,
+) -> None:
+    """Tier A (ADR 0006 §13) — IP + authenticated user ID. Same shape and
+    rationale as `enforce_document_process_rate_limit()` above."""
+    settings = get_settings()
+    ip = resolve_client_ip(request, settings.trusted_proxy_cidrs_list)
+
+    dimensions = [
+        _dimension("conversation_message", "ip", ip, conversation_message_rate_limiter),
+        _dimension("conversation_message", "user", str(user_id), conversation_message_rate_limiter),
+    ]
+
+    _check_or_fallback(
+        operation="conversation_message",
+        dimensions=dimensions,
+        redis_client=redis_client,
+        fallback=conversation_message_rate_limiter,
         fallback_key=str(user_id),
         fail_open_on_redis_error=False,
     )

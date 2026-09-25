@@ -42,6 +42,10 @@ review, not an ADR.
 | [0001](0001-modular-monolith-over-microservices.md) | Modular monolith over microservices | Accepted | 2026-09-11 |
 | [0002](0002-postgresql-pgvector-initial-vector-store.md) | PostgreSQL + pgvector as the initial vector store | Accepted | 2026-09-11 |
 | [0003](0003-authentication-session-architecture.md) | Authentication: short-lived access tokens with server-tracked sessions | Accepted | 2026-09-11 |
+| [0004](0004-password-hashing-argon2id.md) | Password hashing: Argon2id via `argon2-cffi` | Accepted | 2026-09-12 |
+| [0005](0005-httponly-cookie-csrf-authentication.md) | Browser authentication: HttpOnly cookies with double-submit CSRF | Accepted | 2026-09-14 |
+| [0006](0006-redis-distributed-rate-limiting-abuse-protection.md) | Redis-backed distributed rate limiting + deterministic abuse protection | Accepted | 2026-09-14 |
+| [0007](0007-local-providers-for-embedding-reranking-generation.md) | Local, deterministic providers for embedding, reranking, and generation (no commercial vendor yet) | Accepted | 2026-09-25 |
 
 ## Relationship to other memory types
 
