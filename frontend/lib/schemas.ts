@@ -96,3 +96,81 @@ export const ResetPasswordFormSchema = z
     path: ["confirmPassword"],
   });
 export type ResetPasswordForm = z.infer<typeof ResetPasswordFormSchema>;
+
+// --- Documents (Issue #3/#5) ---
+// Mirrors backend/app/schemas/document.py's DocumentRead and
+// backend/app/models/document.py's DocumentStatus enum exactly.
+
+export const DocumentStatusSchema = z.enum([
+  "UPLOADED",
+  "PROCESSING",
+  "PARSED",
+  "CLEANED",
+  "CHUNKED",
+  "EMBEDDED",
+  "INDEXED",
+  "READY",
+  "FAILED",
+]);
+export type DocumentStatus = z.infer<typeof DocumentStatusSchema>;
+
+export const DocumentSchema = z.object({
+  id: z.string(),
+  filename: z.string(),
+  mime_type: z.string(),
+  size_bytes: z.number(),
+  checksum_sha256: z.string(),
+  status: DocumentStatusSchema,
+  page_count: z.number().nullable(),
+  failure_reason: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+export type Document = z.infer<typeof DocumentSchema>;
+export const DocumentListSchema = z.array(DocumentSchema);
+
+// A document is still being worked on by the ingestion pipeline (not yet
+// a terminal READY/FAILED state) -- used by the frontend to decide
+// whether to keep polling `getDocument()` for status updates.
+export const IN_PROGRESS_DOCUMENT_STATUSES: DocumentStatus[] = [
+  "UPLOADED",
+  "PROCESSING",
+  "PARSED",
+  "CLEANED",
+  "CHUNKED",
+  "EMBEDDED",
+  "INDEXED",
+];
+
+// --- Conversations (Issue #4/#5) ---
+// Mirrors backend/app/schemas/conversation.py exactly.
+
+export const ConversationSchema = z.object({
+  id: z.string(),
+  title: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+export type Conversation = z.infer<typeof ConversationSchema>;
+export const ConversationListSchema = z.array(ConversationSchema);
+
+export const CitationSchema = z.object({
+  document_id: z.string(),
+  page: z.number().nullable(),
+  section: z.string().nullable(),
+  rank: z.number(),
+});
+export type Citation = z.infer<typeof CitationSchema>;
+
+export const MessageRoleSchema = z.enum(["USER", "ASSISTANT"]);
+export type MessageRole = z.infer<typeof MessageRoleSchema>;
+
+export const MessageSchema = z.object({
+  id: z.string(),
+  role: MessageRoleSchema,
+  content: z.string(),
+  created_at: z.string(),
+  citations: z.array(CitationSchema),
+});
+export type Message = z.infer<typeof MessageSchema>;
+export const MessageListSchema = z.array(MessageSchema);

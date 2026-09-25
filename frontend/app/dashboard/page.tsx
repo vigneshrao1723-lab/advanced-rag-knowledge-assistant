@@ -18,7 +18,8 @@ function DashboardContent() {
         <CardHeader>
           <CardTitle>Welcome back{user ? `, ${user.email}` : ""}</CardTitle>
           <CardDescription>
-            Workspace overview. Documents, chat, and search land in later issues.
+            Workspace overview. Upload documents and ask questions from the Documents and Chat
+            pages.
           </CardDescription>
         </CardHeader>
         <CardContent>

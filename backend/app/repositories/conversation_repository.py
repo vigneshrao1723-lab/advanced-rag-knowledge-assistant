@@ -33,4 +33,16 @@ def get_by_id_for_workspace(
     ).scalar_one_or_none()
 
 
-__all__ = ["create", "get_by_id_for_workspace"]
+def list_for_workspace(db: Session, *, workspace_id: uuid.UUID) -> list[Conversation]:
+    """Newest first -- matches the order a conversation-history UI wants
+    to show (most recently active on top)."""
+    return list(
+        db.execute(
+            select(Conversation)
+            .where(Conversation.workspace_id == workspace_id)
+            .order_by(Conversation.updated_at.desc())
+        ).scalars()
+    )
+
+
+__all__ = ["create", "get_by_id_for_workspace", "list_for_workspace"]

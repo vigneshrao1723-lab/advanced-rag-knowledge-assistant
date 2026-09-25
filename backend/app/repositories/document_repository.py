@@ -35,6 +35,18 @@ def get_by_id_for_workspace(
     ).scalar_one_or_none()
 
 
+def list_for_workspace(db: Session, *, workspace_id: uuid.UUID) -> list[Document]:
+    """Newest first -- matches the order a document-list UI wants to
+    show (most recently uploaded/processed on top)."""
+    return list(
+        db.execute(
+            select(Document)
+            .where(Document.workspace_id == workspace_id)
+            .order_by(Document.created_at.desc())
+        ).scalars()
+    )
+
+
 def create(
     db: Session,
     *,

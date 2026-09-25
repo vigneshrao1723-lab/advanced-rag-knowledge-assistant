@@ -227,6 +227,20 @@ def _to_document_read(document: Document) -> DocumentRead:
     )
 
 
+def list_documents(db: Session, *, workspace_id: uuid.UUID) -> list[DocumentRead]:
+    documents = document_repository.list_for_workspace(db, workspace_id=workspace_id)
+    return [_to_document_read(document) for document in documents]
+
+
+def get_document(db: Session, *, workspace_id: uuid.UUID, document_id: uuid.UUID) -> DocumentRead:
+    document = document_repository.get_by_id_for_workspace(
+        db, workspace_id=workspace_id, document_id=document_id
+    )
+    if document is None:
+        raise _document_not_found_error()
+    return _to_document_read(document)
+
+
 def _duplicate_document_error(existing: Document) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
@@ -824,4 +838,4 @@ async def _extract_clean_and_chunk(
     return persisted_chunks, None
 
 
-__all__ = ["process_document", "upload_document"]
+__all__ = ["get_document", "list_documents", "process_document", "upload_document"]

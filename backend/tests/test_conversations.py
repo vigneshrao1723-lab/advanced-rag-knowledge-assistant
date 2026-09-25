@@ -10,16 +10,18 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session as DbSession
 
 from app.models.citation import Citation
+from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
 from app.services.storage_provider import LocalStorage, get_storage_provider
 from tests.conftest import csrf_headers
@@ -273,6 +275,87 @@ def test_list_messages_returns_both_roles_in_order(client: TestClient) -> None:
     assert response.status_code == 200, response.text
     messages = response.json()
     assert [m["role"] for m in messages] == ["USER", "ASSISTANT"]
+
+
+def test_list_messages_includes_citations_for_previously_posted_answers(
+    client: TestClient,
+) -> None:
+    # Regression test: `list_messages` originally always returned
+    # `citations=[]` for every message, even after `post_message` had
+    # already persisted real citation rows for the assistant's answer --
+    # reloading a conversation's history silently dropped its citations.
+    _register(client)
+    workspace = _create_workspace(client)
+    _ingest_ready_document(client, workspace["id"], content=_TXT_BYTES)
+    conversation = _create_conversation(client, workspace["id"])
+    post_response = _post_message(
+        client, workspace["id"], conversation["id"], "What is the refund policy?"
+    )
+    assert len(post_response.json()["citations"]) >= 1
+
+    response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/conversations/{conversation['id']}/messages",
+        headers=csrf_headers(client),
+    )
+    assert response.status_code == 200, response.text
+    messages = response.json()
+    assistant_message = next(m for m in messages if m["role"] == "ASSISTANT")
+    assert len(assistant_message["citations"]) >= 1
+    assert assistant_message["citations"][0]["rank"] == 1
+
+
+# --- list conversations ---------------------------------------------------
+
+
+def test_list_conversations_returns_created_conversations_newest_first(
+    client: TestClient, db_session: DbSession
+) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    first = _create_conversation(client, workspace["id"])
+    second = _create_conversation(client, workspace["id"])
+
+    # See `test_document_listing.py`'s identical helper comment: a single
+    # test runs inside one Postgres transaction, where `now()` is
+    # constant for the whole transaction, so force distinct timestamps to
+    # test the ordering itself (real, and distinct, across separate
+    # requests/transactions in production).
+    now = datetime.now(UTC)
+    db_session.execute(
+        update(Conversation)
+        .where(Conversation.id == uuid.UUID(first["id"]))
+        .values(updated_at=now)
+    )
+    db_session.execute(
+        update(Conversation)
+        .where(Conversation.id == uuid.UUID(second["id"]))
+        .values(updated_at=now + timedelta(seconds=1))
+    )
+    db_session.commit()
+
+    response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/conversations", headers=csrf_headers(client)
+    )
+    assert response.status_code == 200, response.text
+    ids = [c["id"] for c in response.json()]
+    assert ids == [second["id"], first["id"]]
+
+
+def test_list_conversations_is_workspace_isolated(client_factory: Callable[[], TestClient]) -> None:
+    owner_a = client_factory()
+    _register(owner_a)
+    workspace_a = _create_workspace(owner_a, name="A")
+    _create_conversation(owner_a, workspace_a["id"])
+
+    owner_b = client_factory()
+    _register(owner_b)
+    workspace_b = _create_workspace(owner_b, name="B")
+
+    response = owner_b.get(
+        f"/api/v1/workspaces/{workspace_b['id']}/conversations", headers=csrf_headers(owner_b)
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == []
 
 
 # --- authorization / workspace isolation --------------------------------------
