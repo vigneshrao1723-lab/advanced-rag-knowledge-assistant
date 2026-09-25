@@ -10,11 +10,36 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-25 — Issue #5, Slice 5.1: document list/get endpoints + real Documents/Chat pages
+### 2026-09-25 — Issue #5, Slice 5.1 follow-up: browser E2E coverage for the document-upload/chat flow
+
+*(Small follow-up on top of the merged Slice 5.1 (`2ad720f`, PR #29) —
+no application code changed, only a new Playwright spec and this
+documentation reconciliation.)*
+
+- Adds `frontend/e2e/documents-chat.spec.ts`: a browser-level smoke test
+  for Issue #5's primary flow — register → create workspace → upload a
+  real `.txt` document → poll for `READY` → open Chat → ask a question →
+  a real grounded answer appears with its citation's filename visible.
+  Run against a freshly rebuilt real Docker stack (backend + frontend
+  images rebuilt from the merged Slice 5.1 code, real
+  PostgreSQL/Redis/Mailpit) — no mocks, matching this project's
+  established Playwright precedent (`auth.spec.ts`,
+  `password-recovery.spec.ts`).
+- **Full Playwright suite: 20/20 passing** (19 pre-existing +
+  this 1 new one), confirmed with a full clean run.
+- No new migration, no new dependency, no application code changed.
+- Docs updated in the same working tree: `PROJECT_STATE.md`,
+  `HANDOFF.md`, `docs/DEPLOYMENT.md` (also corrects several other
+  sections left stale from Slice 4.4/5.1's pre-merge state).
+
+## [Unreleased — committed]
+
+### 2026-09-25 — `feat: document list/get endpoints + real Documents/Chat pages (Issue #5, Slice 5.1)` (#29), merged as `2ad720f`
 
 *(Branch `issue-5-slice-5-1-documents-conversations-api`, cut from the
-merged Slice 4.4 (`fd2041c`, PR #28). Implemented and fully tested; not
-yet committed as of this entry.)*
+merged Slice 4.4 (`fd2041c`, PR #28). Opened as **PR #29**, verified
+green on GitHub Actions CI, and **merged into `main` as squash commit
+`2ad720f`**.)*
 
 - Adds `GET /api/v1/workspaces/{workspace_id}/documents` (list,
   newest-first) and `GET .../documents/{document_id}` (single document/
@@ -46,12 +71,8 @@ yet committed as of this entry.)*
   frontend tests (`app/documents/page.test.tsx`, `app/chat/page.test.tsx`)
   — **58/58 frontend tests passing**. `ruff`/`mypy`/`eslint`/
   `tsc --noEmit` clean, `next build` succeeds.
-- Not yet manually exercised against a live backend in a browser.
 - No new migration, no new dependency.
-- Docs updated in the same working tree: `PROJECT_STATE.md`,
-  `HANDOFF.md`.
-
-## [Unreleased — committed]
+- Docs updated in the same commit: `PROJECT_STATE.md`, `HANDOFF.md`.
 
 ### 2026-09-25 — `feat: add evaluation hooks and prompt-injection corpus (Issue #4, Slice 4.4)` (#28), merged as `fd2041c`
 
