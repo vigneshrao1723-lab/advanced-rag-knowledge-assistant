@@ -1,0 +1,124 @@
+{
+  "generated_at": "2026-09-25T19:14:27.405827+00:00",
+  "configuration": {
+    "embedding_provider": "local-hashing",
+    "reranker": "LexicalOverlapReranker",
+    "llm_provider": "local-extractive",
+    "top_k": 3,
+    "document_count": 6,
+    "query_count": 7
+  },
+  "retrieval": {
+    "per_query": [
+      {
+        "query": "What is the refund policy for returns?",
+        "relevant_document_keys": [
+          "refund_policy"
+        ],
+        "retrieved_count": 3,
+        "recall@3": 1.0,
+        "precision@3": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg@3": 1.0,
+        "hit_rate@3": 1.0
+      },
+      {
+        "query": "How long does shipping take to arrive?",
+        "relevant_document_keys": [
+          "shipping_policy"
+        ],
+        "retrieved_count": 3,
+        "recall@3": 1.0,
+        "precision@3": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg@3": 1.0,
+        "hit_rate@3": 1.0
+      },
+      {
+        "query": "Does the product warranty cover accidental damage?",
+        "relevant_document_keys": [
+          "warranty_policy"
+        ],
+        "retrieved_count": 3,
+        "recall@3": 1.0,
+        "precision@3": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg@3": 1.0,
+        "hit_rate@3": 1.0
+      },
+      {
+        "query": "Do you sell my personal account data to third parties?",
+        "relevant_document_keys": [
+          "privacy_policy"
+        ],
+        "retrieved_count": 3,
+        "recall@3": 1.0,
+        "precision@3": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg@3": 1.0,
+        "hit_rate@3": 1.0
+      },
+      {
+        "query": "How do I enable two factor authentication on my account?",
+        "relevant_document_keys": [
+          "account_security"
+        ],
+        "retrieved_count": 3,
+        "recall@3": 1.0,
+        "precision@3": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg@3": 1.0,
+        "hit_rate@3": 1.0
+      },
+      {
+        "query": "What is the battery life of the device?",
+        "relevant_document_keys": [
+          "product_specs"
+        ],
+        "retrieved_count": 3,
+        "recall@3": 1.0,
+        "precision@3": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg@3": 1.0,
+        "hit_rate@3": 1.0
+      },
+      {
+        "query": "How many days do I have to return a purchased item for a refund?",
+        "relevant_document_keys": [
+          "refund_policy"
+        ],
+        "retrieved_count": 3,
+        "recall@3": 1.0,
+        "precision@3": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg@3": 1.0,
+        "hit_rate@3": 1.0
+      }
+    ],
+    "averages": {
+      "recall@3": 1.0,
+      "precision@3": 0.3333333333333333,
+      "mrr": 1.0,
+      "ndcg@3": 1.0,
+      "hit_rate@3": 1.0
+    }
+  },
+  "generation": {
+    "per_query": [
+      {
+        "query": "What is the refund policy for returns?",
+        "answer_preview": "Based on the available documents:\n\n[1] Our refund policy allows returns within thirty days of purchase. Contact customer",
+        "citation_completeness": 1.0,
+        "citation_correctness": 1.0,
+        "is_extractive_answer_grounded": true
+      },
+      {
+        "query": "How long does shipping take to arrive?",
+        "answer_preview": "Based on the available documents:\n\n[1] Standard shipping takes five to seven business days. Expedited shipping is availa",
+        "citation_completeness": 1.0,
+        "citation_correctness": 1.0,
+        "is_extractive_answer_grounded": true
+      }
+    ]
+  }
+}

@@ -25,7 +25,11 @@ from __future__ import annotations
 
 from typing import Protocol
 
-_NO_EVIDENCE_ANSWER = (
+# Public (not `_`-prefixed) and exported: `app.evaluation.metrics`'s
+# `is_extractive_answer_grounded()` needs the exact same string to
+# recognize this provider's own no-evidence shape without duplicating
+# the literal.
+NO_EVIDENCE_ANSWER = (
     "I don't have enough information in the available documents to answer this question."
 )
 
@@ -59,7 +63,7 @@ class LocalGroundedExtractiveProvider:
 
     def generate(self, *, system_prompt: str, context: str, query: str) -> str:
         if not context.strip():
-            return _NO_EVIDENCE_ANSWER
+            return NO_EVIDENCE_ANSWER
         return f"Based on the available documents:\n\n{context}"
 
 
@@ -71,4 +75,9 @@ def get_llm_provider() -> LLMProvider:
     return LocalGroundedExtractiveProvider()
 
 
-__all__ = ["LLMProvider", "LocalGroundedExtractiveProvider", "get_llm_provider"]
+__all__ = [
+    "LLMProvider",
+    "LocalGroundedExtractiveProvider",
+    "NO_EVIDENCE_ANSWER",
+    "get_llm_provider",
+]
