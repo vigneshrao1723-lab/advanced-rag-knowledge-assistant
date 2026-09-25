@@ -135,13 +135,12 @@ establishes.
 
 **Slice 4.3** (generation module + a minimal conversations ask-flow
 endpoint, `backend/app/generation/`, `app/api/v1/conversations.py`)
-**is IMPLEMENTED and FULLY TESTED, on branch
-`issue-4-slice-4-3-generation`** (cut from `378fec4`) — not yet
-committed/pushed/PR'd as of this line; see "Exact next recommended
-action" at the end of this file. `POST .../conversations/{id}/messages`
-now runs the full pipeline end-to-end: persist the user's question ->
+**was committed, pushed, opened as PR #27, and merged into `main` as
+squash commit `54b08b2`.** `main`/`origin/main` were at `54b08b2` at
+the point Slice 4.4 branched off. `POST .../conversations/{id}/messages`
+runs the full pipeline end-to-end: persist the user's question ->
 `hybrid_search()` (Slice 4.2) -> `generate_answer()` (context builder +
-`LLMProvider`, this slice) -> persist the assistant's answer + its
+`LLMProvider`, Slice 4.3) -> persist the assistant's answer + its
 `Citation` rows (Slice 4.1 schema), atomically. **This is the first
 slice where a real question against real ingested documents returns a
 real grounded answer with citations end-to-end — Issue #4's primary
@@ -151,6 +150,25 @@ including the deterministic-and-therefore-prompt-injection-immune
 `LocalGroundedExtractiveProvider` and [ADR 0007](docs/DECISIONS/0007-local-providers-for-embedding-reranking-generation.md)
 recording why no commercial LLM/embedding/reranker vendor is selected
 yet.
+
+**Slice 4.4** (evaluation hooks + prompt-injection test corpus —
+`backend/app/evaluation/metrics.py`, `eval/`,
+`backend/tests/test_prompt_injection.py`) **is IMPLEMENTED and FULLY
+TESTED, on branch `issue-4-slice-4-4-evaluation-security`** (cut from
+`54b08b2`) — not yet committed/pushed/PR'd as of this line; see "Exact
+next recommended action" at the end of this file. **This completes
+Issue #4's explicit deliverables/Definition-of-Done.** A runnable
+evaluation script was actually run (twice, deterministically) against a
+real fixture set through the real pipeline, producing real, committed
+numbers in `eval/results/retrieval_evaluation.json` — never fabricated.
+A 12-payload prompt-injection corpus is tested at both the provider
+level (every payload) and the full HTTP pipeline (four representative
+payloads, each ingested as a real document). See "Completed work
+(Issue #4 — Slice 4.4: evaluation hooks + prompt-injection corpus)"
+below for the full design, including a genuine metrics-implementation
+bug found and fixed, and a genuine (if minor) test-fixture fix that
+eliminated a spurious `InsecureKeyLengthWarning` from 624 of the
+suite's tests.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -3027,6 +3045,141 @@ citations" flow — Issue #4's primary Definition-of-Done item.**
   (`generation/` module + `LLMProvider` status), `docs/DATA_MODEL.md`,
   `docs/DECISIONS/README.md` (index fixed).
 
+## Completed work (Issue #4 — Slice 4.4: evaluation hooks + prompt-injection corpus)
+
+**Uncommitted, working-tree-only, on branch
+`issue-4-slice-4-4-evaluation-security` (cut from `54b08b2`).**
+Completes the two Issue #4 deliverables explicitly deferred out of
+Slice 4.3: evaluation hooks proving the pipeline is measurable, and a
+broader prompt-injection test corpus.
+
+- **`backend/app/evaluation/metrics.py`** (new): pure functions for
+  every `docs/EVALUATION.md` retrieval metric — `recall_at_k`,
+  `precision_at_k`, `mrr`, `ndcg_at_k`, `hit_rate_at_k` (all binary
+  relevance) — plus real, mechanically-checkable generation/citation
+  checks: `citation_completeness` (every `[n]` marker referenced in the
+  answer text has a matching persisted citation),
+  `citation_correctness` (every persisted citation corresponds to
+  evidence actually included in the built context — never a fabricated
+  reference), and `is_extractive_answer_grounded` (a precise check
+  specific to `LocalGroundedExtractiveProvider`: the answer is provably
+  confined to the fixed template plus the context text, nothing
+  invented). **Deliberately does not report a numeric "faithfulness"/
+  "answer relevance" score** — those are genuine semantic judgments
+  needing a human rater or an LLM-as-judge, neither of which exists for
+  this project's current deterministic/local `LLMProvider`; reporting a
+  fabricated number for them would violate docs/EVALUATION.md's own
+  "never fabricate results" rule. See the module's own docstring for
+  the full reasoning.
+  - **A genuine bug found and fixed while writing the metric tests**:
+    `recall_at_k()`'s and `ndcg_at_k()`'s first drafts both counted a
+    duplicate relevant ID once per *position* it appeared at in the
+    retrieved list, rather than once per *distinct* relevant item found
+    — `recall_at_k(["a", "a", "a"], {"a", "b"}, k=3)` computed to
+    `1.5`, mathematically impossible for a `[0, 1]`-bounded metric.
+    Fixed: `recall_at_k()` now intersects `set(retrieved[:k])` with
+    `relevant`; `ndcg_at_k()` now tracks a `seen` set and only lets a
+    relevant item's first (best-ranked) occurrence contribute to DCG,
+    matching `mrr()`'s own pre-existing "first hit only" semantics. Two
+    new regression tests assert the `<=1.0` bound directly. This bug was
+    never reachable through the real `hybrid_search()` path (RRF fusion
+    already dedupes by `chunk_id`), but a metrics function should be
+    correct on its own terms — full write-up in `SOLVING.md`.
+- **`eval/datasets/retrieval_fixture.py`** (new): 6 short,
+  single-chunk-worthy documents (refund/shipping/warranty/privacy/
+  account-security/product-specs policies) and 7 queries with known
+  relevance judgments, deliberately sharing literal keywords with their
+  relevant document — `LocalHashingEmbeddingProvider` has no semantic
+  understanding, so this keeps the fixture honest about what this
+  pipeline's *current* providers can actually do.
+- **`eval/scripts/run_retrieval_evaluation.py`** (new): a runnable
+  harness — ingests the fixture set through the real pipeline stages
+  (`cleaning.clean()`, `chunking.StructureAwareChunker()`, the real
+  `EmbeddingProvider`, the same modules `process_document()` itself
+  uses), runs `hybrid_search()` for every fixture query, computes the
+  metrics above, runs `generate_answer()` for two representative
+  queries and computes the citation checks, writes
+  `eval/results/retrieval_evaluation.json`. Uses a dedicated, throwaway
+  workspace, deleted at the end of every run (verified via a direct
+  query showing zero leftover rows afterward) — safely re-runnable.
+  **Actually run twice** against the real local Postgres — identical
+  output both times, confirming determinism.
+  - **Real, committed results** (`eval/results/retrieval_evaluation.json`,
+    top-K=3, 6 documents, 7 queries): **Recall@3 = 1.0, Precision@3 =
+    0.33, MRR = 1.0, nDCG@3 = 1.0, Hit Rate@3 = 1.0** — every query's
+    single relevant document was always retrieved and ranked first;
+    Precision@3's `1/3` ceiling is an honest artifact of only one
+    relevant document existing per query in a 6-document corpus at
+    `k=3`, not a retrieval defect. Generation checks on 2 sample
+    queries: citation completeness/correctness both `1.0`,
+    `is_extractive_answer_grounded` `true` for both (expected, given
+    the extractive provider's own construction). **These numbers
+    describe this fixture set and this project's current local/
+    deterministic providers specifically — not a general production-
+    quality claim** — see [ADR 0007](docs/DECISIONS/0007-local-providers-for-embedding-reranking-generation.md).
+  - Public constant `NO_EVIDENCE_ANSWER` exported from
+    `app/generation/llm_provider.py` (renamed from the previously-private
+    `_NO_EVIDENCE_ANSWER`) so the eval script's
+    `is_extractive_answer_grounded()` check can recognize the
+    provider's own no-evidence shape without duplicating the string
+    literal.
+- **`backend/tests/test_prompt_injection.py`** (new, 29 tests): a
+  12-payload corpus (`PROMPT_INJECTION_CORPUS`) covering direct "ignore
+  previous instructions," a fake system message, a request to reveal
+  the system prompt, a request to expose secrets/environment variables,
+  malicious instructions disguised as legitimate documentation, indirect
+  injection embedded inside a quoted example, instructions conflicting
+  with the user's own query, a claim that a document has authority to
+  override application policy, a roleplay/persona jailbreak ("DAN"),
+  a request for expanded tool/filesystem access, a cross-workspace
+  data-exfiltration request phrased as document content, and a spoofed
+  "end of context" marker attempting to inject a fake trailing system
+  message.
+  - Unit level (24 tests): every payload in the corpus, twice —
+    proving the provider's answer is always exactly the fixed template
+    with the payload appearing only as quoted, unmodified evidence
+    (never acted on, never a different response shape), plus a
+    structural test locking in corpus breadth itself (catches an
+    accidental future deletion of a required attack-shape category).
+  - HTTP level (4 tests): four representative payloads (system-prompt
+    reveal, secret exposure, cross-workspace exfiltration, roleplay
+    jailbreak), each ingested as a real document's *entire* content,
+    then asked about through the real `/conversations/.../messages`
+    endpoint — proving the invariant holds through the full retrieval
+    -> generation -> citation pipeline, not just the provider in
+    isolation.
+  - The corpus and its tests are explicitly designed to remain the
+    right regression surface once a real (non-extractive) `LLMProvider`
+    is ever added — see `docs/SECURITY.md`'s updated "Prompt injection
+    defense" section.
+- **A genuine, if minor, test-quality fix**: `tests/conftest.py`'s
+  fallback `SECRET_KEY` (`"test-secret-key-for-pytest-only"`) was
+  exactly 31 bytes, one short of PyJWT's documented HS256 minimum,
+  silently triggering `InsecureKeyLengthWarning` on every JWT-encoding
+  test — 624 of the suite's 669 warnings. Not a production
+  configuration issue: `app/core/config.py`'s `secret_key` has no fake
+  default, and `.env.example`'s own guidance (`openssl rand -hex 32`)
+  was already correct — purely this one test fixture's value. Fixed by
+  lengthening it to 49 bytes (`"test-secret-key-for-pytest-only-not-a-real-secret"`)
+  — still an obviously-fake, clearly-labeled string, just long enough
+  to clear PyJWT's minimum. Verified: warning count dropped from 624 to
+  8 (the 8 remaining are unrelated, pre-existing Starlette/FastAPI
+  deprecation warnings, confirmed by inspecting their own messages).
+  Full write-up in `SOLVING.md`.
+- **Verification**: `ruff`/`mypy` clean (136 source files). Complete
+  backend suite: **669/669 passing** (598 pre-Slice-4.4 + 71 new — 42
+  metrics + 29 prompt-injection), **3 consecutive runs**, real Postgres
+  + real Redis, no regression in any existing test. No new migration,
+  no new dependency.
+- **Documentation updated this slice**: `PROJECT_STATE.md` (Slice 4.3
+  moved to merged, Slice 4.4 described as implemented/not-yet-merged,
+  Evaluation-harness row updated with the real numbers), this file,
+  `CHANGELOG.md`, `docs/EVALUATION.md` (new "Evaluation hooks" section
+  with the real results), `docs/ARCHITECTURE.md` (`evaluation/` module
+  + `eval/` directory status), `docs/SECURITY.md` (expanded "Prompt
+  injection defense" section), `SOLVING.md` (two entries: the
+  recall/nDCG bound bug, the SECRET_KEY fixture fix).
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -3049,19 +3202,22 @@ citations" flow — Issue #4's primary Definition-of-Done item.**
   `DOCUMENT_EMBEDDING_FAILED`/`DOCUMENT_READY` are implemented — the
   broader document-lifecycle taxonomy (delete, etc.) still doesn't
   exist; those land with a later Issue #3 slice, if ever prioritized.
-- **Issue #4 (Hybrid RAG Pipeline) has started**: Slice 4.1
+- **Issue #4 (Hybrid RAG Pipeline)**: Slice 4.1
   (`conversations`/`messages`/`citations`/`retrieval_events` schema) is
   merged (`5e4a626`, PR #25). Slice 4.2 (the retrieval module —
   dense/lexical/fusion/reranking) is merged (`378fec4`, PR #26). Slice
   4.3 (generation module + a minimal conversations ask-flow endpoint) is
-  implemented and fully tested, on branch
-  `issue-4-slice-4-3-generation` — not yet committed, pushed, or opened
-  as a PR. **A real question against a real ingested document now
-  returns a real grounded answer with citations, end-to-end.**
-  Explicitly not done yet: evaluation hooks, a broader prompt-injection
-  test corpus, conversational context/query rewriting, and everything in
-  `docs/REQUIREMENTS.md` "Chat" beyond the bare ask flow (rename/delete/
-  search conversations, regenerate/retry, feedback — Issue #5).
+  merged (`54b08b2`, PR #27) — **a real question against a real ingested
+  document returns a real grounded answer with citations, end-to-end.**
+  Slice 4.4 (evaluation hooks + prompt-injection corpus) is implemented
+  and fully tested, on branch `issue-4-slice-4-4-evaluation-security` —
+  not yet committed, pushed, or opened as a PR. **This completes Issue
+  #4's explicit deliverables/Definition-of-Done.** Explicitly not done,
+  deliberately deferred to a later issue: conversational context/query
+  rewriting, and everything in `docs/REQUIREMENTS.md` "Chat" beyond the
+  bare ask flow (rename/delete/search conversations, regenerate/retry,
+  feedback — Issue #5); the full `evaluation_runs`/`evaluation_results`
+  experiment-tracking/comparison system (Issue #7).
 - **`client_ip()` (unconditional, no trusted-proxy handling) is still
   used elsewhere** — `app/api/v1/auth.py`'s audit/session IP recording
   and `app/core/dependencies.py`'s authorization-denial audit events
@@ -3075,9 +3231,9 @@ citations" flow — Issue #4's primary Definition-of-Done item.**
   whole ADR exists for (§2.1) has not been exercised with more than one
   backend process under real concurrent load, since no such deployment
   exists.
-- **Evaluation hooks and a broader prompt-injection test corpus (Issue
-  #4, next slice)** — not started. This is the very next work once
-  Slice 4.3 merges.
+- **Issue #5 (product experience — a real frontend consuming the
+  existing backend APIs)** — not started. This is the very next work
+  once Slice 4.4 merges.
 - **Endpoint-driven concurrency test under real HTTP load** — not added
   in the Slice 2 review-fix pass either; the property is proven at the
   engine level (`test_redis_rate_limiter.py`, merged with Slice 1) and
@@ -3091,75 +3247,71 @@ citations" flow — Issue #4's primary Definition-of-Done item.**
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: GitHub Issue #4 — evaluation hooks + prompt-injection corpus (Slice 4.4)
+## Next major task: GitHub Issue #5 — Product Experience (frontend)
 
 **ADR 0006's deterministic abuse-protection layer is functionally
 complete end-to-end and fully merged (Slices 1–3c).** Browser E2E
 coverage for the authentication/password-recovery flows is implemented,
 validated, and merged (PR #16, `e1c4858`). **GitHub Issue #3 (Knowledge
 Ingestion) is fully merged and functionally complete end-to-end**
-(PR #17 `79d4787` through PR #24 `7241ec8`). **Issue #4, Slices 4.1 and
-4.2 are merged** (PR #25 `5e4a626`, PR #26 `378fec4`).
+(PR #17 `79d4787` through PR #24 `7241ec8`). **GitHub Issue #4 (Hybrid
+RAG Pipeline), Slices 4.1–4.3 are merged** (PR #25 `5e4a626`, PR #26
+`378fec4`, PR #27 `54b08b2`) — a real question against real ingested
+documents already returns a real grounded answer with citations,
+end-to-end.
 
-**Slice 4.3 (generation module + a minimal conversations ask-flow
-endpoint — the first end-to-end "question -> grounded answer with
-citations" flow) is implemented and fully tested** on branch
-`issue-4-slice-4-3-generation` (cut from `378fec4`) — not yet
-committed, pushed, or opened as a PR.
+**Slice 4.4 (evaluation hooks + prompt-injection test corpus — the two
+deliverables deliberately deferred out of Slice 4.3) is implemented and
+fully tested** on branch `issue-4-slice-4-4-evaluation-security` (cut
+from `54b08b2`) — not yet committed, pushed, or opened as a PR.
 
-**Before anything else starts**: commit Slice 4.3, push the branch,
+**Before anything else starts**: commit Slice 4.4, push the branch,
 open a PR, confirm CI green, and **merge it promptly** — the 5-day
 timeline (see "Current task" above) authorizes merging as soon as a
 slice/issue is reviewed and CI-green, without waiting for a separate
 per-PR instruction.
 
-**Immediately after merging, with no further go-ahead needed:**
-continue Issue #4 with the two deliverables deliberately deferred out of
-Slice 4.3 (see that slice's own "Completed work" entry for why):
-
-1. **Evaluation hooks** — a small fixture set (a handful of documents +
-   known-relevant query/answer pairs) plus a runnable script that
-   computes real (never fabricated — `docs/EVALUATION.md`'s explicit
-   "Rule: never fabricate results") retrieval metrics (Recall@K,
-   Precision@K, MRR, nDCG, Hit Rate, using `hybrid_search()`'s own
-   output) and generation metrics (faithfulness, answer relevance,
-   context relevance, citation correctness/completeness, using
-   `RetrievalEvent`/`Citation` rows already being recorded). This
-   proves the pipeline is measurable — it is explicitly NOT the full
-   evaluation/experiment-tracking system (that's Issue #7).
-2. **A broader prompt-injection test corpus** — Slice 4.3 added two
-   targeted tests (`test_instruction_like_document_content_is_never_followed`
-   in `test_conversations.py`, and a unit-level equivalent in
-   `test_generation.py`); the Issue #4 GitHub issue's own testing
-   requirements call for a corpus (plural, varied injection shapes —
-   attempts to leak the system prompt, cross-workspace data
-   exfiltration attempts phrased as document content, etc.), not just
-   one or two examples.
-
-Once these land, Issue #4's explicit deliverables/Definition-of-Done are
-complete and the 5-day plan moves to Day 3 (Issue #5, product
-experience) — see the Issue #4 GitHub issue (`gh issue view 4`) for the
-complete, authoritative list before declaring it done; inspect
-`docs/RAG_DESIGN.md`/`docs/API_CONTRACT.md`/`docs/EVALUATION.md` before
-implementing. **Critical, explicitly restated security requirement**:
-retrieved document content is untrusted data, never instructions — see
-`docs/SECURITY.md` §"Prompt injection defense", now backed by real
-tests (Slice 4.3) proving the shipped `LocalGroundedExtractiveProvider`
-upholds it; workspace isolation at retrieval time is implemented and
-tested (Slice 4.2, see `docs/SECURITY.md` §"Retrieval workspace
-isolation") — nothing further needed there, just don't regress it.
+**Immediately after merging, with no further go-ahead needed: GitHub
+Issue #4's explicit deliverables/Definition-of-Done are complete.**
+Move to GitHub Issue #5 — the actual usable product experience (a real
+Next.js frontend consuming the existing backend APIs, not a
+disconnected mock). Priority order per the 5-day plan: login/register
+(already implemented, Issue #2) -> workspace selection (already
+implemented) -> document upload -> document list -> processing/status
+display -> chat/conversation UI -> ask a question -> answer rendering
+-> citation/source rendering -> source inspection -> conversation
+history -> feedback -> error/loading/empty states -> responsive mobile
+layout. The primary flow to get working end-to-end first: LOGIN ->
+WORKSPACE -> UPLOAD DOCUMENT -> DOCUMENT PROCESSES -> READY -> OPEN
+CHAT -> ASK QUESTION -> RETRIEVE -> GENERATE -> SHOW ANSWER -> SHOW
+CITATIONS -> OPEN SOURCE. Use the existing frontend architecture/design
+system (`frontend/app/`, `frontend/lib/api-client.ts`'s existing
+`credentials: "include"` + CSRF-header pattern) — do not invent a new
+one. Backend endpoints already available to build against: `POST
+/workspaces/{id}/documents` (upload), `POST .../documents/{id}/process`,
+`POST /workspaces/{id}/conversations`, `POST .../conversations/{id}/messages`
+(the ask flow — returns `{role, content, citations}`), `GET
+.../conversations/{id}/messages`. Inspect `docs/API_CONTRACT.md` before
+implementing — do not assume further detail. **Critical, explicitly
+restated security requirement (already implemented and tested on the
+backend, do not regress via the frontend)**: retrieved document content
+is untrusted data, never instructions — see `docs/SECURITY.md`
+§"Prompt injection defense" (now backed by a 12-payload test corpus,
+Slice 4.4) and §"Retrieval workspace isolation"; never store an auth
+token in `localStorage`/`sessionStorage` (the existing `lib/api-client.ts`
+already gets this right — see its own tests).
 
 ## Blockers
 
 None currently. `gh` CLI access is confirmed working in this
-environment. Docker was not touched this session — Slice 4.3 adds no
+environment. Docker was not touched this session — Slice 4.4 adds no
 new pip dependency and no Docker-relevant file changed (`git diff main
 -- backend/pyproject.toml backend/uv.lock` is empty), so no rebuild was
-needed; no new migration either (Slice 4.3 reuses Slice 4.1's schema
-unchanged). Slice 4.2's own migration (`0007`), Slice 4.1's own
-migration (`0006`), and Slice 3.7's own migration (`0005`) were all
-verified reversible directly against the real running Postgres — a
-stronger check than a Docker rebuild would add on its own.
+needed; no new migration either (Slice 4.4 adds only Python modules,
+fixture data, and tests). Slice 4.2's own migration (`0007`), Slice
+4.1's own migration (`0006`), and Slice 3.7's own migration (`0005`)
+were all verified reversible directly against the real running
+Postgres — a stronger check than a Docker rebuild would add on its own.
 
 ## Tests run
 
@@ -3505,35 +3657,64 @@ stronger check than a Docker rebuild would add on its own.
   existing test. Frontend not re-run as a fresh command this session,
   but no frontend file changed — expected unaffected. Docker/Compose:
   not rebuilt this slice — no new dependency, no new migration, no
-  Docker-relevant file changed. Not yet committed, pushed, or opened as
-  a PR — see "Exact next recommended action" below.
+  Docker-relevant file changed. Since merged — PR #27, squash commit
+  `54b08b2`, CI 4/4 green.
+- **Issue #4, Slice 4.4 (evaluation hooks + prompt-injection corpus):
+  `uv run ruff check .`** (pass) and **`uv run mypy .`** (pass, 136
+  source files, no new findings). **71 new tests — 42 unit
+  (`tests/test_evaluation_metrics.py`) + 29 prompt-injection
+  (`tests/test_prompt_injection.py`) — all passed** (one genuine bug
+  found and fixed mid-development, in the metrics implementation itself
+  — `recall_at_k()`/`ndcg_at_k()` could exceed `1.0` with duplicate
+  candidates — see "Completed work" above and `SOLVING.md` for the full
+  write-up; no test-design bugs this time otherwise). The evaluation
+  script (`eval/scripts/run_retrieval_evaluation.py`) was **actually
+  run twice** against the real local Postgres, producing identical,
+  real numbers both times — committed in
+  `eval/results/retrieval_evaluation.json`. A leftover-data check after
+  each run confirmed the script's own throwaway workspace cleanup
+  works (zero rows remaining). **Complete backend suite: 669/669
+  passing** (598 pre-Slice-4.4 + 71 new), **3 consecutive runs**, no
+  regression in any existing test. Also fixed a genuine, if minor,
+  test-quality issue found along the way: `tests/conftest.py`'s
+  fallback `SECRET_KEY` was 31 bytes (one short of PyJWT's HS256
+  minimum), silently triggering `InsecureKeyLengthWarning` on 624 of
+  the suite's warnings — fixed by lengthening the test-only value;
+  warning count confirmed dropped to 8 (all pre-existing, unrelated).
+  Frontend not re-run as a fresh command this session, but no frontend
+  file changed — expected unaffected. Docker/Compose: not rebuilt this
+  slice — no new dependency, no new migration, no Docker-relevant file
+  changed. Not yet committed, pushed, or opened as a PR — see "Exact
+  next recommended action" below.
 
 ## Exact next recommended action
 
 Redis Slices 1/2/3a/3b/3c, Playwright E2E, all of Issue #3 (Slices
 3.1–3.7, including Slice 3.2's and Slice 3.4's own correctness-review
 fixes, and Slice 3.5's own two-round final review), and Issue #4 Slices
-4.1–4.2 are all merged into `main` (`46ef03b` PR #11, `5391a78` PR #12,
+4.1–4.3 are all merged into `main` (`46ef03b` PR #11, `5391a78` PR #12,
 `026dcf3` PR #13, `42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16,
 `79d4787` PR #17, `941c1a7` PR #18, `5e6fdc2` PR #19, `a6762e2` PR #20,
 `2961b62` PR #21, `237be97` PR #22, `aa68079` PR #23, `7241ec8` PR #24,
-`5e4a626` PR #25, `378fec4` PR #26) — nothing pending for any of them.
-`main`/`origin/main` are at `378fec4`. **GitHub Issue #4, Slice 4.3
-(generation module + conversations endpoint) is implemented and fully
-tested**, on branch `issue-4-slice-4-3-generation` (cut from `378fec4`)
-— not yet committed, pushed, or opened as a PR. See "Completed work
-(Issue #4 — Slice 4.3...)" above. The next work, in order:
+`5e4a626` PR #25, `378fec4` PR #26, `54b08b2` PR #27) — nothing pending
+for any of them. `main`/`origin/main` are at `54b08b2`. **GitHub Issue
+#4, Slice 4.4 (evaluation hooks + prompt-injection corpus) is
+implemented and fully tested**, on branch
+`issue-4-slice-4-4-evaluation-security` (cut from `54b08b2`) — not yet
+committed, pushed, or opened as a PR. See "Completed work (Issue #4 —
+Slice 4.4...)" above. The next work, in order:
 
-1. **Commit Slice 4.3** on the current branch, push it, and open a PR
-   against `main`. This slice's own real-stack validation (25 new
-   focused tests, full 598-test suite × 3 runs, `ruff`/`mypy` clean) is
+1. **Commit Slice 4.4** on the current branch, push it, and open a PR
+   against `main`. This slice's own real-stack validation (71 new
+   focused tests, full 669-test suite × 3 runs, `ruff`/`mypy` clean, the
+   evaluation script actually run twice with real committed output) is
    already done locally. Get CI green, then **merge it promptly** — the
    5-day timeline authorizes this without waiting for a separate
    per-PR instruction (see "Current task"/"Next major task" above).
 2. **Immediately after merging, with no further go-ahead needed:**
-   switch to `main`, pull, confirm a clean tree, then continue Issue #4
-   with the two deliberately-deferred deliverables (evaluation hooks,
-   a broader prompt-injection test corpus) — see "Next major task"
-   above for the concrete starting points. Once those land, Issue #4's
-   explicit deliverables/Definition-of-Done are complete; move to
-   Issue #5 (product experience) per the 5-day plan's Day 3 scope.
+   switch to `main`, pull, confirm a clean tree. **Issue #4's explicit
+   deliverables/Definition-of-Done are then complete.** Move directly to
+   GitHub Issue #5 (product experience — the actual usable frontend) per
+   the 5-day plan's Day 3 scope — see "Next major task" above for the
+   concrete starting points, priority order, and existing backend
+   endpoints to build against.

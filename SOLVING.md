@@ -475,3 +475,109 @@ check. Also: when constructing a binary file format by hand for a test
 fixture, compute any offset/length table programmatically rather than
 hardcoding it, so the fixture-construction code itself can't introduce
 the exact class of subtle bug the check under test is meant to catch.
+
+## 2026-09-25 — `recall_at_k()`/`ndcg_at_k()` could exceed their mathematically-required [0, 1] bound
+
+**Symptom:** A unit test for the new evaluation-metrics module
+(`app/evaluation/metrics.py`, GitHub Issue #4's "evaluation hooks"
+deliverable) asserted `recall_at_k(["a", "a", "a"], {"a", "b"}, k=3) ==
+0.5` and failed: `assert 1.5 == 0.5`. Recall is a fraction of relevant
+items found — it can never legitimately exceed `1.0`.
+
+**Root cause:** The first draft of `recall_at_k()` counted a hit once
+per *position* in the retrieved list where a relevant item appeared —
+`sum(1 for item in top_k if item in relevant)` — rather than once per
+*distinct relevant item found*. Three occurrences of the same relevant
+ID (`"a"` repeated three times) counted as three hits against a
+two-item relevant set, producing `3 / 2 = 1.5`. `ndcg_at_k()` had the
+identical defect: each repeated occurrence of the same relevant item
+added another `1 / log2(rank + 1)` term to DCG, which could push the
+normalized score above `1.0` too (confirmed directly: `ndcg_at_k(["a",
+"a", "a"], {"a", "b"}, k=3)` computed to `~1.31` before the fix).
+
+**Failed attempts:** None — the bug was caught by the first test
+written for this exact case (`recall_at_k`'s own duplicate-handling
+test), not discovered later through a passing-then-failing regression.
+`precision_at_k()` was checked for the same class of bug and confirmed
+*not* to have it: precision is legitimately position-based by its own
+standard IR definition (each retrieved *slot* either is or isn't
+relevant), and `hits <= len(top_k) <= k` always holds there, so it
+cannot exceed `1.0` regardless of duplicates.
+
+**Fix:** `recall_at_k()` now computes `len(set(retrieved[:k]) &
+relevant) / len(relevant)` — distinct items only. `ndcg_at_k()` now
+tracks a `seen` set and only lets a relevant item's *first* (best-
+ranked) occurrence contribute to DCG, mirroring `mrr()`'s own existing
+"first hit only" semantics exactly (the same principle already applied
+correctly in that function, just not yet applied to these two).
+
+**Verification:** Two new regression tests
+(`test_recall_at_k_never_exceeds_one`,
+`test_ndcg_at_k_duplicate_relevant_items_never_exceed_one`) assert the
+`<= 1.0` bound directly for the exact duplicate-ID shape that triggered
+this; the original failing test now passes with the corrected `0.5`
+value. Full 42-test `test_evaluation_metrics.py` suite passes, 3
+consecutive runs.
+
+**Prevention/lesson:** **when a metric has a known mathematical bound
+(here, `[0, 1]`), write a test asserting that bound holds under
+adversarial/duplicate input, not just a known-answer example on
+clean input** — a known-answer test with no duplicates would never
+have caught this, since duplicates are exactly the input shape that
+exposes "count per position" vs. "count per distinct item" as two
+different, non-interchangeable implementations. This project's
+retrieval pipeline already deduplicates before results reach these
+metrics (RRF fusion dedupes by `chunk_id`), so this specific bug was
+never reachable through the real `hybrid_search()` path — but a metrics
+function used for evaluation should be correct on its own terms, not
+only "correct given how it happens to be called today."
+
+## 2026-09-25 — A test-fixture `SECRET_KEY` value silently triggered `InsecureKeyLengthWarning` on almost every JWT-related test
+
+**Symptom:** `624` of the backend suite's `pytest` warnings (out of
+`669` tests) were `InsecureKeyLengthWarning: The HMAC key is 31 bytes
+long, which is below the minimum recommended length of 32 bytes for
+SHA256`, emitted by PyJWT on every `jwt.encode()`/`jwt.decode()` call
+(`app/core/security.py`) throughout the suite.
+
+**Root cause:** `tests/conftest.py`'s `os.environ.setdefault("SECRET_KEY",
+"test-secret-key-for-pytest-only")` — the fallback value pytest uses
+when no `SECRET_KEY` is already set in the environment — was exactly
+`31` bytes (`len("test-secret-key-for-pytest-only".encode())`), one
+byte short of PyJWT's own recommended HS256 minimum. This was purely a
+test-fixture value, never a production configuration issue:
+`app/core/config.py`'s `secret_key` field has no fake default (config
+loading fails loudly if it's missing, per docs/SECURITY.md "Secret
+management"), and `.env.example`'s own guidance
+(`openssl rand -hex 32`, a 64-byte hex string) was already correct.
+
+**Failed attempts:** None — a one-line root-cause check
+(`len("test-secret-key-for-pytest-only".encode("utf-8"))` → `31`)
+identified the exact cause immediately; no incorrect fix was tried
+first.
+
+**Fix:** Changed the fallback value to
+`"test-secret-key-for-pytest-only-not-a-real-secret"` (`49` bytes) —
+still an obviously-fake, clearly-labeled test-only string (never
+resembling a real secret), just long enough to clear PyJWT's own
+minimum. No security behavior changed; this only silences a spurious
+warning about a value that was never used outside test runs.
+
+**Verification:** Re-ran the full backend suite: **669/669 passing**,
+warning count dropped from `624` to `8` (the 8 remaining are unrelated,
+pre-existing Starlette/FastAPI deprecation warnings, confirmed by
+inspecting their own messages — nothing about key length). Ran
+`tests/test_auth.py` directly and grepped its warning output for
+"InsecureKeyLength" — zero matches, confirming the specific warning
+this fix targeted is gone, not just reduced in volume.
+
+**Prevention/lesson:** **a test-fixture "obviously fake" value can still
+trigger a real library warning if it happens to violate that library's
+own documented minimum (key length, in this case) — "clearly not a
+real secret" and "passes the library's own validation" are two
+different properties, and a fixture should satisfy both.** When adding
+a new fixture secret/key/token value in the future, check it against
+any length/format minimum the consuming library documents, the same way
+production configuration already is (`.env.example`'s own
+`openssl rand -hex 32` guidance already got this right for real
+deployments — the test fixture just hadn't been held to the same bar).
