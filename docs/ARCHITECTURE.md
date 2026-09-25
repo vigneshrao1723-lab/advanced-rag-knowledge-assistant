@@ -119,7 +119,7 @@ advanced-rag-knowledge-assistant/
 │   │   ├── services/              # business logic orchestration — implemented (auth_service, workspace_service)
 │   │   ├── ingestion/             # parse/clean/chunk/embed/index — IMPLEMENTED (Issue #3, Slices 3.1–3.7)
 │   │   ├── retrieval/             # dense, BM25, fusion, rerank, filters — IMPLEMENTED (Issue #4, Slice 4.2; not yet wired to an endpoint)
-│   │   ├── generation/            # context builder, LLM calls, citations — PLANNED (Issue #4)
+│   │   ├── generation/            # context builder, LLM calls, citations — IMPLEMENTED (Issue #4, Slice 4.3)
 │   │   ├── voice/                 # STT/TTS integration — PLANNED (Issue #6)
 │   │   ├── evaluation/            # metrics, experiment runner — PLANNED (Issue #7)
 │   │   └── observability/         # logging, tracing, metrics — implemented (structured logging, request IDs)
@@ -217,7 +217,14 @@ Interfaces defined (or to be defined) in `backend/app/services/`:
   offline, no external API/key — Jaccard token-overlap scoring),
   selected via `get_reranker()` (matching `EmbeddingProvider`'s own
   precedent). No commercial vendor selected yet.
-- `LLMProvider` — PROPOSED
+- `LLMProvider` — **IMPLEMENTED** (Issue #4, Slice 4.3):
+  `backend/app/generation/llm_provider.py`. A `Protocol` plus one real
+  implementation today, `LocalGroundedExtractiveProvider`
+  (deterministic, offline, no external API/key — returns ranked
+  evidence quoted and citation-marked rather than paraphrasing it),
+  selected via `get_llm_provider()` (matching `EmbeddingProvider`'s own
+  precedent). No commercial vendor selected yet — see
+  [ADR 0007](DECISIONS/0007-local-providers-for-embedding-reranking-generation.md).
 - `SpeechToTextProvider` — PROPOSED
 - `TextToSpeechProvider` — PROPOSED
 - `StorageProvider` — **IMPLEMENTED** (Issue #3, Slice 3.2):

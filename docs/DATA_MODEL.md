@@ -11,9 +11,11 @@ ingestion lifecycle (`UPLOADED → ... → READY`), and `document_chunks`
 rows — including their `pgvector` embedding column, populated by
 `LocalHashingEmbeddingProvider` — are persisted by that same pipeline.
 `conversations`/`messages`/`citations`/`retrieval_events` (migration
-`0006`, GitHub Issue #4 Slice 4.1) also exist as real tables, schema
-only — no retrieval/generation code reads or writes them yet. Every
-other entity below remains PROPOSED. This document
+`0006`, GitHub Issue #4 Slice 4.1) also exist as real tables; as of
+Slice 4.3, the `POST .../conversations/{id}/messages` endpoint populates
+all four end-to-end (a user message, a retrieval event, an assistant
+message, and its citations, per question asked). Every other entity
+below remains PROPOSED. This document
 records the intended core entities so future implementation stays
 consistent; entities not marked implemented below are not evidence that
 they exist. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current
@@ -32,7 +34,7 @@ status.
 | `document_chunks` | Chunked units of a document, used for retrieval once Issue #4 exists | IMPLEMENTED (migration `0004` + `0005`; populated by Slice 3.6's chunk-persistence step and Slice 3.7's embedding step, including the `pgvector` `embedding` column) |
 | `collections` | Logical grouping of documents within a workspace | PROPOSED |
 | `collection_documents` | Many-to-many link between collections and documents | PROPOSED |
-| `conversations` | A chat session within a workspace | IMPLEMENTED (migration `0006`, GitHub Issue #4 Slice 4.1 — schema only, no retrieval/generation code reads/writes it yet) |
+| `conversations` | A chat session within a workspace | IMPLEMENTED (migration `0006`; populated by `POST /api/v1/workspaces/{workspace_id}/conversations`, Issue #4 Slice 4.3) |
 | `messages` | Individual messages within a conversation (user + assistant) | IMPLEMENTED (migration `0006`; native `message_role` enum, `USER`/`ASSISTANT`) |
 | `citations` | Links between a generated answer/message and the evidence (chunks) it cites | IMPLEMENTED (migration `0006`; denormalizes `document_id`/`page`/`section` from the cited chunk at write time) |
 | `retrieval_events` | Record of a retrieval operation (query, method, results, scores) for observability/evaluation | IMPLEMENTED (migration `0006`; `results` is `JSONB`, `rewritten_query_text` kept separate from `query_text` so the original query is always preserved) |
