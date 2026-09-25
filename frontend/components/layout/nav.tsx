@@ -10,6 +10,7 @@ import { useWorkspace } from "@/lib/workspace-context";
 const NAV_LINKS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/documents", label: "Documents" },
+  { href: "/chat", label: "Chat" },
   { href: "/collections", label: "Collections" },
   { href: "/search", label: "Search" },
   { href: "/settings", label: "Settings" },

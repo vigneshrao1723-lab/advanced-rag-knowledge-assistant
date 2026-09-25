@@ -145,21 +145,23 @@ from Issue #1: `{"error": {"code", "message", "request_id"}}` — see
 
 ## Implemented: `/api/v1/workspaces/{workspace_id}/documents`
 
-**Upload + full processing pipeline** (GitHub Issue #3, Slices 3.3–3.7) —
-list/search/filter/sort/rename/delete/re-index/download/metadata are not
-implemented yet. Documents reach `UPLOADED` (upload), then progress
-through `PROCESSING → PARSED → CLEANED → CHUNKED → EMBEDDED → INDEXED →
-READY` (or `FAILED` at any stage) via the same `/process` endpoint;
-chunks are persisted to `document_chunks` once `CHUNKED` is reached, and
-each chunk's embedding vector once `EMBEDDED` is reached. No retrieval
-code reads this data yet (Issue #4).
+**Upload, listing, and full processing pipeline** (GitHub Issue #3,
+Slices 3.3–3.7; list/get added Issue #5, Slice 5.1) —
+search/filter/sort/rename/delete/re-index/download are not implemented
+yet. Documents reach `UPLOADED` (upload), then progress through
+`PROCESSING → PARSED → CLEANED → CHUNKED → EMBEDDED → INDEXED → READY`
+(or `FAILED` at any stage) via the same `/process` endpoint; chunks are
+persisted to `document_chunks` once `CHUNKED` is reached, and each
+chunk's embedding vector once `EMBEDDED` is reached.
 
 | Endpoint | Min. role | Body | Response |
 |---|---|---|---|
+| `GET /api/v1/workspaces/{workspace_id}/documents` | VIEWER | none | `200` `list[DocumentRead]`, newest first |
+| `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}` | VIEWER | none | `200` `DocumentRead`, or `404` |
 | `POST /api/v1/workspaces/{workspace_id}/documents` | MEMBER | `multipart/form-data`, one field: `file` | `201` `DocumentRead`, or `400`/`409`/`413`/`429`/`500` (see below) |
 | `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` | MEMBER | none | `200` `DocumentRead`, or `404`/`409`/`429`/`500` (see below) |
 
-`DocumentRead`: `{id, filename, mime_type, size_bytes, checksum_sha256, status, page_count, failure_reason, created_at, updated_at}` — never `storage_key` (internal only).
+`DocumentRead`: `{id, filename, mime_type, size_bytes, checksum_sha256, status, page_count, failure_reason, created_at, updated_at}` — never `storage_key` (internal only). Both `GET` endpoints follow the same non-leaking `404` pattern as every other workspace-scoped lookup (a missing document or one belonging to another workspace is indistinguishable).
 
 Resolves `workspace_id` through the same `require_workspace_role`
 dependency every other workspace-scoped route uses — a non-member or
@@ -357,12 +359,14 @@ the client, never a raw exception, filesystem path, or storage key.
 
 ## Implemented: `/api/v1/workspaces/{workspace_id}/conversations`
 
-**Minimal chat/ask flow** (GitHub Issue #4, Slice 4.3) — rename/delete/
-search conversations, regenerate/retry, and feedback
-(docs/REQUIREMENTS.md "Chat") are not implemented yet (Issue #5).
+**Minimal chat/ask flow + conversation listing** (GitHub Issue #4, Slice
+4.3; list added Issue #5, Slice 5.1) — rename/delete/search
+conversations, regenerate/retry, and feedback (docs/REQUIREMENTS.md
+"Chat") are not implemented yet.
 
 | Endpoint | Min. role | Body | Response |
 |---|---|---|---|
+| `GET /api/v1/workspaces/{workspace_id}/conversations` | VIEWER | none | `200` `list[ConversationRead]`, newest-updated first |
 | `POST /api/v1/workspaces/{workspace_id}/conversations` | MEMBER | none | `201` `ConversationRead` |
 | `POST /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages` | MEMBER | `{content}` | `201` `MessageRead`, or `404`/`422`/`429`/`500` (see below) |
 | `GET /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages` | VIEWER | none | `200` `list[MessageRead]`, or `404` |
@@ -373,6 +377,8 @@ search conversations, regenerate/retry, and feedback
 `citations` is `list[CitationRead]` — `{document_id, page, section, rank}`
 (never the chunk's raw content or ID; `rank` is the citation's 1-based
 position in the answer, matching its `[n]` marker in `content`).
+`GET .../messages` returns each historical message's real, persisted
+citations (not just the citations of the most-recently-posted answer).
 
 `MessageCreate` (request body for posting a message):
 `{content}` — a non-empty string, capped at 4000 characters (this

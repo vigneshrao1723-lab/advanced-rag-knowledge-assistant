@@ -32,6 +32,31 @@ from app.services.storage_provider import StorageProvider, get_storage_provider
 router = APIRouter(prefix="/workspaces", tags=["documents"])
 
 
+@router.get(
+    "/{workspace_id}/documents",
+    response_model=list[DocumentRead],
+)
+async def list_documents(
+    ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.VIEWER)),
+    db: Session = Depends(get_db),
+) -> list[DocumentRead]:
+    return document_service.list_documents(db, workspace_id=ctx.workspace.id)
+
+
+@router.get(
+    "/{workspace_id}/documents/{document_id}",
+    response_model=DocumentRead,
+)
+async def get_document(
+    document_id: uuid.UUID,
+    ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.VIEWER)),
+    db: Session = Depends(get_db),
+) -> DocumentRead:
+    return document_service.get_document(
+        db, workspace_id=ctx.workspace.id, document_id=document_id
+    )
+
+
 @router.post(
     "/{workspace_id}/documents",
     response_model=DocumentRead,

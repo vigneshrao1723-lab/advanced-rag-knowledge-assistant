@@ -10,12 +10,57 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-25 — Issue #4, Slice 4.4: evaluation hooks + prompt-injection test corpus
+### 2026-09-25 — Issue #5, Slice 5.1: document list/get endpoints + real Documents/Chat pages
+
+*(Branch `issue-5-slice-5-1-documents-conversations-api`, cut from the
+merged Slice 4.4 (`fd2041c`, PR #28). Implemented and fully tested; not
+yet committed as of this entry.)*
+
+- Adds `GET /api/v1/workspaces/{workspace_id}/documents` (list,
+  newest-first) and `GET .../documents/{document_id}` (single document/
+  status) — both VIEWER-role, workspace-scoped at the query level. Closes
+  a real gap found during this slice's frontend inspection: only `POST`
+  upload/process existed before, so a real frontend had no way to list
+  documents or poll processing status.
+- Adds `GET /api/v1/workspaces/{workspace_id}/conversations` (list,
+  newest-updated-first, VIEWER-role).
+- **Fixes a real bug**: `GET .../conversations/{id}/messages` always
+  returned `citations=[]` for every message, even though
+  `POST .../messages` had already persisted real `Citation` rows —
+  reloading a conversation's history silently dropped its citations.
+  Fixed via a new bulk `citation_repository.list_for_messages()` lookup.
+  Regression-tested.
+- Adds `frontend/app/documents/page.tsx` (replaces the `PageStub`): a
+  real upload form, workspace-scoped document list with live status
+  badges, 3-second polling while any document is mid-pipeline, and a
+  retry action for `FAILED` documents.
+- Adds `frontend/app/chat/page.tsx` (new): a real conversation list +
+  "New conversation," a message thread with an input box, and citations
+  rendered under each assistant message (resolved against the
+  workspace's document list for a filename/page/section label).
+- Both new pages consume the real backend APIs above through new
+  `lib/api-client.ts` functions and `lib/schemas.ts` Zod schemas — no
+  mock or disconnected data.
+- 9 new backend tests (`backend/tests/test_document_listing.py`,
+  `test_conversations.py`) — **678/678 backend tests passing**. 10 new
+  frontend tests (`app/documents/page.test.tsx`, `app/chat/page.test.tsx`)
+  — **58/58 frontend tests passing**. `ruff`/`mypy`/`eslint`/
+  `tsc --noEmit` clean, `next build` succeeds.
+- Not yet manually exercised against a live backend in a browser.
+- No new migration, no new dependency.
+- Docs updated in the same working tree: `PROJECT_STATE.md`,
+  `HANDOFF.md`.
+
+## [Unreleased — committed]
+
+### 2026-09-25 — `feat: add evaluation hooks and prompt-injection corpus (Issue #4, Slice 4.4)` (#28), merged as `fd2041c`
 
 *(Branch `issue-4-slice-4-4-evaluation-security`, cut from the merged
-Slice 4.3 (`54b08b2`, PR #27). Implemented and fully tested; not yet
-committed as of this entry. **Completes GitHub Issue #4's explicit
-deliverables/Definition-of-Done.**)*
+Slice 4.3 (`54b08b2`, PR #27). Opened as **PR #28**, verified green on
+GitHub Actions CI, and **merged into `main` as squash commit
+`fd2041c`**. **Completes GitHub Issue #4's explicit deliverables/
+Definition-of-Done — GitHub Issue #4 (Hybrid RAG Pipeline) is
+functionally complete.**)*
 
 - Adds `backend/app/evaluation/metrics.py`: pure functions for every
   `docs/EVALUATION.md` retrieval metric (`recall_at_k`, `precision_at_k`,
@@ -60,13 +105,11 @@ deliverables/Definition-of-Done.**)*
 - No new migration, no new dependency.
 - `ruff`/`mypy` clean (136 source files). Complete backend suite:
   **669/669 passing** (598 pre-existing + 71 new), 3 consecutive runs.
-- Docs updated in the same working tree: `PROJECT_STATE.md`,
+- Docs updated in the same commit: `PROJECT_STATE.md`,
   `HANDOFF.md`, `docs/EVALUATION.md` (new "Evaluation hooks" section
   with the real results), `docs/ARCHITECTURE.md` (`evaluation/` module +
   `eval/` directory status), `docs/SECURITY.md` (expanded "Prompt
   injection defense" section), `SOLVING.md` (two entries).
-
-## [Unreleased — committed]
 
 ### 2026-09-25 — `feat: add generation module and conversations ask-flow (Issue #4, Slice 4.3)` (`f7a67ee`, docs `8e9631d`), merged as `54b08b2`
 

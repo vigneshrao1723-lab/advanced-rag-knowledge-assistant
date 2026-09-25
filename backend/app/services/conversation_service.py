@@ -21,9 +21,10 @@ from app.generation.context_builder import BuiltContext
 from app.generation.llm_provider import LLMProvider
 from app.generation.service import generate_answer
 from app.ingestion.embedding import EmbeddingProvider
+from app.models.citation import Citation
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
-from app.repositories import conversation_repository, message_repository
+from app.repositories import citation_repository, conversation_repository, message_repository
 from app.retrieval.reranker import Reranker
 from app.retrieval.service import hybrid_search
 from app.retrieval.types import RetrievalCandidate
@@ -56,6 +57,15 @@ def _to_message_read(message: Message, citations: list[CitationRead]) -> Message
     )
 
 
+def _to_citation_read(citation: Citation) -> CitationRead:
+    return CitationRead(
+        document_id=citation.document_id,
+        page=citation.page,
+        section=citation.section,
+        rank=citation.rank,
+    )
+
+
 def create_conversation(
     db: Session, *, workspace_id: uuid.UUID, created_by: uuid.UUID
 ) -> ConversationRead:
@@ -64,6 +74,11 @@ def create_conversation(
     )
     db.commit()
     return _to_conversation_read(conversation)
+
+
+def list_conversations(db: Session, *, workspace_id: uuid.UUID) -> list[ConversationRead]:
+    conversations = conversation_repository.list_for_workspace(db, workspace_id=workspace_id)
+    return [_to_conversation_read(conversation) for conversation in conversations]
 
 
 def list_messages(
@@ -76,7 +91,16 @@ def list_messages(
         raise _conversation_not_found_error()
 
     messages = message_repository.list_for_conversation(db, conversation_id=conversation.id)
-    return [_to_message_read(message, []) for message in messages]
+    citations_by_message = citation_repository.list_for_messages(
+        db, message_ids=[message.id for message in messages]
+    )
+    return [
+        _to_message_read(
+            message,
+            [_to_citation_read(citation) for citation in citations_by_message.get(message.id, [])],
+        )
+        for message in messages
+    ]
 
 
 def _run_retrieval_and_generation(
@@ -171,16 +195,8 @@ async def post_message(
     )
     db.commit()
 
-    citation_reads = [
-        CitationRead(
-            document_id=citation.document_id,
-            page=citation.page,
-            section=citation.section,
-            rank=citation.rank,
-        )
-        for citation in citations
-    ]
+    citation_reads = [_to_citation_read(citation) for citation in citations]
     return _to_message_read(assistant_message, citation_reads)
 
 
-__all__ = ["create_conversation", "list_messages", "post_message"]
+__all__ = ["create_conversation", "list_conversations", "list_messages", "post_message"]

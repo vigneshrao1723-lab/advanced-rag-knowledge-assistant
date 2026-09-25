@@ -26,6 +26,17 @@ from app.services import conversation_service
 router = APIRouter(prefix="/workspaces", tags=["conversations"])
 
 
+@router.get(
+    "/{workspace_id}/conversations",
+    response_model=list[ConversationRead],
+)
+async def list_conversations(
+    ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.VIEWER)),
+    db: Session = Depends(get_db),
+) -> list[ConversationRead]:
+    return conversation_service.list_conversations(db, workspace_id=ctx.workspace.id)
+
+
 @router.post(
     "/{workspace_id}/conversations",
     response_model=ConversationRead,

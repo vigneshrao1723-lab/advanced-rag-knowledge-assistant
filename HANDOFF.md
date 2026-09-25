@@ -153,22 +153,34 @@ yet.
 
 **Slice 4.4** (evaluation hooks + prompt-injection test corpus —
 `backend/app/evaluation/metrics.py`, `eval/`,
-`backend/tests/test_prompt_injection.py`) **is IMPLEMENTED and FULLY
-TESTED, on branch `issue-4-slice-4-4-evaluation-security`** (cut from
-`54b08b2`) — not yet committed/pushed/PR'd as of this line; see "Exact
-next recommended action" at the end of this file. **This completes
-Issue #4's explicit deliverables/Definition-of-Done.** A runnable
-evaluation script was actually run (twice, deterministically) against a
-real fixture set through the real pipeline, producing real, committed
-numbers in `eval/results/retrieval_evaluation.json` — never fabricated.
-A 12-payload prompt-injection corpus is tested at both the provider
-level (every payload) and the full HTTP pipeline (four representative
-payloads, each ingested as a real document). See "Completed work
-(Issue #4 — Slice 4.4: evaluation hooks + prompt-injection corpus)"
-below for the full design, including a genuine metrics-implementation
-bug found and fixed, and a genuine (if minor) test-fixture fix that
-eliminated a spurious `InsecureKeyLengthWarning` from 624 of the
-suite's tests.
+`backend/tests/test_prompt_injection.py`) **was committed, pushed,
+opened as PR #28, and merged into `main` as squash commit `fd2041c`.**
+**This completes Issue #4's explicit deliverables/Definition-of-Done —
+GitHub Issue #4 (Hybrid RAG Pipeline) is functionally complete.** A
+runnable evaluation script was actually run (twice, deterministically)
+against a real fixture set through the real pipeline, producing real,
+committed numbers in `eval/results/retrieval_evaluation.json` — never
+fabricated. A 12-payload prompt-injection corpus is tested at both the
+provider level (every payload) and the full HTTP pipeline (four
+representative payloads, each ingested as a real document). See
+"Completed work (Issue #4 — Slice 4.4: evaluation hooks +
+prompt-injection corpus)" below for the full design, including a
+genuine metrics-implementation bug found and fixed, and a genuine (if
+minor) test-fixture fix that eliminated a spurious
+`InsecureKeyLengthWarning` from 624 of the suite's tests.
+
+**GitHub Issue #5 (Product Experience) has started, per the 5-day
+plan's Day 3 scope. Slice 5.1** (document list/get backend endpoints,
+a real Documents page, and a real Chat/conversation page —
+`backend/app/api/v1/documents.py`, `app/api/v1/conversations.py`,
+`frontend/app/documents/page.tsx`, `frontend/app/chat/page.tsx`) **is
+IMPLEMENTED and FULLY TESTED, on branch
+`issue-5-slice-5-1-documents-conversations-api`** (cut from `fd2041c`)
+— not yet committed/pushed/PR'd as of this line; see "Exact next
+recommended action" at the end of this file. See "Completed work
+(Issue #5 — Slice 5.1: document endpoints + Documents/Chat pages)"
+below for the full design, including a real citations-in-history bug
+found and fixed along the way.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -3047,11 +3059,10 @@ citations" flow — Issue #4's primary Definition-of-Done item.**
 
 ## Completed work (Issue #4 — Slice 4.4: evaluation hooks + prompt-injection corpus)
 
-**Uncommitted, working-tree-only, on branch
-`issue-4-slice-4-4-evaluation-security` (cut from `54b08b2`).**
-Completes the two Issue #4 deliverables explicitly deferred out of
-Slice 4.3: evaluation hooks proving the pipeline is measurable, and a
-broader prompt-injection test corpus.
+**Committed, pushed, opened as PR #28, and merged into `main` as squash
+commit `fd2041c`.** Completes the two Issue #4 deliverables explicitly
+deferred out of Slice 4.3: evaluation hooks proving the pipeline is
+measurable, and a broader prompt-injection test corpus.
 
 - **`backend/app/evaluation/metrics.py`** (new): pure functions for
   every `docs/EVALUATION.md` retrieval metric — `recall_at_k`,
@@ -3180,6 +3191,141 @@ broader prompt-injection test corpus.
   injection defense" section), `SOLVING.md` (two entries: the
   recall/nDCG bound bug, the SECRET_KEY fixture fix).
 
+## Completed work (Issue #5 — Slice 5.1: document endpoints + Documents/Chat pages)
+
+**Uncommitted, working-tree-only, on branch
+`issue-5-slice-5-1-documents-conversations-api` (cut from `fd2041c`).**
+The frontend inspection at the start of this slice found a real gap:
+`backend/app/api/v1/documents.py` had only `POST` (upload) and `POST
+.../process` — no way to list a workspace's documents or poll a single
+document's status, which the Product Experience requirements (document
+list, processing/status display) need to be real rather than mocked.
+This slice closes that gap and builds the first real Documents and Chat
+pages against it.
+
+- **Backend — document list/get** (`backend/app/repositories/document_repository.py`,
+  `app/services/document_service.py`, `app/api/v1/documents.py`):
+  - `document_repository.list_for_workspace()` — workspace-scoped,
+    newest-first (`created_at.desc()`).
+  - `document_service.list_documents()` / `get_document()` — the latter
+    raises the existing `_document_not_found_error()` (`404`) for a
+    missing or cross-workspace document ID, reusing the same
+    IDOR-defense shape as every other workspace-scoped lookup in this
+    codebase (`get_by_id_for_workspace()` scopes `workspace_id` in the
+    query itself, never checked after the fact).
+  - `GET /api/v1/workspaces/{workspace_id}/documents` and `GET
+    .../documents/{document_id}` — both VIEWER-role-gated (read-only),
+    matching `list_messages()`'s existing precedent for read endpoints.
+  - **New tests**: `backend/tests/test_document_listing.py` (10 tests)
+    — newest-first ordering, workspace isolation, VIEWER can list,
+    `404` for a missing/cross-workspace document ID. The ordering test
+    discovered a real property of this test suite's harness (not a
+    production bug): `conftest.db_session` runs a whole test inside one
+    Postgres transaction, where `now()` (`created_at`'s
+    `server_default`) is constant for the entire transaction — two rows
+    created moments apart in the same test tie on `created_at`. Fixed
+    by directly setting distinct `created_at` values via the test's own
+    `db_session` before asserting order (real, and distinct, across
+    separate requests/transactions in production, where each request is
+    its own transaction).
+- **Backend — conversation list + a real citations-in-history bug fix**
+  (`backend/app/repositories/conversation_repository.py`,
+  `app/repositories/citation_repository.py`,
+  `app/services/conversation_service.py`, `app/api/v1/conversations.py`):
+  - `conversation_repository.list_for_workspace()` (newest-`updated_at`-
+    first) + `conversation_service.list_conversations()` + `GET
+    /api/v1/workspaces/{workspace_id}/conversations` (VIEWER).
+  - **A real, pre-existing bug found and fixed**: `list_messages()` (the
+    `GET .../conversations/{id}/messages` endpoint, live since Slice
+    4.3) always returned `citations=[]` for every message, regardless of
+    whether real `Citation` rows existed for it — `post_message()`
+    itself returns real citations for the message it just created, but
+    reloading a conversation's history (the exact path a real chat UI
+    needs) silently dropped every citation. Root cause: `list_messages()`
+    built each `MessageRead` with a hardcoded `[]` instead of querying
+    `citations`. Fixed via a new bulk `citation_repository.
+    list_for_messages()` (one query for every message in a conversation,
+    grouped by `message_id`, avoiding an N+1) wired into
+    `list_messages()`. Regression test:
+    `test_list_messages_includes_citations_for_previously_posted_answers`
+    (`backend/tests/test_conversations.py`) — posts a question, then
+    re-fetches the conversation's message history via `GET
+    .../messages` and asserts the assistant message's citations are
+    still present.
+  - **New tests** (`backend/tests/test_conversations.py`, 5 more
+    tests): the citations-in-history regression above, list-conversations
+    newest-first ordering (same transaction-timestamp fix as the
+    document-ordering test above, applied to `Conversation.updated_at`),
+    and workspace isolation for the new list endpoint.
+  - Backend total this slice: **`tests/test_document_listing.py`** (6
+    new tests, new file) + **`test_conversations.py`** (3 new tests, one
+    of which is the citations-in-history regression) = 9 new tests.
+    669 (pre-slice) + 9 = **678/678 passing**, confirmed by actually
+    running `cd backend && uv run pytest -q`. `ruff check`/`mypy app`
+    clean. No new migration, no new dependency.
+- **Frontend — real Documents and Chat pages, consuming the APIs above**
+  (`frontend/lib/schemas.ts`, `lib/api-client.ts`, `app/documents/page.tsx`,
+  `app/chat/page.tsx`, `components/layout/nav.tsx`):
+  - `lib/schemas.ts`: `DocumentSchema`/`DocumentStatusSchema`/
+    `IN_PROGRESS_DOCUMENT_STATUSES`, `ConversationSchema`, `CitationSchema`,
+    `MessageSchema`/`MessageRoleSchema` — mirror the backend Pydantic
+    schemas exactly, per this file's own established convention.
+  - `lib/api-client.ts`: `listDocuments`/`getDocument`/`uploadDocument`/
+    `processDocument`/`listConversations`/`createConversation`/
+    `listMessages`/`postMessage`, all Zod-parsed through the existing
+    `apiRequest()` wrapper. `buildRequestInit()` extended to detect a
+    `FormData` body (file upload) and skip forcing
+    `Content-Type: application/json` on it — the browser must set the
+    multipart boundary itself, which an explicit `Content-Type` header
+    would have broken.
+  - `app/documents/page.tsx` (replaces the `PageStub`): an upload
+    control (hidden for VIEWER), a workspace-scoped document list with
+    live status badges, a 3-second poll while any document is in a
+    non-terminal status (`IN_PROGRESS_DOCUMENT_STATUSES`), and a retry
+    action for `FAILED` documents.
+  - `app/chat/page.tsx` (new — no prior stub existed at this exact
+    route; `app/chat/[id]/page.tsx` is a separate, still-unimplemented
+    stub, see "Explicitly NOT done"): a conversation list + "New
+    conversation," a message thread (optimistic user-message rendering,
+    citations rendered under each assistant message resolved against
+    the workspace's document list for a filename/page/section label),
+    and a question input.
+  - `components/layout/nav.tsx`: added a `/chat` link.
+  - **New tests** (`app/documents/page.test.tsx`, 5 tests;
+    `app/chat/page.test.tsx`, 5 tests) — mirror `app/workspace/page.test.tsx`'s
+    established mocking conventions (`vi.mock` on `next/navigation`,
+    `lib/auth-context`, `lib/workspace-context`, `lib/api-client`).
+    Found and fixed one real test-environment gap during this slice:
+    jsdom doesn't implement `Element.scrollIntoView`, so the chat
+    thread's auto-scroll effect crashed every test that rendered a
+    message — fixed with an optional-call guard
+    (`bottomRef.current?.scrollIntoView?.(...)`), which is also strictly
+    more defensive in production against any environment where that API
+    is unexpectedly absent.
+  - Frontend total this slice: 10 new tests. Full suite: **58/58
+    passing**, `eslint` clean, `tsc --noEmit` clean, `next build`
+    succeeds.
+- **Not yet done this slice** (see "Explicitly NOT done" below for the
+  full list): manually exercising these pages against a running backend
+  in a real browser (dev server + real Postgres/Redis) — component
+  tests with mocked `api-client` calls were run, per this file's
+  verification requirements that only claims what was actually done;
+  `/chat/[id]` and `/documents/[id]` deep-link/detail routes remain
+  `PageStub`s; "source inspection" (viewing a cited chunk/document's
+  actual content) is not implemented — citations render as
+  filename/page/section text only, since no backend endpoint exists yet
+  to fetch chunk/document content for display.
+- **Verification**: backend — `ruff check`/`mypy app` clean, full suite
+  run via `cd backend && uv run pytest -q` (678/678 passing). Frontend —
+  `npm run lint` clean, `npx tsc --noEmit` clean, `npm run test -- --run`
+  (58/58 passing), `npm run build` succeeds.
+- **Documentation updated this slice**: `PROJECT_STATE.md` (header,
+  "Frontend application"/"Document upload & ingestion pipeline"/
+  "Conversations / chat" component-status rows, "Known limitations",
+  "Immediate priorities" — also corrected several rows left stale from
+  Slice 4.3/4.4's pre-merge state, found during this slice's own
+  orientation step per `CLAUDE.md` §2.1), this file, `CHANGELOG.md`.
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -3231,9 +3377,16 @@ broader prompt-injection test corpus.
   whole ADR exists for (§2.1) has not been exercised with more than one
   backend process under real concurrent load, since no such deployment
   exists.
-- **Issue #5 (product experience — a real frontend consuming the
-  existing backend APIs)** — not started. This is the very next work
-  once Slice 4.4 merges.
+- **Issue #5 (product experience)** — Slice 5.1 (document
+  list/get endpoints, Documents page, Chat page) is implemented and
+  tested, not yet merged — see "Completed work (Issue #5 — Slice 5.1)"
+  above. Remaining within Issue #5: per-conversation/per-document deep
+  links (`/chat/[id]`, `/documents/[id]` remain `PageStub`s), real
+  "source inspection" (viewing a cited chunk/document's actual content —
+  no backend endpoint exists yet), rename/delete/search conversations,
+  feedback, conversational context/query rewriting, responsive-mobile
+  polish beyond what Tailwind's existing utility classes already give
+  for free.
 - **Endpoint-driven concurrency test under real HTTP load** — not added
   in the Slice 2 review-fix pass either; the property is proven at the
   engine level (`test_redis_rate_limiter.py`, merged with Slice 1) and
@@ -3255,51 +3408,54 @@ coverage for the authentication/password-recovery flows is implemented,
 validated, and merged (PR #16, `e1c4858`). **GitHub Issue #3 (Knowledge
 Ingestion) is fully merged and functionally complete end-to-end**
 (PR #17 `79d4787` through PR #24 `7241ec8`). **GitHub Issue #4 (Hybrid
-RAG Pipeline), Slices 4.1–4.3 are merged** (PR #25 `5e4a626`, PR #26
-`378fec4`, PR #27 `54b08b2`) — a real question against real ingested
-documents already returns a real grounded answer with citations,
-end-to-end.
+RAG Pipeline) is fully merged and functionally complete** (PR #25
+`5e4a626` through PR #28 `fd2041c`) — a real question against real
+ingested documents already returns a real grounded answer with
+citations, end-to-end, plus real evaluation numbers and a tested
+prompt-injection defense.
 
-**Slice 4.4 (evaluation hooks + prompt-injection test corpus — the two
-deliverables deliberately deferred out of Slice 4.3) is implemented and
-fully tested** on branch `issue-4-slice-4-4-evaluation-security` (cut
-from `54b08b2`) — not yet committed, pushed, or opened as a PR.
+**GitHub Issue #5 (Product Experience), Slice 5.1 is implemented and
+fully tested** on branch `issue-5-slice-5-1-documents-conversations-api`
+(cut from `fd2041c`) — not yet committed, pushed, or opened as a PR. See
+"Completed work (Issue #5 — Slice 5.1)" above for the full design: a
+real Documents page (upload/list/status/retry) and a real Chat page
+(conversation list, message thread, citations), backed by two new
+backend endpoints (`GET .../documents`, `GET .../documents/{id}`) and
+one more (`GET .../conversations`), plus a real citations-in-conversation-
+history bug fix.
 
-**Before anything else starts**: commit Slice 4.4, push the branch,
+**Before anything else starts**: commit Slice 5.1, push the branch,
 open a PR, confirm CI green, and **merge it promptly** — the 5-day
 timeline (see "Current task" above) authorizes merging as soon as a
 slice/issue is reviewed and CI-green, without waiting for a separate
 per-PR instruction.
 
-**Immediately after merging, with no further go-ahead needed: GitHub
-Issue #4's explicit deliverables/Definition-of-Done are complete.**
-Move to GitHub Issue #5 — the actual usable product experience (a real
-Next.js frontend consuming the existing backend APIs, not a
-disconnected mock). Priority order per the 5-day plan: login/register
-(already implemented, Issue #2) -> workspace selection (already
-implemented) -> document upload -> document list -> processing/status
-display -> chat/conversation UI -> ask a question -> answer rendering
--> citation/source rendering -> source inspection -> conversation
-history -> feedback -> error/loading/empty states -> responsive mobile
-layout. The primary flow to get working end-to-end first: LOGIN ->
-WORKSPACE -> UPLOAD DOCUMENT -> DOCUMENT PROCESSES -> READY -> OPEN
-CHAT -> ASK QUESTION -> RETRIEVE -> GENERATE -> SHOW ANSWER -> SHOW
-CITATIONS -> OPEN SOURCE. Use the existing frontend architecture/design
-system (`frontend/app/`, `frontend/lib/api-client.ts`'s existing
-`credentials: "include"` + CSRF-header pattern) — do not invent a new
-one. Backend endpoints already available to build against: `POST
-/workspaces/{id}/documents` (upload), `POST .../documents/{id}/process`,
-`POST /workspaces/{id}/conversations`, `POST .../conversations/{id}/messages`
-(the ask flow — returns `{role, content, citations}`), `GET
-.../conversations/{id}/messages`. Inspect `docs/API_CONTRACT.md` before
-implementing — do not assume further detail. **Critical, explicitly
-restated security requirement (already implemented and tested on the
-backend, do not regress via the frontend)**: retrieved document content
-is untrusted data, never instructions — see `docs/SECURITY.md`
-§"Prompt injection defense" (now backed by a 12-payload test corpus,
-Slice 4.4) and §"Retrieval workspace isolation"; never store an auth
-token in `localStorage`/`sessionStorage` (the existing `lib/api-client.ts`
-already gets this right — see its own tests).
+**Immediately after merging**: manually exercise the Documents/Chat
+pages against a running backend in a real browser (dev server + real
+Postgres/Redis) — this slice verified them with component tests
+(mocked `api-client`) plus `next build`, but not yet a live click-through,
+so say so explicitly rather than re-claiming that verification happened.
+Then continue Issue #5's remaining priority items per the 5-day plan:
+citation/source rendering is done (filename/page/section text); real
+"source inspection" (viewing a cited chunk/document's actual content)
+still needs a backend endpoint to fetch chunk/document text before it
+can be built for real; conversation history is done (list + reload with
+citations); feedback, rename/delete conversations, and responsive-mobile
+polish remain. Then move to Issue #6 (voice), #7 (security/evaluation/
+observability), #8 (finalization) per the 5-day plan. Use the existing
+frontend architecture/design system (`frontend/app/`,
+`frontend/lib/api-client.ts`'s existing `credentials: "include"` + CSRF-
+header pattern) — do not invent a new one. Inspect `docs/API_CONTRACT.md`
+before implementing further — do not assume detail beyond what it
+documents (update it as part of the same change if it's missing
+something you add). **Critical, explicitly restated security requirement
+(already implemented and tested on the backend, do not regress via the
+frontend)**: retrieved document content is untrusted data, never
+instructions — see `docs/SECURITY.md` §"Prompt injection defense" (now
+backed by a 12-payload test corpus, Slice 4.4) and §"Retrieval workspace
+isolation"; never store an auth token in `localStorage`/`sessionStorage`
+(the existing `lib/api-client.ts` already gets this right — see its own
+tests, and the new Documents/Chat pages follow the same pattern).
 
 ## Blockers
 
@@ -3684,37 +3840,58 @@ Postgres — a stronger check than a Docker rebuild would add on its own.
   Frontend not re-run as a fresh command this session, but no frontend
   file changed — expected unaffected. Docker/Compose: not rebuilt this
   slice — no new dependency, no new migration, no Docker-relevant file
-  changed. Not yet committed, pushed, or opened as a PR — see "Exact
-  next recommended action" below.
+  changed. Slice 4.4 has since been committed, pushed, opened as PR #28,
+  and merged (`fd2041c`).
+- **Issue #5, Slice 5.1 (document list/get endpoints, Documents/Chat
+  pages) — uncommitted, working tree only.** Backend: `cd backend && uv
+  run ruff check .` (pass), `uv run mypy app` (pass, 93 source files),
+  `uv run pytest -q` — **678/678 passing** (669 pre-slice + 9 new: 6 in
+  the new `tests/test_document_listing.py`, 3 in `test_conversations.py`
+  including the citations-in-history regression test), no regression in
+  any existing test. Frontend: `npm run lint` (pass), `npx tsc --noEmit`
+  (pass), `npm run test -- --run` — **58/58 passing** (48 pre-slice + 10
+  new: 5 in `app/documents/page.test.tsx`, 5 in `app/chat/page.test.tsx`),
+  `npm run build` (succeeds, all routes compile including the now-real
+  `/documents` and `/chat`). Not yet manually exercised against a live
+  backend in a browser. Docker/Compose: not rebuilt this slice — no new
+  dependency, no new migration, no Docker-relevant file changed. Not yet
+  committed, pushed, or opened as a PR — see "Exact next recommended
+  action" below.
 
 ## Exact next recommended action
 
 Redis Slices 1/2/3a/3b/3c, Playwright E2E, all of Issue #3 (Slices
-3.1–3.7, including Slice 3.2's and Slice 3.4's own correctness-review
-fixes, and Slice 3.5's own two-round final review), and Issue #4 Slices
-4.1–4.3 are all merged into `main` (`46ef03b` PR #11, `5391a78` PR #12,
-`026dcf3` PR #13, `42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16,
-`79d4787` PR #17, `941c1a7` PR #18, `5e6fdc2` PR #19, `a6762e2` PR #20,
-`2961b62` PR #21, `237be97` PR #22, `aa68079` PR #23, `7241ec8` PR #24,
-`5e4a626` PR #25, `378fec4` PR #26, `54b08b2` PR #27) — nothing pending
-for any of them. `main`/`origin/main` are at `54b08b2`. **GitHub Issue
-#4, Slice 4.4 (evaluation hooks + prompt-injection corpus) is
-implemented and fully tested**, on branch
-`issue-4-slice-4-4-evaluation-security` (cut from `54b08b2`) — not yet
-committed, pushed, or opened as a PR. See "Completed work (Issue #4 —
-Slice 4.4...)" above. The next work, in order:
+3.1–3.7), and all of Issue #4 (Slices 4.1–4.4) are merged into `main`
+(`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14,
+`75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7` PR #18,
+`5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62` PR #21, `237be97` PR #22,
+`aa68079` PR #23, `7241ec8` PR #24, `5e4a626` PR #25, `378fec4` PR #26,
+`54b08b2` PR #27, `fd2041c` PR #28) — nothing pending for any of them.
+`main`/`origin/main` are at `fd2041c`. **GitHub Issue #4 (Hybrid RAG
+Pipeline) is functionally complete.** **GitHub Issue #5, Slice 5.1
+(document list/get endpoints, real Documents/Chat pages) is implemented
+and fully tested**, on branch
+`issue-5-slice-5-1-documents-conversations-api` (cut from `fd2041c`) —
+not yet committed, pushed, or opened as a PR. See "Completed work
+(Issue #5 — Slice 5.1...)" above. The next work, in order:
 
-1. **Commit Slice 4.4** on the current branch, push it, and open a PR
-   against `main`. This slice's own real-stack validation (71 new
-   focused tests, full 669-test suite × 3 runs, `ruff`/`mypy` clean, the
-   evaluation script actually run twice with real committed output) is
-   already done locally. Get CI green, then **merge it promptly** — the
-   5-day timeline authorizes this without waiting for a separate
-   per-PR instruction (see "Current task"/"Next major task" above).
+1. **Commit Slice 5.1** on the current branch, push it, and open a PR
+   against `main`. This slice's own validation (9 new backend tests,
+   full 678-test backend suite, `ruff`/`mypy` clean; 10 new frontend
+   tests, full 58-test frontend suite, `eslint`/`tsc --noEmit` clean,
+   `next build` succeeds) is already done locally. Get CI green, then
+   **merge it promptly** — the 5-day timeline authorizes this without
+   waiting for a separate per-PR instruction (see "Current task"/"Next
+   major task" above).
 2. **Immediately after merging, with no further go-ahead needed:**
-   switch to `main`, pull, confirm a clean tree. **Issue #4's explicit
-   deliverables/Definition-of-Done are then complete.** Move directly to
-   GitHub Issue #5 (product experience — the actual usable frontend) per
-   the 5-day plan's Day 3 scope — see "Next major task" above for the
-   concrete starting points, priority order, and existing backend
-   endpoints to build against.
+   switch to `main`, pull, confirm a clean tree, delete the merged
+   branch locally and on `origin`. Manually exercise the Documents/Chat
+   pages against a running backend in a real browser (dev server + real
+   Postgres/Redis) — not yet done, see "Completed work (Issue #5 —
+   Slice 5.1...)"'s "Not yet done this slice" note. Then continue
+   Issue #5's remaining scope (source inspection needs a new backend
+   endpoint first; feedback; rename/delete conversations; the
+   `/chat/[id]`/`/documents/[id]` stub routes) or move to Issue #6
+   (voice) if Issue #5's primary flow (LOGIN → WORKSPACE → UPLOAD →
+   READY → CHAT → ASK → CITATIONS) is judged sufficiently demonstrated
+   — see "Next major task" above for detail.

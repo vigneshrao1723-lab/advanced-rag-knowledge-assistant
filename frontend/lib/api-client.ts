@@ -2,16 +2,25 @@ import { getApiBaseUrl } from "@/lib/config";
 import { getCsrfToken } from "@/lib/csrf";
 import {
   AuthResponseSchema,
+  ConversationListSchema,
+  ConversationSchema,
+  DocumentListSchema,
+  DocumentSchema,
   ErrorBodySchema,
   MemberListSchema,
   MemberSchema,
+  MessageListSchema,
   MessageResponseSchema,
+  MessageSchema,
   SessionListSchema,
   UserSchema,
   WorkspaceListSchema,
   WorkspaceSchema,
   type AuthResponse,
+  type Conversation,
+  type Document,
   type Member,
+  type Message,
   type MessageResponse,
   type SessionInfo,
   type User,
@@ -64,8 +73,13 @@ async function parseErrorMessage(response: Response): Promise<string> {
  * handles the cookies entirely on its own.
  */
 function buildRequestInit(method: string, init?: RequestInit): RequestInit {
+  // `FormData` bodies (file upload) must NOT get an explicit
+  // "Content-Type" -- the browser sets it itself, including the
+  // multipart boundary, only when it builds the request from a FormData
+  // body directly.
+  const isFormData = init?.body instanceof FormData;
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...(init?.headers as Record<string, string> | undefined),
   };
   if (STATE_CHANGING_METHODS.has(method)) {
@@ -229,4 +243,69 @@ export async function updateMemberRole(
 
 export async function removeMember(workspaceId: string, userId: string): Promise<void> {
   await apiRequest(`/api/v1/workspaces/${workspaceId}/members/${userId}`, "DELETE");
+}
+
+// --- Documents ---
+
+export async function listDocuments(workspaceId: string): Promise<Document[]> {
+  const response = await apiRequest(`/api/v1/workspaces/${workspaceId}/documents`, "GET");
+  return DocumentListSchema.parse(await response.json());
+}
+
+export async function getDocument(workspaceId: string, documentId: string): Promise<Document> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/documents/${documentId}`,
+    "GET"
+  );
+  return DocumentSchema.parse(await response.json());
+}
+
+export async function uploadDocument(workspaceId: string, file: File): Promise<Document> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await apiRequest(`/api/v1/workspaces/${workspaceId}/documents`, "POST", {
+    body: formData,
+  });
+  return DocumentSchema.parse(await response.json());
+}
+
+export async function processDocument(workspaceId: string, documentId: string): Promise<Document> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/documents/${documentId}/process`,
+    "POST"
+  );
+  return DocumentSchema.parse(await response.json());
+}
+
+// --- Conversations ---
+
+export async function listConversations(workspaceId: string): Promise<Conversation[]> {
+  const response = await apiRequest(`/api/v1/workspaces/${workspaceId}/conversations`, "GET");
+  return ConversationListSchema.parse(await response.json());
+}
+
+export async function createConversation(workspaceId: string): Promise<Conversation> {
+  const response = await apiRequest(`/api/v1/workspaces/${workspaceId}/conversations`, "POST");
+  return ConversationSchema.parse(await response.json());
+}
+
+export async function listMessages(workspaceId: string, conversationId: string): Promise<Message[]> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/conversations/${conversationId}/messages`,
+    "GET"
+  );
+  return MessageListSchema.parse(await response.json());
+}
+
+export async function postMessage(
+  workspaceId: string,
+  conversationId: string,
+  content: string
+): Promise<Message> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/conversations/${conversationId}/messages`,
+    "POST",
+    { body: JSON.stringify({ content }) }
+  );
+  return MessageSchema.parse(await response.json());
 }
