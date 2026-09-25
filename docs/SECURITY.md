@@ -367,12 +367,38 @@ other workspace-scoped endpoint in this codebase).
 
 Because retrieved chunks are untrusted, the generation layer's design must
 assume a malicious document could contain text like "ignore previous
-instructions" or attempts to exfiltrate other users' data. Mitigations to
-apply when the generation module is built (and to test explicitly — see
-below): structurally separating system instructions from retrieved content
-in the prompt, not granting the LLM tool/data access beyond what's needed to
-answer from the provided evidence, and treating any instruction-like text
-inside retrieved content as inert.
+instructions" or attempts to exfiltrate other users' data. Mitigations
+applied (GitHub Issue #4, Slice 4.3): `LLMProvider.generate()`
+(`backend/app/generation/llm_provider.py`) takes `system_prompt`/
+`context`/`query` as three structurally separate arguments, never one
+concatenated string; the shipped `LocalGroundedExtractiveProvider` never
+grants itself (or could be induced to grant) any tool/data access beyond
+quoting the evidence it was given, and never interprets retrieved
+content as instructions — it treats it as inert text to quote, by
+construction, not by a runtime filter that could have gaps.
+
+**Implemented (Issue #4, Slice 4.4 — `backend/tests/test_prompt_injection.py`):**
+a 12-payload corpus covering direct "ignore previous instructions,"
+fake system messages, requests to reveal the system prompt, requests to
+expose secrets/environment variables, malicious instructions disguised
+as legitimate documentation, indirect injection embedded inside a
+quoted example, instructions conflicting with the user's own query,
+claims that a document has authority to override application policy, a
+roleplay/persona jailbreak attempt, a request to grant expanded tool/
+filesystem access, a cross-workspace data-exfiltration request phrased
+as document content, and a fake "end of context" marker attempting to
+inject a spoofed trailing system message. Tested at two levels: the
+provider directly (every payload in the corpus, proving the answer is
+always exactly the fixed template with the payload appearing only as
+quoted evidence — never a different response shape, never "obeyed")
+and the full HTTP pipeline (four representative payloads, each ingested
+as a real document's entire content, then asked about through the real
+`/conversations/.../messages` endpoint — proving the invariant holds
+end-to-end, not just at the provider in isolation). The corpus and its
+tests are explicitly designed to remain the right regression surface
+once a real (non-extractive) `LLMProvider` is ever added — a provider
+that *could* be persuaded by injected text would need to be caught by
+re-running this same corpus against it, not a new one invented later.
 
 ## Secret management
 

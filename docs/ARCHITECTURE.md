@@ -121,7 +121,7 @@ advanced-rag-knowledge-assistant/
 │   │   ├── retrieval/             # dense, BM25, fusion, rerank, filters — IMPLEMENTED (Issue #4, Slice 4.2; not yet wired to an endpoint)
 │   │   ├── generation/            # context builder, LLM calls, citations — IMPLEMENTED (Issue #4, Slice 4.3)
 │   │   ├── voice/                 # STT/TTS integration — PLANNED (Issue #6)
-│   │   ├── evaluation/            # metrics, experiment runner — PLANNED (Issue #7)
+│   │   ├── evaluation/            # metrics, experiment runner — PARTIALLY IMPLEMENTED (metrics: Issue #4, Slice 4.4; experiment runner: PLANNED, Issue #7)
 │   │   └── observability/         # logging, tracing, metrics — implemented (structured logging, request IDs)
 │   └── tests/                     # implemented (health/config/security/rate-limit/auth/workspaces coverage)
 ├── frontend/                     # IMPLEMENTED (Issues #1–#2)
@@ -131,10 +131,10 @@ advanced-rag-knowledge-assistant/
 │   ├── lib/
 │   ├── types/
 │   └── tests/
-├── eval/                          # PLANNED — does not exist yet (Issue #7)
-│   ├── datasets/
-│   ├── scripts/
-│   └── results/
+├── eval/                          # PARTIALLY IMPLEMENTED (fixture hooks: Issue #4, Slice 4.4; full experiment-tracking system: PLANNED, Issue #7)
+│   ├── datasets/                   # retrieval_fixture.py — 6 documents, 7 queries, known relevance
+│   ├── scripts/                    # run_retrieval_evaluation.py — computes real docs/EVALUATION.md metrics
+│   └── results/                    # retrieval_evaluation.json — real, committed output of the script above
 ├── infra/                         # IMPLEMENTED (Issue #1 — local dev only; production packaging is Issue #8)
 │   ├── docker/
 │   └── compose/

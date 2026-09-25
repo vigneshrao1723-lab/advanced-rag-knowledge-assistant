@@ -18,7 +18,13 @@ from sqlalchemy.orm import Session as DbSession
 os.environ.setdefault(
     "DATABASE_URL", "postgresql+psycopg://raguser:ragpass@localhost:5432/ragdb"
 )
-os.environ.setdefault("SECRET_KEY", "test-secret-key-for-pytest-only")
+# >=32 bytes, matching PyJWT's own recommended HS256 minimum (and
+# .env.example's real guidance, `openssl rand -hex 32`) — a shorter
+# value here previously triggered a spurious InsecureKeyLengthWarning
+# on every JWT-encoding test; not a production config issue (real
+# secrets are never a fake default — app/core/config.py's `secret_key`
+# has none — this was purely this test fixture's own value).
+os.environ.setdefault("SECRET_KEY", "test-secret-key-for-pytest-only-not-a-real-secret")
 # Real Redis, per the same "no mock substitute for the real datastore"
 # precedent ADR 0002 established for PostgreSQL, extended to Redis by ADR
 # 0006 §16 — a mock cannot verify the atomicity/concurrency properties

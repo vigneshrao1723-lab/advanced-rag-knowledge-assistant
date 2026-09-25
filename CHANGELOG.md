@@ -10,13 +10,72 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-25 — Issue #4, Slice 4.3: generation module + conversations ask-flow endpoint
+### 2026-09-25 — Issue #4, Slice 4.4: evaluation hooks + prompt-injection test corpus
+
+*(Branch `issue-4-slice-4-4-evaluation-security`, cut from the merged
+Slice 4.3 (`54b08b2`, PR #27). Implemented and fully tested; not yet
+committed as of this entry. **Completes GitHub Issue #4's explicit
+deliverables/Definition-of-Done.**)*
+
+- Adds `backend/app/evaluation/metrics.py`: pure functions for every
+  `docs/EVALUATION.md` retrieval metric (`recall_at_k`, `precision_at_k`,
+  `mrr`, `ndcg_at_k`, `hit_rate_at_k`, binary relevance) plus real,
+  mechanically-checkable generation/citation checks
+  (`citation_completeness`, `citation_correctness`,
+  `is_extractive_answer_grounded`) — deliberately does not fabricate a
+  numeric "faithfulness"/"answer relevance" score, which would need a
+  human rater or an LLM-as-judge this project doesn't have.
+- **A genuine bug found and fixed while writing the metric tests**:
+  `recall_at_k()`/`ndcg_at_k()` could exceed the mathematically-required
+  `[0, 1]` bound when a relevant item appeared more than once in the
+  retrieved list — fixed to count each distinct relevant item once, at
+  its best rank, matching `mrr()`'s own existing semantics. See
+  `SOLVING.md`.
+- Adds `eval/datasets/retrieval_fixture.py` (6 documents, 7 queries,
+  known relevance) and `eval/scripts/run_retrieval_evaluation.py` (a
+  runnable harness — ingests the fixtures through the real pipeline,
+  runs `hybrid_search()`/`generate_answer()`, computes the metrics
+  above, writes `eval/results/retrieval_evaluation.json`, cleans up its
+  own throwaway workspace). **Actually run twice, deterministically** —
+  real, committed results: Recall@3 = 1.0, Precision@3 = 0.33, MRR = 1.0,
+  nDCG@3 = 1.0, Hit Rate@3 = 1.0; citation completeness/correctness both
+  1.0 and `is_extractive_answer_grounded` true on 2 sample generation
+  queries.
+- Adds `backend/tests/test_prompt_injection.py` (29 tests): a
+  12-payload corpus (ignore-previous-instructions, fake system message,
+  system-prompt/secret exfiltration, documentation-disguised
+  instructions, indirect/quoted injection, query-conflicting
+  instructions, policy-override claims, a roleplay jailbreak, a
+  tool/filesystem-access-expansion request, cross-workspace
+  exfiltration, a spoofed context-boundary marker), tested at both the
+  provider level (every payload) and the full HTTP pipeline (four
+  representative payloads ingested as a real document's entire
+  content).
+- Fixes a genuine, if minor, test-quality issue: `tests/conftest.py`'s
+  fallback `SECRET_KEY` was 31 bytes (one short of PyJWT's HS256
+  minimum), silently triggering `InsecureKeyLengthWarning` on 624 of
+  the suite's warnings — not a production config issue; fixed by
+  lengthening the test-only value. Warning count dropped to 8 (all
+  pre-existing, unrelated). See `SOLVING.md`.
+- No new migration, no new dependency.
+- `ruff`/`mypy` clean (136 source files). Complete backend suite:
+  **669/669 passing** (598 pre-existing + 71 new), 3 consecutive runs.
+- Docs updated in the same working tree: `PROJECT_STATE.md`,
+  `HANDOFF.md`, `docs/EVALUATION.md` (new "Evaluation hooks" section
+  with the real results), `docs/ARCHITECTURE.md` (`evaluation/` module +
+  `eval/` directory status), `docs/SECURITY.md` (expanded "Prompt
+  injection defense" section), `SOLVING.md` (two entries).
+
+## [Unreleased — committed]
+
+### 2026-09-25 — `feat: add generation module and conversations ask-flow (Issue #4, Slice 4.3)` (`f7a67ee`, docs `8e9631d`), merged as `54b08b2`
 
 *(Branch `issue-4-slice-4-3-generation`, cut from the merged Slice 4.2
-(`378fec4`, PR #26). Implemented and fully tested; not yet committed as
-of this entry. **First slice where a real question against real
-ingested documents returns a real grounded answer with citations
-end-to-end — Issue #4's primary Definition-of-Done item.**)*
+(`378fec4`, PR #26). Opened as **PR #27**, verified green on GitHub
+Actions CI, and **merged into `main` as squash commit `54b08b2`**.
+First slice where a real question against real ingested documents
+returns a real grounded answer with citations end-to-end — Issue #4's
+primary Definition-of-Done item.)*
 
 - Adds `backend/app/generation/`: `context_builder.py`'s
   `build_context()` (packs ranked evidence into a `[n]`-citation-marked
@@ -64,11 +123,8 @@ end-to-end — Issue #4's primary Definition-of-Done item.**)*
   `HANDOFF.md`, `docs/API_CONTRACT.md` (new "Implemented: conversations"
   section), `docs/RAG_DESIGN.md`, `docs/ARCHITECTURE.md`,
   `docs/DATA_MODEL.md`, `docs/DECISIONS/README.md`.
-- **Explicitly deferred to the next slice**: evaluation hooks, a
-  broader prompt-injection test corpus, conversational context/query
-  rewriting.
-
-## [Unreleased — committed]
+- **Explicitly deferred to a later issue**: conversational context/query
+  rewriting (Issue #5).
 
 ### 2026-09-25 — `feat: add retrieval module (Issue #4, Slice 4.2)` (`820c145`, docs `6ec291c`), merged as `378fec4`
 
