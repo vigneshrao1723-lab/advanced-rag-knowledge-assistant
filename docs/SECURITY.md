@@ -342,6 +342,27 @@ indexing,** `backend/app/ingestion/chunking.py` +
   metadata never includes raw chunk content, embedding vectors, a raw
   exception, filesystem path, or storage key.
 
+## Retrieval workspace isolation
+
+**Implemented (GitHub Issue #4, Slice 4.2 —
+`backend/app/retrieval/{dense,lexical,service}.py`):** every retrieval
+query (`dense_search()`, `lexical_search()`, and the `hybrid_search()`
+orchestrator that composes them) filters by `workspace_id` at the SQL
+level — a `WHERE workspace_id = ...` clause on the query itself, never a
+filter applied to results after the fact. A chunk from another workspace
+is never returned, never scored, never reaches fusion/reranking; this
+was verified directly with real cross-workspace test data (`tests/test_retrieval.py`),
+not just asserted from the query's own shape. Both queries also join
+`documents` and require `status = READY`, so a document still mid-
+ingestion (e.g. `CHUNKED` but not yet embedded) never surfaces partial
+or inconsistent results, and an optional `document_id` metadata filter
+composes safely with the workspace filter (a `document_id` from another
+workspace, combined with the caller's own `workspace_id`, simply matches
+zero rows — no separate validation needed at this layer, though the
+future API endpoint calling this module is still responsible for its
+own authorization/ownership checks before invoking it, same as every
+other workspace-scoped endpoint in this codebase).
+
 ## Prompt injection defense
 
 Because retrieved chunks are untrusted, the generation layer's design must

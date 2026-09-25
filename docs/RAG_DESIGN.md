@@ -71,18 +71,37 @@ UPLOADED → PROCESSING → PARSED → CLEANED → CHUNKED → EMBEDDED → INDE
 
 ## Retrieval
 
+**IMPLEMENTED** (GitHub Issue #4, Slice 4.2, `backend/app/retrieval/`) —
+not yet wired to any API endpoint (a later Issue #4 slice).
+
 - **Dense retrieval**: vector similarity search over `document_chunks`
-  embeddings (pgvector).
+  embeddings (pgvector) — `dense.py`'s `dense_search()`, using
+  `Vector.cosine_distance()` backed by the HNSW index (migration `0005`).
 - **BM25 / lexical retrieval**: keyword-based search, complementary to
   dense retrieval for exact-term matches (IDs, names, acronyms) that
-  embeddings can miss.
-- **Hybrid retrieval**: combines dense + BM25 results.
-- **Result fusion**: merges ranked lists from multiple retrieval methods,
-  e.g. via Reciprocal Rank Fusion (RRF).
+  embeddings can miss — `lexical.py`'s `lexical_search()`, Postgres
+  full-text search (`to_tsvector`/`plainto_tsquery`/`ts_rank_cd`) backed
+  by a GIN functional index (migration `0007`); no second search engine,
+  per ADR 0002's own stated consequence.
+- **Hybrid retrieval**: combines dense + BM25 results —
+  `service.py`'s `hybrid_search()`, the single orchestrating entry point.
+- **Result fusion**: merges ranked lists from multiple retrieval methods
+  via Reciprocal Rank Fusion (RRF) — `fusion.py`'s
+  `reciprocal_rank_fusion()` (`k=60`, deduplicates by `chunk_id`).
 - **Reranking**: a `Reranker` provider re-scores fused candidates against
-  the query for higher precision at the top of the list.
-- **Metadata filtering**: narrows results by collection, document, or other
-  attributes before/after ranking.
+  the query for higher precision at the top of the list —
+  `reranker.py`'s `Reranker` protocol + `LexicalOverlapReranker`
+  (deterministic, offline Jaccard token-overlap scoring; no commercial
+  vendor selected yet, matching `EmbeddingProvider`'s own precedent so
+  the pipeline stays testable/demoable without a paid API).
+- **Metadata filtering**: narrows results by document (`document_id`,
+  supported today) — collection-based filtering is deferred until the
+  `collections` entity exists (still PROPOSED).
+- Every query is workspace-scoped at the SQL level and requires the
+  owning document be `READY`, so a document still mid-ingestion-pipeline
+  never surfaces partial results. `hybrid_search()` records a
+  `RetrievalEvent` row per call (query, method, ranked results, latency)
+  for observability/evaluation.
 
 ## Query handling
 

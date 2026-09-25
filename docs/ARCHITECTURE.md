@@ -118,7 +118,7 @@ advanced-rag-knowledge-assistant/
 │   │   ├── repositories/         # data access layer — implemented (user/session/workspace/workspace_member)
 │   │   ├── services/              # business logic orchestration — implemented (auth_service, workspace_service)
 │   │   ├── ingestion/             # parse/clean/chunk/embed/index — IMPLEMENTED (Issue #3, Slices 3.1–3.7)
-│   │   ├── retrieval/             # dense, BM25, fusion, rerank, filters — PLANNED (Issue #4)
+│   │   ├── retrieval/             # dense, BM25, fusion, rerank, filters — IMPLEMENTED (Issue #4, Slice 4.2; not yet wired to an endpoint)
 │   │   ├── generation/            # context builder, LLM calls, citations — PLANNED (Issue #4)
 │   │   ├── voice/                 # STT/TTS integration — PLANNED (Issue #6)
 │   │   ├── evaluation/            # metrics, experiment runner — PLANNED (Issue #7)
@@ -211,7 +211,12 @@ Interfaces defined (or to be defined) in `backend/app/services/`:
   via the `embedding_provider` setting (`Literal["local"]`, matching
   `StorageProvider`/`EmailProvider`'s own precedent). No commercial
   vendor selected yet.
-- `Reranker` — PROPOSED
+- `Reranker` — **IMPLEMENTED** (Issue #4, Slice 4.2):
+  `backend/app/retrieval/reranker.py`. A `Protocol` plus one real
+  implementation today, `LexicalOverlapReranker` (deterministic,
+  offline, no external API/key — Jaccard token-overlap scoring),
+  selected via `get_reranker()` (matching `EmbeddingProvider`'s own
+  precedent). No commercial vendor selected yet.
 - `LLMProvider` — PROPOSED
 - `SpeechToTextProvider` — PROPOSED
 - `TextToSpeechProvider` — PROPOSED
