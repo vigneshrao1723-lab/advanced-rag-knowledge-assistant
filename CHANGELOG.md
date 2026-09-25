@@ -10,13 +10,72 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-25 — Issue #4, Slice 4.1: conversation/message/citation/retrieval-event schema
+### 2026-09-25 — Issue #4, Slice 4.2: retrieval module (dense/lexical/fusion/reranking)
+
+*(Branch `issue-4-slice-4-2-retrieval`, cut from the merged Slice 4.1
+(`5e4a626`, PR #25). Implemented and fully tested; not yet committed as
+of this entry.)*
+
+- Adds `backend/app/retrieval/`: `dense_search()` (pgvector
+  `cosine_distance()`, backed by the existing HNSW index),
+  `lexical_search()` (Postgres full-text search —
+  `to_tsvector`/`plainto_tsquery`/`ts_rank_cd`, backed by a new GIN
+  functional index, migration `0007` — no second search engine, per
+  ADR 0002's own stated consequence), `reciprocal_rank_fusion()`
+  (standard RRF, `k=60`), a `Reranker` protocol + `LexicalOverlapReranker`
+  (deterministic, offline Jaccard token-overlap scoring — no paid API
+  required, matching `EmbeddingProvider`'s own precedent), and
+  `hybrid_search()` (the single orchestrating entry point: embed query
+  → dense + lexical → RRF → rerank → optionally record a
+  `RetrievalEvent`).
+- Every query is workspace-scoped at the SQL level (`WHERE workspace_id
+  = ...`, never filtered after the fact) and requires the owning
+  document be `READY`, so a document still mid-ingestion never surfaces
+  partial/inconsistent results. `document_id` metadata filtering is
+  supported; collection-based filtering deferred until `collections`
+  exists.
+- Query rewriting is deliberately not implemented here — a meaningful
+  rewrite needs conversation history that doesn't exist until a later
+  conversation-aware caller has it; `hybrid_search()` accepts an
+  optional already-computed `rewritten_query_text` and always records
+  both it and the original `query_text` distinctly, per
+  `docs/REQUIREMENTS.md` "Query handling."
+- Verified migration `0007` reversible directly against the real
+  database.
+- `backend/tests/test_retrieval.py` (new, 23 tests, real Postgres, no
+  mocks): dense/lexical search correctness (similarity ranking,
+  no-embedding/non-`READY`/workspace/`document_id` exclusions), RRF
+  (multi-list ranking, dedup, empty input), the reranker (exact-match
+  ranking, empty-query no-op, never drops/adds candidates), and
+  `hybrid_search()` end-to-end (results + a matching `RetrievalEvent`
+  row, `record_event=False`, workspace isolation, `document_id` filter,
+  original-query preservation, conversation/message linkage). One
+  genuine test-design bug (not a retrieval-code defect) found and fixed
+  during validation: a coincidental score tie caused by stopword
+  overlap between a test's query and its "unrelated" comparison
+  sentence, against `LocalHashingEmbeddingProvider`'s un-weighted
+  (no-IDF) hashing scheme — fixed by choosing zero-overlap comparison
+  content (see `HANDOFF.md` for the full root-cause).
+- `ruff`/`mypy` clean (121 source files). Complete backend suite:
+  **573/573 passing** (550 pre-existing + 23 new), 3 consecutive runs.
+  No new dependency.
+- Docs updated in the same working tree: `PROJECT_STATE.md`,
+  `HANDOFF.md`, `docs/RAG_DESIGN.md`, `docs/ARCHITECTURE.md`,
+  `docs/SECURITY.md` (new "Retrieval workspace isolation" section). No
+  new ADR — the RRF-constant/HNSW-reuse/GIN-index choices are direct
+  applications of already-documented architecture, not new decisions;
+  a real reranker/LLM vendor selection (if one is ever added) is the
+  kind of choice that would warrant one, per the Issue #4 GitHub
+  issue's own Definition of Done.
+
+## [Unreleased — committed]
+
+### 2026-09-25 — `feat: add conversation/message/citation/retrieval-event schema (Issue #4, Slice 4.1)` (`035f1b6`, docs `b9878f0`), merged as `5e4a626`
 
 *(Branch `issue-4-slice-4-1-conversation-schema`, cut from the merged
-Slice 3.7 (`7241ec8`, PR #24). Implemented and fully tested; not yet
-committed as of this entry. GitHub Issue #3 (Knowledge Ingestion) is now
-fully merged and functionally complete end-to-end; this begins Issue #4
-per the project's 5-day completion timeline — see `HANDOFF.md`.)*
+Slice 3.7 (`7241ec8`, PR #24). Opened as **PR #25**, verified green on
+GitHub Actions CI, and **merged into `main` as squash commit
+`5e4a626`**.)*
 
 - Adds migration `0006`: `conversations`, `messages`, `citations`,
   `retrieval_events` tables — the minimal persistence shape Issue #4
@@ -55,8 +114,6 @@ per the project's 5-day completion timeline — see `HANDOFF.md`.)*
   direct application of already-documented requirements
   (`docs/REQUIREMENTS.md` "Chat"/"Citations"/"Observability"), not a
   new architectural decision.
-
-## [Unreleased — committed]
 
 ### 2026-09-24 — `feat: add embedding generation and vector indexing (Issue #3, Slice 3.7)` (`a576527`, docs `8e93c4c`), merged as `7241ec8`
 

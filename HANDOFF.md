@@ -112,14 +112,27 @@ transaction/concurrency strategy, and test detail. **GitHub Issue #3
 
 **GitHub Issue #4 (Hybrid RAG Pipeline) has started, per the 5-day
 plan's Day 2 scope. Slice 4.1** (`conversations`/`messages`/`citations`/
-`retrieval_events` schema, migration `0006`) **is IMPLEMENTED and FULLY
-TESTED, on branch `issue-4-slice-4-1-conversation-schema`** (cut from
-`7241ec8`) — not yet committed/pushed/PR'd as of this line; see "Exact
-next recommended action" at the end of this file. The minimal
-persistence shape needed for the rest of Issue #4 (retrieval + reranking
-+ generation + citations) to write a result somewhere — see "Completed
-work (Issue #4 — Slice 4.1: conversation/message/citation/
-retrieval-event schema)" below for the full design.
+`retrieval_events` schema, migration `0006`) **was committed, pushed,
+opened as PR #25, and merged into `main` as squash commit `5e4a626`.**
+`main`/`origin/main` were at `5e4a626` at the point Slice 4.2 branched
+off. The minimal persistence shape needed for the rest of Issue #4
+(retrieval + reranking + generation + citations) to write a result
+somewhere — see "Completed work (Issue #4 — Slice 4.1: conversation/
+message/citation/retrieval-event schema)" below for the full design.
+
+**Slice 4.2** (retrieval module — dense/lexical/fusion/reranking,
+`backend/app/retrieval/`, migration `0007`) **is IMPLEMENTED and FULLY
+TESTED, on branch `issue-4-slice-4-2-retrieval`** (cut from `5e4a626`)
+— not yet committed/pushed/PR'd as of this line; see "Exact next
+recommended action" at the end of this file. `hybrid_search()`
+(`app/retrieval/service.py`) is the single orchestrating entry point:
+embed the query -> dense (pgvector) + lexical (Postgres full-text
+search) retrieval -> Reciprocal Rank Fusion -> `LexicalOverlapReranker`
+-> optionally record a `RetrievalEvent`. **Not yet wired to any API
+endpoint or the generation module — that's the rest of Issue #4.** See
+"Completed work (Issue #4 — Slice 4.2: retrieval module)" below for the
+full design and the standing workspace-isolation-at-retrieval-time
+security guarantee it establishes.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -2693,6 +2706,139 @@ the rest of Issue #4 (Slices 4.2+). Per the Issue #4 GitHub issue's own
   described as implemented/not-yet-merged), this file, `CHANGELOG.md`,
   `docs/DATA_MODEL.md`.
 
+## Completed work (Issue #4 — Slice 4.2: retrieval module)
+
+**Uncommitted, working-tree-only, on branch
+`issue-4-slice-4-2-retrieval` (cut from `5e4a626`).** Per the Issue #4
+GitHub issue's own "Explicit deliverables": `backend/app/retrieval/` —
+dense retrieval, BM25, fusion, reranker interface + implementation,
+metadata filtering. Not yet wired to any API endpoint or the generation
+module — that's the rest of Issue #4.
+
+- **`backend/alembic/versions/0007_add_document_chunks_fts_index.py`**
+  (new): a GIN functional index on `to_tsvector('english', content)` —
+  `lexical_search()` below must use this exact expression or Postgres
+  falls back to a sequential scan instead of using the index. Verified
+  reversible directly (downgrade/upgrade round-tripped, index confirmed
+  removed then recreated via `pg_indexes`).
+- **`backend/app/retrieval/types.py`** (new): `RetrievalCandidate` — a
+  frozen dataclass, not the `DocumentChunk` ORM model (matching
+  `chunking.py`'s own `Chunk` precedent, Issue #3): a read-only,
+  already-scored snapshot, no accidental database dependency for
+  callers that only need the value. `score` is always "higher is
+  better," consistently, at every stage (dense similarity, lexical
+  rank, RRF score, reranked score) — callers never need to know which
+  stage produced a given list.
+- **`backend/app/retrieval/dense.py`** (new): `dense_search()` — pgvector
+  `Vector.cosine_distance()` (the `<=>` operator), backed by the
+  existing HNSW index (migration `0005`, Issue #3 Slice 3.7).
+- **`backend/app/retrieval/lexical.py`** (new): `lexical_search()` —
+  Postgres full-text search (`to_tsvector`/`plainto_tsquery`/
+  `ts_rank_cd`), backed by migration `0007`'s new GIN index.
+  `plainto_tsquery` (not `to_tsquery`) is used deliberately: it never
+  interprets `&`/`|`/`!`/`:*` operator syntax a user might accidentally
+  type, so a query like "cost & benefit" searches the literal words,
+  never an unexpectedly narrowed boolean expression.
+- **Both `dense_search()` and `lexical_search()` share the same two
+  invariants**, each enforced at the SQL level (never a post-hoc
+  filter): workspace-scoped (`WHERE workspace_id = ...`) and joined to
+  `documents` requiring `status = READY` — a document still mid-
+  pipeline (e.g. `CHUNKED` but not yet `EMBEDDED`) never surfaces
+  partial/inconsistent results. Both accept an optional `document_id`
+  filter (metadata filtering's currently-available dimension —
+  collection-based filtering is deferred until `collections` exists).
+  See `docs/SECURITY.md`'s new "Retrieval workspace isolation" section
+  for the full security reasoning.
+- **`backend/app/retrieval/fusion.py`** (new): `reciprocal_rank_fusion()`
+  — standard RRF (`k=60`, the Cormack et al. 2009 default), deduplicates
+  by `chunk_id` across input rankings, summing each list's own
+  `1/(k+rank)` contribution. Chosen over combining raw scores because
+  dense cosine similarity and lexical `ts_rank_cd` live on incomparable
+  scales — RRF only looks at rank order, never score magnitude, so no
+  cross-method score normalization is needed.
+- **`backend/app/retrieval/reranker.py`** (new): `Reranker` protocol +
+  `LexicalOverlapReranker` — deterministic, offline (Jaccard token-
+  overlap between the query and each candidate's content), no
+  commercial vendor/model selected yet, matching
+  `LocalHashingEmbeddingProvider`'s own precedent (Issue #3, Slice 3.7)
+  so the whole pipeline stays testable/demoable without a paid API. A
+  real, explainable signal, not a stub — but genuinely weaker than a
+  trained cross-encoder; swapping one in later is additive (implement
+  `Reranker`, branch in `get_reranker()`), not a rewrite. Ties (the
+  common zero-overlap case) preserve the input's own relative order
+  (Python's sort is stable) — a sensible fallback to the fused ranking
+  rather than an arbitrary reshuffle.
+- **`backend/app/repositories/retrieval_event_repository.py`** (new):
+  `create()` — same add/flush/no-commit convention as every other
+  repository; the caller controls the transaction boundary.
+- **`backend/app/retrieval/service.py`** (new): `hybrid_search()` — the
+  single entry point: embed the query (reusing `EmbeddingProvider`/
+  `embed_with_retry()` from Issue #3, Slice 3.7 unchanged) -> dense +
+  lexical retrieval -> RRF fusion -> rerank a wider pool (3x
+  `final_top_k`) down to `final_top_k` -> optionally record a
+  `RetrievalEvent` (query, method, ranked results with scores, latency).
+  Does not commit — matching every other service/repository function's
+  own convention, the caller (a future endpoint) controls the
+  transaction boundary.
+  - **Query rewriting deliberately not implemented here**: a meaningful
+    rewrite (e.g. resolving "it"/"that" from a prior turn) needs
+    conversation history, which doesn't exist until a conversation-aware
+    caller has it (later Issue #4 work, once the generation/context-
+    builder layer exists). `hybrid_search()` accepts an optional
+    already-computed `rewritten_query_text` and always records both it
+    and the original `query_text` distinctly on the `RetrievalEvent`
+    row, per docs/REQUIREMENTS.md's "preserving the original user query
+    for transparency/debugging" — the original always drives retrieval
+    when no rewrite is supplied, and the rewrite (when supplied) drives
+    retrieval instead, but the original is never lost either way.
+  - **Note for the next slice (endpoint wiring)**: `hybrid_search()` is
+    a plain synchronous function, deliberately -- like every other
+    CPU/IO-bound pipeline stage in this codebase (extraction, cleaning,
+    chunking, embedding), it must be called via `asyncio.to_thread()`
+    from an `async def` endpoint, never directly, or a slow query would
+    block the single event loop for every other concurrent request.
+- **`backend/tests/test_retrieval.py`** (new, 23 tests, real Postgres,
+  no mocks): `dense_search()` (ranks the most similar chunk first using
+  real `LocalHashingEmbeddingProvider` embeddings, excludes no-embedding
+  chunks, excludes non-`READY` documents, workspace-scoped, `document_id`
+  filter, `top_k` respected), `lexical_search()` (matches/no-match,
+  workspace-scoped, excludes non-`READY` documents, `document_id`
+  filter), `reciprocal_rank_fusion()` (a candidate in both rankings
+  outranks one in only one, dedup, empty-input handling),
+  `LexicalOverlapReranker` (exact match ranks above unrelated content,
+  empty query is a no-op, never drops/adds candidates), and
+  `hybrid_search()` end-to-end (results + a matching `RetrievalEvent`
+  row, `record_event=False` skips persistence, workspace-scoped,
+  `document_id` filter, original query preserved distinctly from a
+  rewrite, `conversation_id`/`message_id` threaded through to real rows).
+  - **A genuine test-design bug found and fixed during this slice's own
+    validation** (not a retrieval-code defect): the initial "ranks the
+    most similar chunk first" test used an "unrelated" comparison
+    sentence that coincidentally shared three common stopwords ("the",
+    "is", "for") with the query — since `LocalHashingEmbeddingProvider`
+    has no IDF weighting (every token contributes equally regardless of
+    whether it's a stopword or a meaningful word), this produced an
+    exact score tie against the genuinely-relevant sentence's own
+    3-meaningful-word overlap, purely by coincidence of matching
+    *token count*, not semantic relevance. Root-caused by inspecting the
+    actual tokens each sentence shared with the query, not by guessing.
+    Fixed by choosing comparison content with *zero* token overlap
+    (not even stopwords) with the query, for a deterministic,
+    unambiguous assertion. This is a real, documented limitation of the
+    un-weighted local hashing provider (not something Slice 4.2's own
+    retrieval code should try to work around), recorded here and in
+    `PROJECT_STATE.md`.
+- **Verification**: `ruff`/`mypy` clean (121 source files). Complete
+  backend suite: **573/573 passing** (550 pre-Slice-4.2 + 23 new), **3
+  consecutive runs**, real Postgres, no regression in any existing
+  test. No new dependency — pure stdlib (`re`, `dataclasses`) plus
+  SQLAlchemy/pgvector/Postgres full-text search, all already present.
+- **Documentation updated this slice**: `PROJECT_STATE.md` (Slice 4.1
+  moved to merged, Slice 4.2 described as implemented/not-yet-merged),
+  this file, `CHANGELOG.md`, `docs/RAG_DESIGN.md`, `docs/ARCHITECTURE.md`
+  (`retrieval/` module + `Reranker` provider status), `docs/SECURITY.md`
+  (new "Retrieval workspace isolation" section).
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -2717,11 +2863,13 @@ the rest of Issue #4 (Slices 4.2+). Per the Issue #4 GitHub issue's own
   exist; those land with a later Issue #3 slice, if ever prioritized.
 - **Issue #4 (Hybrid RAG Pipeline) has started**: Slice 4.1
   (`conversations`/`messages`/`citations`/`retrieval_events` schema) is
-  implemented and fully tested, on branch
-  `issue-4-slice-4-1-conversation-schema` — not yet committed, pushed,
-  or opened as a PR. **No retrieval, reranking, generation, or citation
-  code exists yet — only the schema to eventually persist results
-  into.** No API endpoint reads or writes these tables.
+  merged (`5e4a626`, PR #25). Slice 4.2 (the retrieval module —
+  dense/lexical/fusion/reranking) is implemented and fully tested, on
+  branch `issue-4-slice-4-2-retrieval` — not yet committed, pushed, or
+  opened as a PR. **No generation, context-building, or citation code
+  exists yet — `hybrid_search()` is not wired to any API endpoint, and
+  nothing calls it outside its own test suite.** No API endpoint reads
+  or writes the Slice 4.1 tables yet either.
 - **`client_ip()` (unconditional, no trusted-proxy handling) is still
   used elsewhere** — `app/api/v1/auth.py`'s audit/session IP recording
   and `app/core/dependencies.py`'s authorization-denial audit events
@@ -2735,8 +2883,9 @@ the rest of Issue #4 (Slices 4.2+). Per the Issue #4 GitHub issue's own
   whole ADR exists for (§2.1) has not been exercised with more than one
   backend process under real concurrent load, since no such deployment
   exists.
-- **RAG retrieval/reranking/generation code (Issue #4, Slices 4.2+)** —
-  not started. This is the very next work once Slice 4.1 merges.
+- **RAG generation/context-building/citation code (Issue #4, Slices
+  4.3+)** — not started. This is the very next work once Slice 4.2
+  merges.
 - **Endpoint-driven concurrency test under real HTTP load** — not added
   in the Slice 2 review-fix pass either; the property is proven at the
   engine level (`test_redis_rate_limiter.py`, merged with Slice 1) and
@@ -2750,43 +2899,42 @@ the rest of Issue #4 (Slices 4.2+). Per the Issue #4 GitHub issue's own
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: GitHub Issue #4 (Core RAG: retrieval + generation), Slice 4.2 onward
+## Next major task: GitHub Issue #4 (Core RAG: generation), Slice 4.3 onward
 
 **ADR 0006's deterministic abuse-protection layer is functionally
 complete end-to-end and fully merged (Slices 1–3c).** Browser E2E
 coverage for the authentication/password-recovery flows is implemented,
 validated, and merged (PR #16, `e1c4858`). **GitHub Issue #3 (Knowledge
 Ingestion) is fully merged and functionally complete end-to-end**
-(PR #17 `79d4787` through PR #24 `7241ec8`).
+(PR #17 `79d4787` through PR #24 `7241ec8`). **Issue #4, Slice 4.1**
+(`conversations`/`messages`/`citations`/`retrieval_events` schema) **is
+merged** (PR #25, `5e4a626`).
 
-**GitHub Issue #4 (Hybrid RAG Pipeline) has started.** Slice 4.1
-(`conversations`/`messages`/`citations`/`retrieval_events` schema) is
-implemented and fully tested on branch
-`issue-4-slice-4-1-conversation-schema` (cut from `7241ec8`) — not yet
-committed, pushed, or opened as a PR.
+**Slice 4.2 (the retrieval module — dense/lexical/fusion/reranking) is
+implemented and fully tested** on branch `issue-4-slice-4-2-retrieval`
+(cut from `5e4a626`) — not yet committed, pushed, or opened as a PR.
 
-**Before anything else starts**: commit Slice 4.1, push the branch,
+**Before anything else starts**: commit Slice 4.2, push the branch,
 open a PR, confirm CI green, and **merge it promptly** — the 5-day
 timeline (see "Current task" above) authorizes merging as soon as a
 slice/issue is reviewed and CI-green, without waiting for a separate
 per-PR instruction.
 
 **Immediately after merging, with no further go-ahead needed:**
-continue Issue #4 with Slice 4.2 onward — the retrieval module
-(`backend/app/retrieval/`): dense retrieval over the real
-`document_chunks.embedding` column (pgvector cosine distance via the
-HNSW index, migration `0005`), lexical/BM25 retrieval via Postgres
-full-text search (no second search engine, per ADR 0001/0002's own
-stated consequence), Reciprocal Rank Fusion, workspace-scoped metadata
-filtering, a `Reranker` abstraction + one implementation, then the
-generation module (`backend/app/generation/`): an `LLMProvider`
-abstraction + one deterministic/local implementation (matching
-`EmbeddingProvider`'s own precedent — no paid API required for the
-pipeline to be fully testable/demoable), a context builder (evidence
-ranking, dedup, token-budget management), grounded generation, and a
-citation engine writing into the Slice 4.1 schema. Then minimal API
+continue Issue #4 with Slice 4.3 onward — the generation module
+(`backend/app/generation/`): an `LLMProvider` abstraction + one
+deterministic/local implementation (matching `EmbeddingProvider`'s own
+precedent — no paid API required for the pipeline to be fully
+testable/demoable), a context builder (evidence ranking, dedup,
+token-budget management) consuming `hybrid_search()`'s output
+(`app/retrieval/service.py`, Slice 4.2), grounded generation, and a
+citation engine writing `Citation` rows (Slice 4.1 schema) tied to the
+specific chunks the answer actually drew from. Then minimal API
 endpoints (`/api/v1/search`, `/api/v1/retrieval`, minimal
-`/api/v1/conversations`) to invoke it, evaluation hooks (a small
+`/api/v1/conversations`) to invoke the whole pipeline end-to-end
+(remember: `hybrid_search()` is a plain sync function and must be
+called via `asyncio.to_thread()` from any async endpoint, same as every
+other CPU/IO-bound stage in this codebase), evaluation hooks (a small
 fixture set + a runnable script producing real metric numbers per
 `docs/EVALUATION.md`), a prompt-injection test corpus, and vendor
 ADR(s) recording the provider selections — see the Issue #4 GitHub
@@ -2795,22 +2943,25 @@ list; inspect `docs/RAG_DESIGN.md`/`docs/API_CONTRACT.md` before
 implementing — do not assume further detail beyond what's written
 there. **Critical, explicitly restated security requirement**: retrieved
 document content is untrusted data, never instructions — see
-`docs/SECURITY.md` §"Prompt injection defense"; workspace boundaries
-must be enforced at retrieval query time (a `WHERE workspace_id = ...`
-clause on every vector/lexical query), not only checked in the API
-layer above it.
+`docs/SECURITY.md` §"Prompt injection defense"; the prompt sent to the
+LLM must structurally separate system instructions from retrieved
+content, and instruction-like text inside a retrieved chunk must never
+be treated as an instruction. Workspace isolation at retrieval time is
+already implemented and tested (Slice 4.2, see
+`docs/SECURITY.md` §"Retrieval workspace isolation") — nothing further
+needed there, just don't regress it.
 
 ## Blockers
 
 None currently. `gh` CLI access is confirmed working in this
-environment. Docker was not touched this session — Slice 4.1 adds no
+environment. Docker was not touched this session — Slice 4.2 adds no
 new pip dependency and no Docker-relevant file changed (`git diff main
 -- backend/pyproject.toml backend/uv.lock` is empty), so no rebuild was
-needed. The migration itself (`0006`) was verified directly against
-the real running Postgres (downgrade/upgrade round-trip, all four new
-tables confirmed removed then recreated). Slice 3.7's own migration
-(`0005`) was verified the same way, with the HNSW index confirmed
-present — a stronger check than a Docker rebuild would add on its own.
+needed. The migration itself (`0007`) was verified directly against
+the real running Postgres (downgrade/upgrade round-trip, the GIN index
+confirmed removed then recreated). Slice 4.1's own migration (`0006`)
+and Slice 3.7's own migration (`0005`) were both verified the same way
+— a stronger check than a Docker rebuild would add on its own.
 
 ## Tests run
 
@@ -3121,36 +3272,52 @@ present — a stronger check than a Docker rebuild would add on its own.
   new), **3 consecutive runs**, no regression in any existing test.
   Frontend not re-run as a fresh command this session, but no frontend
   file changed — expected unaffected. Docker/Compose: not rebuilt this
-  slice — no new dependency, no Docker-relevant file changed. Not yet
-  committed, pushed, or opened as a PR — see "Exact next recommended
-  action" below.
+  slice — no new dependency, no Docker-relevant file changed. Since
+  merged — PR #25, squash commit `5e4a626`, CI 4/4 green.
+- **Issue #4, Slice 4.2 (retrieval module): `uv run ruff check .`**
+  (pass) and **`uv run mypy .`** (pass, 121 source files, no new
+  findings). **23 new tests (`tests/test_retrieval.py`) — 23/23
+  passed**, real Postgres, no mocks. Migration `0007` verified
+  reversible directly against the real database (`alembic downgrade
+  0006` / `upgrade head`, the GIN index confirmed removed then
+  recreated via `pg_indexes`). One genuine test-design bug found and
+  fixed during validation (a coincidental score tie from stopword
+  overlap in a test fixture, not a retrieval-code defect — see
+  "Completed work (Issue #4 — Slice 4.2...)" above for the full
+  root-cause). **Complete backend suite: 573/573 passing** (550
+  pre-Slice-4.2 + 23 new), **3 consecutive runs**, no regression in any
+  existing test. Frontend not re-run as a fresh command this session,
+  but no frontend file changed — expected unaffected. Docker/Compose:
+  not rebuilt this slice — no new dependency, no Docker-relevant file
+  changed. Not yet committed, pushed, or opened as a PR — see "Exact
+  next recommended action" below.
 
 ## Exact next recommended action
 
-Redis Slices 1/2/3a/3b/3c, Playwright E2E, and all of Issue #3
-(Slices 3.1–3.7, including Slice 3.2's and Slice 3.4's own
-correctness-review fixes, and Slice 3.5's own two-round final review)
-are all merged into `main` (`46ef03b` PR #11, `5391a78` PR #12,
+Redis Slices 1/2/3a/3b/3c, Playwright E2E, all of Issue #3 (Slices
+3.1–3.7, including Slice 3.2's and Slice 3.4's own correctness-review
+fixes, and Slice 3.5's own two-round final review), and Issue #4 Slice
+4.1 are all merged into `main` (`46ef03b` PR #11, `5391a78` PR #12,
 `026dcf3` PR #13, `42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16,
 `79d4787` PR #17, `941c1a7` PR #18, `5e6fdc2` PR #19, `a6762e2` PR #20,
-`2961b62` PR #21, `237be97` PR #22, `aa68079` PR #23, `7241ec8` PR #24)
-— nothing pending for any of them. `main`/`origin/main` are at
-`7241ec8`. **GitHub Issue #4, Slice 4.1 (conversation/message/citation/
-retrieval-event schema) is implemented and fully tested**, on branch
-`issue-4-slice-4-1-conversation-schema` (cut from `7241ec8`) — not yet
-committed, pushed, or opened as a PR. See "Completed work (Issue #4 —
-Slice 4.1...)" above. The next work, in order:
+`2961b62` PR #21, `237be97` PR #22, `aa68079` PR #23, `7241ec8` PR #24,
+`5e4a626` PR #25) — nothing pending for any of them. `main`/`origin/main`
+are at `5e4a626`. **GitHub Issue #4, Slice 4.2 (retrieval module) is
+implemented and fully tested**, on branch `issue-4-slice-4-2-retrieval`
+(cut from `5e4a626`) — not yet committed, pushed, or opened as a PR.
+See "Completed work (Issue #4 — Slice 4.2...)" above. The next work, in
+order:
 
-1. **Commit Slice 4.1** on the current branch, push it, and open a PR
+1. **Commit Slice 4.2** on the current branch, push it, and open a PR
    against `main`. This slice's own real-stack validation (23 new
-   focused tests, full 550-test suite × 3 runs, `ruff`/`mypy` clean,
+   focused tests, full 573-test suite × 3 runs, `ruff`/`mypy` clean,
    migration reversibility verified directly) is already done locally.
    Get CI green, then **merge it promptly** — the 5-day timeline
    authorizes this without waiting for a separate per-PR instruction
    (see "Current task"/"Next major task" above).
 2. **Immediately after merging, with no further go-ahead needed:**
    switch to `main`, pull, confirm a clean tree, then continue Issue #4
-   with Slice 4.2 (retrieval module) per the 5-day plan's Day 2 scope —
-   see "Next major task" above for the concrete starting points and the
-   standing prompt-injection/workspace-isolation security requirements
-   that apply to it.
+   with Slice 4.3 (generation module) per the 5-day plan's Day 2 scope
+   — see "Next major task" above for the concrete starting points and
+   the standing prompt-injection/workspace-isolation security
+   requirements that apply to it.
