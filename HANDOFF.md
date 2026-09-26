@@ -169,21 +169,31 @@ genuine metrics-implementation bug found and fixed, and a genuine (if
 minor) test-fixture fix that eliminated a spurious
 `InsecureKeyLengthWarning` from 624 of the suite's tests.
 
-**GitHub Issue #5 (Product Experience) has started, per the 5-day
-plan's Day 3 scope. Slice 5.1** (document list/get backend endpoints,
-a real Documents page, and a real Chat/conversation page —
-`backend/app/api/v1/documents.py`, `app/api/v1/conversations.py`,
+**GitHub Issue #5 (Product Experience), Slice 5.1** (document list/get
+backend endpoints, a real Documents page, and a real Chat/conversation
+page — `backend/app/api/v1/documents.py`, `app/api/v1/conversations.py`,
 `frontend/app/documents/page.tsx`, `frontend/app/chat/page.tsx`) **was
 committed, pushed, opened as PR #29, and merged into `main` as squash
-commit `2ad720f`.** `main`/`origin/main` are at `2ad720f`. After
-merging, the Documents/Chat pages were manually exercised end-to-end in
-a real browser against a freshly rebuilt Docker stack via a new
-Playwright spec (`frontend/e2e/documents-chat.spec.ts`, 20/20 Playwright
-tests passing) — not yet committed; see "Exact next recommended action"
-at the end of this file. See "Completed work (Issue #5 — Slice 5.1:
-document endpoints + Documents/Chat pages)" below for the full design,
-including a real citations-in-history bug found and fixed along the
-way.
+commit `2ad720f`.** A follow-up adding browser E2E coverage for the
+document-upload/chat flow (`frontend/e2e/documents-chat.spec.ts`) **was
+committed, pushed, opened as PR #30, and merged into `main` as squash
+commit `0687d07`.** `main`/`origin/main` are at `0687d07`. See
+"Completed work (Issue #5 — Slice 5.1: document endpoints +
+Documents/Chat pages)" below for the full design, including a real
+citations-in-history bug found and fixed along the way.
+
+**GitHub Issue #6 (Voice) has started, per the 5-day plan's Day 3/4
+scope.** STT/TTS provider abstractions (`backend/app/voice/`) wired
+into the existing chat flow — no separate pipeline; voice transcribes
+audio, then calls the *exact same* `post_message()` the text flow uses.
+**Is IMPLEMENTED and FULLY TESTED, on branch `issue-6-voice`** (cut from
+`0687d07`) — not yet committed, pushed, or opened as a PR; see "Exact
+next recommended action" at the end of this file. See "Completed work
+(Issue #6 — Voice: STT/TTS provider abstractions + chat integration)"
+below for the full design, including a genuine `pyttsx3`
+implementation-time finding (replaced with a direct `espeak-ng`
+subprocess call) and a real end-to-end manual verification against a
+live, freshly rebuilt Docker stack via `curl`.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -3340,6 +3350,234 @@ pages against it.
   Slice 4.3/4.4's pre-merge state, found during this slice's own
   orientation step per `CLAUDE.md` §2.1), this file, `CHANGELOG.md`.
 
+## Completed work (Issue #6 — Voice: STT/TTS provider abstractions + chat integration)
+
+**Uncommitted, working-tree-only, on branch `issue-6-voice` (cut from
+`0687d07`).** Per the GitHub issue's own explicit scope: voice is a mode
+within the existing chat flow, not a parallel product surface or a
+duplicated RAG pipeline — every voice-driven answer runs through the
+*exact same* retrieval/generation/citation code Issue #4 already built.
+
+- **Backend — provider abstractions** (`backend/app/voice/`):
+  - `stt_provider.py`: `SpeechToTextProvider` protocol +
+    `PocketSphinxSpeechToTextProvider` (CMU PocketSphinx via the
+    `SpeechRecognition` package — fully offline, no API key, no network
+    call, no separate model download; the package ships its own default
+    English model) + `get_speech_to_text_provider()` factory, mirroring
+    `get_embedding_provider()`'s exact shape. Only WAV audio is accepted
+    (`UnsupportedAudioFormatError` otherwise). Silence/unrecognizable
+    audio returns `""` (a defined result), never an exception; a
+    provider-internal failure raises `SpeechToTextError` with a generic
+    message, never raw library exception text.
+  - `tts_provider.py`: `TextToSpeechProvider` protocol +
+    `EspeakTextToSpeechProvider` + `get_text_to_speech_provider()`
+    factory. Empty/whitespace text returns a minimal valid silent WAV
+    (via the stdlib `wave` module) rather than invoking the synthesizer.
+  - **A genuine implementation-time finding, not a test-design bug**:
+    the first version of `TextToSpeechProvider` used the `pyttsx3`
+    Python bindings to `espeak-ng`. Repeated `synthesize()` calls within
+    one process — including calls landing on different
+    `asyncio.to_thread()` worker threads — corrupted `pyttsx3`'s
+    internal callback/proxy state
+    (`ReferenceError: weakly-referenced object no longer exists` from
+    `espeak`'s own driver), sometimes producing a truncated/empty audio
+    file; this reproduced even after switching from the cached
+    `pyttsx3.init()` singleton to a fresh `pyttsx3.Engine(...)` per
+    call, so the fault sits deeper than simple instance reuse. Fixed by
+    dropping the `pyttsx3` dependency entirely and shelling out to the
+    `espeak-ng` binary directly (`subprocess.run(["espeak-ng", "-w",
+    path, text])`) — a fresh, independent OS process per call, no
+    Python-level state shared across calls at all. Empirically reliable
+    across repeated and concurrent-thread calls in this module's own
+    test suite. Also simpler (one fewer Python dependency).
+  - **Real, empirically observed limitation, documented honestly (not
+    silently worked around)**: PocketSphinx's transcription accuracy
+    against synthetic (`espeak`-generated) audio is unreliable and
+    highly sensitive to synthesis parameters — some short test phrases
+    transcribed exactly, others quite inaccurately, and the *same*
+    phrase produced different results across synthesis-rate settings.
+    Silence at a *short* duration (~0.05s) reliably triggers the
+    "no speech detected" empty-string path; a full second of silence
+    instead gets decoded as a hallucinated word from the noise floor
+    (observed: "so", "dog") — real, expected ASR behavior on synthetic
+    digital silence, not a bug, but the reason the test suite uses a
+    short silence fixture specifically for that contract test.
+  - New system dependency: `espeak-ng` (`infra/docker/backend.Dockerfile`,
+    `.github/workflows/ci.yml`'s backend job) — no Python dependency for
+    TTS at all now; `pocketsphinx`/`speechrecognition` remain real
+    Python dependencies for STT (`backend/pyproject.toml`/`uv.lock`).
+  - [ADR 0008](docs/DECISIONS/0008-local-speech-to-text-and-text-to-speech-providers.md)
+    (new): records the local/offline provider decision for both STT and
+    TTS, mirroring
+    [ADR 0007](docs/DECISIONS/0007-local-providers-for-embedding-reranking-generation.md)'s
+    reasoning exactly, including the `pyttsx3`→`espeak-ng`-subprocess
+    finding above and the honest accuracy-limitation documentation.
+- **Backend — wiring into the existing conversation flow**
+  (`backend/app/schemas/conversation.py`, `app/repositories/message_repository.py`,
+  `app/services/conversation_service.py`, `app/api/v1/conversations.py`,
+  `app/core/rate_limit.py`, `app/core/config.py`):
+  - `VoiceMessageRead` schema: `{transcript, message}` — `message` is
+    the *same* `MessageRead` shape the text endpoint returns.
+  - `message_repository.get_by_id_for_conversation()` (new) — scoped to
+    `conversation_id`, matching every other workspace-scoped lookup's
+    IDOR-defense shape; used by the audio-playback endpoint.
+  - `conversation_service.transcribe_and_post_voice_message()`: checks
+    the conversation exists *before* any audio validation/transcription
+    work (matching `post_message()`'s own existing ordering — a real
+    ordering bug was found and fixed during this slice's own test
+    run: transcription originally ran before the existence check, so a
+    bad `conversation_id` got a misleading `empty_transcript` `422`
+    instead of the correct `404`). Reads the upload in bounded chunks
+    (`max_voice_audio_size_bytes`, default 10 MiB, mirroring
+    `document_service._read_and_validate_size()`'s identical streaming
+    pattern), validates decoded WAV duration (120s max, checked via the
+    header, cheap, no full decode), transcribes via the injected
+    `SpeechToTextProvider`, then re-validates the transcript through the
+    *same* `MessageCreate` schema (`min_length=1, max_length=4000`)
+    typed messages use before calling the *exact same* `post_message()`.
+  - `conversation_service.synthesize_message_audio()`: fetches the
+    message (workspace/conversation-scoped, `404` for a non-`ASSISTANT`
+    message or one from elsewhere), then synthesizes its `content` via
+    the injected `TextToSpeechProvider` — no audio is ever persisted
+    (matching `document_chunks`' own "don't persist what's cheaply
+    re-derivable" precedent, Issue #3 Slice 3.6).
+  - `POST /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/voice-messages`
+    (MEMBER, multipart `audio` field) and
+    `GET .../messages/{message_id}/audio` (VIEWER, returns raw
+    `audio/wav` bytes) — new endpoints in
+    `app/api/v1/conversations.py`.
+  - New `voice_message` Redis rate-limit dimension (IP + authenticated
+    user ID, Tier A, 20/60s, same shape as `conversation_message`) —
+    `enforce_voice_message_rate_limit()`.
+  - New settings: `speech_to_text_provider`/`text_to_speech_provider`
+    (`Literal["local"]`, matching `embedding_provider`'s pattern) and
+    `max_voice_audio_size_bytes` (default 10 MiB).
+- **New tests**: `backend/tests/test_voice_providers.py` (9 unit tests
+  — provider-contract tests, deliberately never asserting an *exact*
+  transcript for arbitrary speech content given the accuracy limitation
+  above; instead asserting the contract itself, plus one full TTS→STT
+  round-trip proving the pipeline mechanically works) and
+  `backend/tests/test_voice_conversations.py` (12 HTTP-level tests —
+  posting a real synthesized voice message, a stub-`SpeechToTextProvider`
+  regression test proving a voice-driven question and its text-chat
+  equivalent produce *identical* answer content and citations from the
+  same underlying pipeline (Issue #6's own explicit testing
+  requirement — a deliberate, explicitly-permitted test double, not a
+  mock of application logic), empty-transcript/oversized-audio/
+  unsupported-format/conversation-not-found/VIEWER-cannot-post/rate-
+  limit/cross-workspace-isolation cases for posting, and
+  playback-returns-real-wav/user-message-not-found/cross-workspace-not-
+  found cases for the audio endpoint). **Two genuine test-design
+  findings during this slice's own validation** (not production
+  defects): (1) a rate-limit test using real STT calls was slow enough
+  (real token-bucket refill, ~0.3–0.5s per transcription call) that 21
+  sequential real calls occasionally let a token refill mid-loop,
+  dodging the 429 — fixed by using the stub STT provider for that one
+  test, matching the text-equivalent test's speed profile; (2) jsdom
+  doesn't affect this (Python-side), but analogous to the earlier
+  `scrollIntoView` finding in Slice 5.1. All 21 new backend tests
+  verified inside a freshly rebuilt Docker container (this host
+  environment has no `espeak-ng`/system audio libraries available to
+  run these directly) — **21/21 passing**, and the complete backend
+  suite re-run inside the same container: **694 passed, 5 failed** (all
+  5 failures isolated to `tests/test_password_reset.py`, confirmed via a
+  targeted re-run with `EMAIL_PROVIDER=console` to be a pre-existing,
+  already-documented container-runtime artifact — the compose service's
+  own `EMAIL_PROVIDER=smtp` default — unrelated to this slice; 699 =
+  678 pre-slice + 21 new, exactly accounted for). `ruff check`/`mypy .`
+  clean.
+- **Frontend — voice input/playback integrated directly into
+  `app/chat/page.tsx`** (not a separate page, per the issue's explicit
+  scope):
+  - `lib/wav-encoder.ts` (new): pure `PcmAudio -> Blob` WAV encoding —
+    no browser API dependency, fully unit-testable, the standard
+    "encode a WAV from decoded PCM samples, no extra library" technique.
+  - `lib/voice-recorder.ts` (new): `startVoiceRecording()` — requests
+    microphone access, records via `MediaRecorder`, and on `stop()`
+    decodes whatever container format `MediaRecorder` produced (webm/
+    opus in Chromium) via the Web Audio API's `decodeAudioData()`, then
+    re-encodes as WAV client-side. No server-side transcoding
+    dependency (e.g. ffmpeg) — matching the issue's explicit "no
+    unnecessarily complex real-time audio architecture" instruction.
+    `cancel()` releases the microphone without producing a result.
+  - `lib/schemas.ts`/`lib/api-client.ts`: `VoiceMessageSchema`,
+    `postVoiceMessage()` (multipart upload), `getMessageAudioUrl()` (a
+    plain URL builder, not a fetch wrapper — used directly as an
+    `<audio src>`; a `GET` needs no CSRF token, and the browser attaches
+    this app's auth cookies to the resource load the same way it would
+    for any other same-site asset).
+  - `app/chat/page.tsx`: a record/stop toggle button next to the text
+    input (clicking again while recording stops it and transcribes —
+    satisfies "interruption/stop handling" for recording without a
+    separate cancel control); on success, the transcript and the
+    grounded answer are appended exactly like a typed question. A
+    `AudioPlaybackButton` under each assistant message (skipped for the
+    optimistic pending bubble) toggles "Play answer"/"Stop" — stopping
+    resets playback position to the start rather than just pausing.
+    Citations remain visible while audio is playing by construction
+    (they were never hidden during playback in the first place — a
+    permanent list under the bubble, not a modal/overlay).
+- **New tests**: `lib/wav-encoder.test.ts` (6 tests — RIFF/WAVE header
+  shape, exact byte-size accounting, sample-rate/channel-count encoding,
+  clamping out-of-range samples, stereo interleave order, zero-length
+  input), `lib/voice-recorder.test.ts` (3 tests — using hand-written
+  fake `MediaRecorder`/`AudioContext`/`MediaStream` classes stubbed via
+  `vi.stubGlobal`, the same technique this project already uses for
+  browser-API-dependent code that jsdom doesn't implement: requests mic
+  access and starts recording, `stop()` returns a WAV blob and releases
+  every track, `cancel()` releases tracks without decoding), and 3 new
+  tests added to `app/chat/page.test.tsx` (records/stops/posts a voice
+  message and appends the transcript+answer; shows an error when
+  microphone access is denied; plays and stops an assistant message's
+  audio, mocking `HTMLMediaElement.prototype.play`/`pause` since jsdom
+  doesn't implement real audio playback — the same pattern already used
+  for `scrollIntoView` in Slice 5.1). Frontend total: **12 new tests**.
+  Full suite: **70/70 passing** (58 pre-Issue-6 + 12 new), `eslint`
+  clean, `tsc --noEmit` clean, `next build` succeeds (all routes still
+  compile, no new route added).
+- **Manually verified end-to-end against a live, freshly rebuilt Docker
+  stack** (not just tests): rebuilt `backend`/`frontend` images from
+  this branch's own code (`docker compose build backend frontend`),
+  then drove the real HTTP API directly with `curl` (register → create
+  workspace → upload and process a real refund-policy document to
+  `READY` → create a conversation → `POST .../voice-messages` with a
+  real `espeak-ng`-synthesized WAV question → `GET .../audio` for the
+  resulting assistant message). **Real results**: the transcript came
+  back imperfect ("what is the wreath on all easy" instead of "what is
+  the refund policy" — the same honest PocketSphinx-vs-synthetic-audio
+  limitation documented in ADR 0008) but hybrid retrieval still matched
+  and cited the correct document, the answer correctly quoted it, and
+  the audio-playback endpoint returned a genuine, valid, non-empty WAV
+  file (142,483 frames at 22,050 Hz, confirmed parseable via Python's
+  `wave` module) — confirming Issue #6's Definition of Done ("a spoken
+  question produces a grounded, cited answer with visible transcript,
+  visible citations, and audio playback") end-to-end, not just against
+  component/unit tests.
+- **Verification**: backend — `ruff check .`/`mypy .` clean (inside the
+  Docker container, which has the required `espeak-ng` system
+  dependency; this host shell does not), full voice suite 21/21, full
+  backend suite 694/699 (5 pre-existing unrelated failures, see above).
+  Frontend — `npm run lint` clean, `npx tsc --noEmit` clean,
+  `npm run test -- --run` 70/70, `npm run build` succeeds. Manual `curl`
+  round trip against a freshly rebuilt live stack, described above.
+- **Not yet done this slice** (see "Explicitly NOT done" below): no
+  live-browser (Playwright) voice test exists — real microphone/audio-
+  device automation in Chromium (`--use-fake-device-for-media-stream`)
+  was judged a disproportionately expensive addition for this slice
+  given the backend is already fully verified end-to-end via `curl` and
+  the frontend voice UI is fully component-tested with realistic mocked
+  browser-API behavior; deferred, documented, not silently skipped.
+- **Documentation updated this slice**: `PROJECT_STATE.md` (header,
+  "Voice (STT/TTS)" and "Frontend application" component-status rows,
+  "GitHub remote & issues" row, "Known limitations", "Immediate
+  priorities"), `docs/API_CONTRACT.md` (new voice endpoints + a "Voice"
+  subsection), `docs/ARCHITECTURE.md` (`voice/` module status, frontend
+  `lib/` note), `docs/SECURITY.md` (new "Voice input safety" section, a
+  "Voice input tests" bullet, and a stale "prompt injection tests: not
+  implemented" line corrected in passing since it was directly adjacent
+  and already known-stale), `docs/DECISIONS/0008-...md` (new ADR), this
+  file, `CHANGELOG.md`.
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -3402,6 +3640,20 @@ pages against it.
   feedback, conversational context/query rewriting, responsive-mobile
   polish beyond what Tailwind's existing utility classes already give
   for free.
+- **Issue #6 (voice)** — implemented and fully tested, on branch
+  `issue-6-voice`, not yet merged — see "Completed work (Issue #6 —
+  Voice)" above. No live-browser (Playwright) voice test exists yet —
+  real microphone/audio-device automation was judged disproportionately
+  expensive for this slice given the backend is already fully verified
+  via real `curl` calls and the frontend is fully component-tested with
+  realistic mocked browser-API behavior; a genuinely offline neural ASR
+  model (e.g. Whisper-family) was considered and rejected for this
+  phase — see [ADR 0008](docs/DECISIONS/0008-local-speech-to-text-and-text-to-speech-providers.md).
+  Streaming STT/TTS (word-by-word transcription/synthesis as audio
+  arrives, rather than record-then-transcribe/synthesize-then-play) is
+  not implemented — the shipped providers don't support it, and neither
+  does the issue's own explicit Definition of Done require it beyond
+  "streaming where the provider supports it."
 - **Endpoint-driven concurrency test under real HTTP load** — not added
   in the Slice 2 review-fix pass either; the property is proven at the
   engine level (`test_redis_rate_limiter.py`, merged with Slice 1) and
@@ -3415,64 +3667,79 @@ pages against it.
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: GitHub Issue #5 — Product Experience (frontend)
+## Next major task: GitHub Issue #6 — Voice
 
-**ADR 0006's deterministic abuse-protection layer is functionally
-complete end-to-end and fully merged (Slices 1–3c).** Browser E2E
-coverage for the authentication/password-recovery flows is implemented,
-validated, and merged (PR #16, `e1c4858`). **GitHub Issue #3 (Knowledge
-Ingestion) is fully merged and functionally complete end-to-end**
-(PR #17 `79d4787` through PR #24 `7241ec8`). **GitHub Issue #4 (Hybrid
-RAG Pipeline) is fully merged and functionally complete** (PR #25
-`5e4a626` through PR #28 `fd2041c`) — a real question against real
-ingested documents already returns a real grounded answer with
-citations, end-to-end, plus real evaluation numbers and a tested
-prompt-injection defense.
+**GitHub Issue #3 (Knowledge Ingestion) and Issue #4 (Hybrid RAG
+Pipeline) are both fully merged and functionally complete** (PR #17
+`79d4787` through PR #28 `fd2041c`). **GitHub Issue #5 (Product
+Experience), Slice 5.1 — document list/get endpoints, real Documents/
+Chat pages, and browser E2E coverage — is fully merged** (PR #29
+`2ad720f`, PR #30 `0687d07`) and manually verified end-to-end in a real
+browser (20/20 Playwright tests, including the new
+`documents-chat.spec.ts` proving LOGIN → WORKSPACE → UPLOAD → READY →
+CHAT → ASK → ANSWER → CITATIONS genuinely works).
 
-**GitHub Issue #5 (Product Experience), Slice 5.1 was committed,
-pushed, opened as PR #29, and merged into `main` as squash commit
-`2ad720f`.** See "Completed work (Issue #5 — Slice 5.1)" above for the
-full design: a real Documents page (upload/list/status/retry) and a
-real Chat page (conversation list, message thread, citations), backed
-by two new backend endpoints (`GET .../documents`, `GET
-.../documents/{id}`) and one more (`GET .../conversations`), plus a
-real citations-in-conversation-history bug fix. **After merging, this
-was manually exercised end-to-end in a real (Chromium) browser** against
-a freshly rebuilt Docker stack via a new Playwright spec
-(`frontend/e2e/documents-chat.spec.ts`) — 20/20 Playwright tests pass,
-confirming the primary flow (LOGIN → WORKSPACE → UPLOAD → READY → CHAT
-→ ASK → ANSWER → CITATIONS) genuinely works, not just against mocked
-component tests.
+**GitHub Issue #6 (Voice) is implemented and fully tested**, on branch
+`issue-6-voice` (cut from `0687d07`) — not yet committed, pushed, or
+opened as a PR. See "Completed work (Issue #6 — Voice)" above for the
+full design: `SpeechToTextProvider`/`TextToSpeechProvider`
+(`backend/app/voice/`, PocketSphinx + a direct `espeak-ng` subprocess
+call — see that section for a genuine `pyttsx3` finding this slice
+fixed), two new endpoints wired into the *existing* conversations flow
+(`POST .../voice-messages`, `GET .../messages/{id}/audio`), and a
+record/stop + play/stop voice UI added directly into
+`frontend/app/chat/page.tsx`. Manually verified end-to-end against a
+live, freshly rebuilt Docker stack via real `curl` calls — a real
+synthesized question was transcribed (imperfectly, an honestly
+documented PocketSphinx limitation), still correctly retrieved and
+cited the right document, and the answer's audio played back as a
+genuine WAV file.
 
-**Before anything else starts**: commit the new
-`e2e/documents-chat.spec.ts` (and this documentation update), push,
-open a PR, confirm CI green, and **merge it promptly** — the 5-day
-timeline (see "Current task" above) authorizes merging as soon as a
-slice/issue is reviewed and CI-green, without waiting for a separate
-per-PR instruction.
+**Before anything else starts**: commit Issue #6, push the branch, open
+a PR, confirm CI green (the CI workflow now installs `espeak-ng` on the
+backend job's runner — already wired in this branch), and **merge it
+promptly** — the 5-day timeline (see "Current task" above) authorizes
+this without waiting for a separate per-PR instruction.
 
-**Then**: continue Issue #5's remaining priority items per the 5-day
-plan: citation/source rendering is done (filename/page/section text);
-real "source inspection" (viewing a cited chunk/document's actual
-content) still needs a backend endpoint to fetch chunk/document text
-before it can be built for real; conversation history is done (list +
-reload with citations); feedback, rename/delete conversations, and
-responsive-mobile polish remain. Then move to Issue #6 (voice), #7
-(security/evaluation/observability), #8 (finalization) per the 5-day
-plan. Use the existing frontend architecture/design system
-(`frontend/app/`,
+**Then**: move to Issue #7 (security/evaluation/observability) per the
+5-day plan — see that GitHub issue's own scope for the explicit
+security-boundary test list (cross-workspace isolation via ID
+manipulation for documents/conversations/citations — much of this is
+already covered by existing tests, confirm and close any gap;
+secrets-not-in-errors; API-keys-never-in-frontend; tokens-not-
+insecurely-stored — already true, see `lib/api-client.ts`'s own tests;
+oversized-input-rejection — already true for documents/voice audio;
+abuse-control-enforcement; malformed-document-crash-resistance —
+already true, Issue #3), observability additions (request IDs — already
+implemented since Issue #1, confirm coverage extends to the new voice
+endpoints; latency breakdowns; retrieval-event metadata — already
+recorded, Issue #4; error categories; provider failures; structured
+logs with an explicit do-not-log list), and the **explicit instruction
+to inspect and fix `InsecureKeyLengthWarning` if it's a real
+configuration issue** — already investigated and fixed as a test-
+fixture-only issue during Issue #4 Slice 4.4 (see `SOLVING.md`), confirm
+it hasn't regressed. Then Issue #8 (finalization) — Docker/Compose
+verification (both images have been rebuilt and manually exercised
+multiple times already this session), health/readiness (already
+implemented since Issue #1), CI, deployment config, API docs, README
+(still deferred — Issue #8's own job), final security checks, final E2E
+tests, final end-to-end demonstration path. Issue #5's remaining lower-
+priority scope (source inspection needs a new backend endpoint first;
+feedback; rename/delete conversations; the `/chat/[id]`/`/documents/[id]`
+deep-link stub routes) remains deferred and documented, not forgotten —
+revisit if time remains after Issues #7/#8's critical paths land. Use
+the existing frontend architecture/design system (`frontend/app/`,
 `frontend/lib/api-client.ts`'s existing `credentials: "include"` + CSRF-
 header pattern) — do not invent a new one. Inspect `docs/API_CONTRACT.md`
 before implementing further — do not assume detail beyond what it
 documents (update it as part of the same change if it's missing
 something you add). **Critical, explicitly restated security requirement
-(already implemented and tested on the backend, do not regress via the
-frontend)**: retrieved document content is untrusted data, never
-instructions — see `docs/SECURITY.md` §"Prompt injection defense" (now
-backed by a 12-payload test corpus, Slice 4.4) and §"Retrieval workspace
-isolation"; never store an auth token in `localStorage`/`sessionStorage`
-(the existing `lib/api-client.ts` already gets this right — see its own
-tests, and the new Documents/Chat pages follow the same pattern).
+(already implemented and tested on the backend, do not regress)**:
+retrieved document content — and now transcribed voice input — is
+untrusted data, never instructions — see `docs/SECURITY.md`
+§"Prompt injection defense" and §"Voice input safety"; never store an
+auth token in `localStorage`/`sessionStorage` (the existing
+`lib/api-client.ts` already gets this right — see its own tests).
 
 ## Blockers
 
@@ -3880,39 +4147,82 @@ Postgres — a stronger check than a Docker rebuild would add on its own.
   create workspace → upload a real `.txt` document → poll for `READY` →
   open Chat → ask a question → grounded, cited answer appears. **Full
   Playwright suite: 20/20 passing** (19 pre-existing + 1 new), one clean
-  run. Not yet committed — see "Exact next recommended action" below.
+  run. Committed, pushed, opened as PR #30, and merged (`0687d07`).
+- **Issue #6 (Voice) — uncommitted, working tree only, on branch
+  `issue-6-voice`.** This host shell has no `espeak-ng`/system audio
+  libraries, so all backend voice testing ran inside a freshly rebuilt
+  Docker container: `docker compose build backend` (picks up the new
+  `espeak-ng` apt dependency and `pocketsphinx`/`speechrecognition`
+  Python dependencies) then `docker compose run --rm --entrypoint bash
+  backend -c "uv run ruff check . && uv run mypy . && uv run alembic
+  upgrade head && uv run pytest -q"`. **New voice tests: 21/21 passing**
+  (`test_voice_providers.py`, `test_voice_conversations.py`). **Full
+  backend suite inside the container: 694 passed, 5 failed** — all 5 in
+  `tests/test_password_reset.py`, confirmed via a targeted re-run with
+  `-e EMAIL_PROVIDER=console` to pass 16/16 cleanly, isolating the
+  failures to the compose service's own pre-existing `EMAIL_PROVIDER=smtp`
+  default (a known, already-documented container-runtime artifact from
+  earlier in this project's history, not a regression from this slice);
+  699 total = 678 pre-slice + 21 new, exactly accounted for. `ruff
+  check`/`mypy .` clean. Frontend: `npm run lint`/`npx tsc --noEmit`
+  clean on the host directly (no container needed — no native
+  dependency on the frontend side), `npm run test -- --run` — **70/70
+  passing** (58 pre-slice + 12 new: 6 in `lib/wav-encoder.test.ts`, 3 in
+  `lib/voice-recorder.test.ts`, 3 new in `app/chat/page.test.tsx`),
+  `npm run build` succeeds. **Post-implementation manual end-to-end
+  verification against a live, freshly rebuilt Docker stack**: rebuilt
+  both `backend`/`frontend` images from this branch, then drove the
+  real HTTP API with `curl` — register → workspace → upload/process a
+  real document → conversation → `POST .../voice-messages` with a real
+  `espeak-ng`-synthesized WAV → `GET .../audio` for the resulting
+  answer. Real, non-fabricated results: an imperfect but real transcript,
+  a correct citation despite the imperfect transcript, and a genuine,
+  valid, non-empty WAV file returned for playback (142,483 frames,
+  22,050 Hz, confirmed parseable via Python's `wave` module). Docker
+  Compose: both images rebuilt this slice (new system + Python
+  dependencies); no new migration. Not yet committed, pushed, or opened
+  as a PR — see "Exact next recommended action" below.
 
 ## Exact next recommended action
 
 Redis Slices 1/2/3a/3b/3c, Playwright E2E, all of Issue #3 (Slices
-3.1–3.7), all of Issue #4 (Slices 4.1–4.4), and Issue #5 Slice 5.1 are
-merged into `main` (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13,
-`42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17,
-`941c1a7` PR #18, `5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62` PR #21,
-`237be97` PR #22, `aa68079` PR #23, `7241ec8` PR #24, `5e4a626` PR #25,
-`378fec4` PR #26, `54b08b2` PR #27, `fd2041c` PR #28, `2ad720f` PR #29)
+3.1–3.7), all of Issue #4 (Slices 4.1–4.4), and all of Issue #5 Slice
+5.1 (endpoints + pages + E2E coverage) are merged into `main`
+(`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14,
+`75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7` PR #18,
+`5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62` PR #21, `237be97` PR #22,
+`aa68079` PR #23, `7241ec8` PR #24, `5e4a626` PR #25, `378fec4` PR #26,
+`54b08b2` PR #27, `fd2041c` PR #28, `2ad720f` PR #29, `0687d07` PR #30)
 — nothing pending for any of them. `main`/`origin/main` are at
-`2ad720f`. **GitHub Issue #4 (Hybrid RAG Pipeline) is functionally
-complete. GitHub Issue #5's Slice 5.1 (document list/get endpoints,
-real Documents/Chat pages) is merged and has been manually exercised
-end-to-end in a real browser** via a new Playwright spec,
-`frontend/e2e/documents-chat.spec.ts` (20/20 Playwright tests passing,
-run against a freshly rebuilt real Docker stack) — **not yet committed**.
-See "Completed work (Issue #5 — Slice 5.1...)" above. The next work, in
-order:
+`0687d07`. **GitHub Issues #3, #4, and #5's Slice 5.1 are fully
+complete and merged.** **GitHub Issue #6 (Voice) is implemented and
+fully tested**, on branch `issue-6-voice` (cut from `0687d07`) — not
+yet committed, pushed, or opened as a PR. See "Completed work (Issue
+#6 — Voice...)" above. The next work, in order:
 
-1. **Commit the new `frontend/e2e/documents-chat.spec.ts`** (and this
-   documentation reconciliation) on a new small branch, push, open a
-   PR, confirm CI green (the `e2e` job will pick up the new spec
-   automatically), and **merge it promptly** — the 5-day timeline
+1. **Commit Issue #6** on the current branch, push it, and open a PR
+   against `main`. This slice's own validation (21 new backend voice
+   tests + full 694/699-passing backend suite — 5 pre-existing
+   unrelated failures confirmed isolated, see "Tests run" — verified
+   inside a rebuilt Docker container since this host shell lacks
+   `espeak-ng`; 12 new frontend tests + full 70/70-passing frontend
+   suite; a real manual `curl` round trip against a freshly rebuilt live
+   Docker stack) is already done. Get CI green (the workflow now
+   installs `espeak-ng` on the backend job's runner, already committed
+   on this branch), then **merge it promptly** — the 5-day timeline
    authorizes this without waiting for a separate per-PR instruction
    (see "Current task"/"Next major task" above).
 2. **Immediately after merging, with no further go-ahead needed:**
    switch to `main`, pull, confirm a clean tree, delete the merged
-   branch locally and on `origin`. Continue Issue #5's remaining scope
-   (source inspection needs a new backend endpoint first; feedback;
-   rename/delete conversations; the `/chat/[id]`/`/documents/[id]` stub
-   routes) or move to Issue #6 (voice) if Issue #5's primary flow
-   (LOGIN → WORKSPACE → UPLOAD → READY → CHAT → ASK → CITATIONS,
-   already confirmed working end-to-end in a real browser) is judged
-   sufficiently demonstrated — see "Next major task" above for detail.
+   branch locally and on `origin`, rebuild and restart the Docker
+   backend/frontend images if continuing manual verification (both were
+   last rebuilt from this branch's own code). Move to **GitHub Issue #7
+   (security/evaluation/observability)** per the 5-day plan — see "Next
+   major task" above for the concrete scope (security-boundary test
+   gaps to confirm/close, observability additions, the
+   `InsecureKeyLengthWarning` re-check). Then Issue #8 (finalization).
+   Issue #5's remaining lower-priority scope (source inspection,
+   feedback, rename/delete conversations, the `/chat/[id]`/
+   `/documents/[id]` deep-link stub routes) remains deferred and
+   documented — revisit if time remains after Issues #7/#8's critical
+   paths land.

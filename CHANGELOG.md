@@ -10,11 +10,78 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-25 — Issue #5, Slice 5.1 follow-up: browser E2E coverage for the document-upload/chat flow
+### 2026-09-26 — Issue #6: Voice (STT/TTS provider abstractions + chat integration)
 
-*(Small follow-up on top of the merged Slice 5.1 (`2ad720f`, PR #29) —
-no application code changed, only a new Playwright spec and this
-documentation reconciliation.)*
+*(Branch `issue-6-voice`, cut from the merged Slice 5.1 follow-up
+(`0687d07`, PR #30). Implemented and fully tested; not yet committed as
+of this entry.)*
+
+- Adds `backend/app/voice/`: `SpeechToTextProvider` protocol +
+  `PocketSphinxSpeechToTextProvider` (CMU PocketSphinx, offline, no API
+  key) and `TextToSpeechProvider` protocol + `EspeakTextToSpeechProvider`
+  (shells out to the `espeak-ng` binary as a subprocess). No commercial
+  vendor selected — see the new
+  [ADR 0008](docs/DECISIONS/0008-local-speech-to-text-and-text-to-speech-providers.md).
+- **A genuine implementation-time finding**: the first version of the
+  TTS provider used the `pyttsx3` Python bindings to `espeak-ng`, but
+  repeated calls within one process (including across different
+  `asyncio.to_thread()` worker threads) corrupted `pyttsx3`'s internal
+  callback state, sometimes producing truncated/empty audio. Replaced
+  with a direct `espeak-ng` subprocess call per synthesis — no shared
+  state between calls, empirically reliable. See `ADR 0008`.
+- Adds `POST /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/voice-messages`
+  (transcribes uploaded WAV audio, then calls the *exact same*
+  `post_message()` the text-chat endpoint uses — no retrieval/generation
+  logic duplicated) and
+  `GET .../messages/{message_id}/audio` (synthesizes an assistant
+  message's answer as WAV on demand; no audio ever persisted).
+- Audio input validated like any other upload: WAV-only, size-bounded
+  (streamed) and duration-bounded (120s, via the WAV header), and the
+  transcript re-validated through the same `MessageCreate` schema typed
+  messages use. New `voice_message` Redis rate-limit dimension.
+- **Fixes a real ordering bug found during this slice's own testing**:
+  the new endpoint originally checked the conversation existed *after*
+  transcribing the audio, so a bad `conversation_id` got a misleading
+  `422` instead of the correct `404` — fixed to check first, matching
+  `post_message()`'s own existing ordering.
+- Adds `frontend/lib/wav-encoder.ts` (pure PCM→WAV encoding) and
+  `frontend/lib/voice-recorder.ts` (`MediaRecorder` + Web Audio API
+  `decodeAudioData`, no ffmpeg/transcoding dependency), plus a
+  record/stop control, transcript display, and a play/stop audio-
+  playback control added directly into `app/chat/page.tsx` — voice is a
+  mode within chat, not a separate page.
+- 21 new backend tests (`test_voice_providers.py`,
+  `test_voice_conversations.py` — including a regression test proving a
+  voice-driven question and its text-chat equivalent produce identical
+  grounded/citation output) — verified inside a rebuilt Docker container
+  (this host environment has no `espeak-ng`): **21/21 passing**, full
+  backend suite **694 passed, 5 failed** (all 5 isolated to a
+  pre-existing, unrelated `EMAIL_PROVIDER` container-runtime artifact in
+  `test_password_reset.py`, confirmed via a targeted re-run). 12 new
+  frontend tests (`wav-encoder.test.ts`, `voice-recorder.test.ts`,
+  3 more in `app/chat/page.test.tsx`) — **70/70 passing**. `ruff`/`mypy`/
+  `eslint`/`tsc --noEmit` clean, `next build` succeeds.
+- **Manually verified end-to-end against a live, freshly rebuilt Docker
+  stack via real `curl` calls**: a real synthesized spoken question was
+  uploaded, transcribed (imperfectly — an honest, documented
+  PocketSphinx accuracy limitation — yet retrieval still found and cited
+  the right document), answered with a real citation, and the answer's
+  audio played back as a genuine, valid WAV file.
+- New system dependency: `espeak-ng`
+  (`infra/docker/backend.Dockerfile`, `.github/workflows/ci.yml`). New
+  Python dependencies: `pocketsphinx`, `speechrecognition`. No new
+  migration.
+- Docs updated in the same working tree: `PROJECT_STATE.md`,
+  `HANDOFF.md`, `docs/API_CONTRACT.md`, `docs/ARCHITECTURE.md`,
+  `docs/SECURITY.md`, `docs/DECISIONS/0008-...md` (new).
+
+## [Unreleased — committed]
+
+### 2026-09-25 — `test: add browser E2E coverage for the document-upload/chat flow (Issue #5, Slice 5.1 follow-up)` (#30), merged as `0687d07`
+
+*(Branch `issue-5-slice-5-1-followup-e2e`, cut from the merged Slice 5.1
+(`2ad720f`, PR #29). Opened as **PR #30**, verified green on GitHub
+Actions CI, and **merged into `main` as squash commit `0687d07`**.)*
 
 - Adds `frontend/e2e/documents-chat.spec.ts`: a browser-level smoke test
   for Issue #5's primary flow — register → create workspace → upload a
@@ -28,11 +95,9 @@ documentation reconciliation.)*
 - **Full Playwright suite: 20/20 passing** (19 pre-existing +
   this 1 new one), confirmed with a full clean run.
 - No new migration, no new dependency, no application code changed.
-- Docs updated in the same working tree: `PROJECT_STATE.md`,
-  `HANDOFF.md`, `docs/DEPLOYMENT.md` (also corrects several other
-  sections left stale from Slice 4.4/5.1's pre-merge state).
-
-## [Unreleased — committed]
+- Docs updated in the same commit: `PROJECT_STATE.md`, `HANDOFF.md`,
+  `docs/DEPLOYMENT.md` (also corrects several other sections left stale
+  from Slice 4.4/5.1's pre-merge state).
 
 ### 2026-09-25 — `feat: document list/get endpoints + real Documents/Chat pages (Issue #5, Slice 5.1)` (#29), merged as `2ad720f`
 
