@@ -120,15 +120,15 @@ advanced-rag-knowledge-assistant/
 │   │   ├── ingestion/             # parse/clean/chunk/embed/index — IMPLEMENTED (Issue #3, Slices 3.1–3.7)
 │   │   ├── retrieval/             # dense, BM25, fusion, rerank, filters — IMPLEMENTED (Issue #4, Slice 4.2; wired to the conversations endpoint since Slice 4.3)
 │   │   ├── generation/            # context builder, LLM calls, citations — IMPLEMENTED (Issue #4, Slice 4.3)
-│   │   ├── voice/                 # STT/TTS integration — PLANNED (Issue #6)
+│   │   ├── voice/                 # STT/TTS provider abstractions — IMPLEMENTED (Issue #6): PocketSphinx STT, espeak-ng TTS, wired through the existing conversations endpoint (no separate pipeline)
 │   │   ├── evaluation/            # metrics, experiment runner — PARTIALLY IMPLEMENTED (metrics: Issue #4, Slice 4.4; experiment runner: PLANNED, Issue #7)
 │   │   └── observability/         # logging, tracing, metrics — implemented (structured logging, request IDs)
 │   └── tests/                     # implemented (health/config/security/rate-limit/auth/workspaces coverage)
-├── frontend/                     # IMPLEMENTED (Issues #1–#2); documents/chat real (Issue #5, Slice 5.1)
+├── frontend/                     # IMPLEMENTED (Issues #1–#2); documents/chat real (Issue #5, Slice 5.1); voice input/playback in chat (Issue #6)
 │   ├── app/                       # Next.js routes — login/register/dashboard/settings/workspace/documents/chat implemented; collections/search/evaluations/analytics and the chat/[id]/documents/[id] detail routes remain stubs (Issue #5)
 │   ├── components/
 │   ├── hooks/
-│   ├── lib/
+│   ├── lib/                       # includes wav-encoder.ts/voice-recorder.ts (Issue #6) — client-side WAV encoding, no ffmpeg/transcoding dependency
 │   ├── types/
 │   └── tests/
 ├── eval/                          # PARTIALLY IMPLEMENTED (fixture hooks: Issue #4, Slice 4.4; full experiment-tracking system: PLANNED, Issue #7)

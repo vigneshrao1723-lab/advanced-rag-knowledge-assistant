@@ -14,6 +14,7 @@ import {
   MessageSchema,
   SessionListSchema,
   UserSchema,
+  VoiceMessageSchema,
   WorkspaceListSchema,
   WorkspaceSchema,
   type AuthResponse,
@@ -24,6 +25,7 @@ import {
   type MessageResponse,
   type SessionInfo,
   type User,
+  type VoiceMessage,
   type Workspace,
   type WorkspaceRole,
 } from "@/lib/schemas";
@@ -308,4 +310,34 @@ export async function postMessage(
     { body: JSON.stringify({ content }) }
   );
   return MessageSchema.parse(await response.json());
+}
+
+// --- Voice ---
+
+export async function postVoiceMessage(
+  workspaceId: string,
+  conversationId: string,
+  audio: Blob
+): Promise<VoiceMessage> {
+  const formData = new FormData();
+  formData.append("audio", audio, "question.wav");
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/conversations/${conversationId}/voice-messages`,
+    "POST",
+    { body: formData }
+  );
+  return VoiceMessageSchema.parse(await response.json());
+}
+
+/** A plain URL, not a fetch wrapper -- meant to be used directly as an
+ * `<audio src>`. The browser attaches this app's auth cookies to a
+ * same-site resource load like any other (no CSRF token needed; this
+ * is a `GET`, and CSRF protection here only covers state-changing
+ * methods -- see `buildRequestInit()`). */
+export function getMessageAudioUrl(
+  workspaceId: string,
+  conversationId: string,
+  messageId: string
+): string {
+  return `${getApiBaseUrl()}/api/v1/workspaces/${workspaceId}/conversations/${conversationId}/messages/${messageId}/audio`;
 }

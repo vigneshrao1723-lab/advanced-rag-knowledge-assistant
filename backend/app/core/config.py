@@ -200,6 +200,18 @@ class Settings(BaseSettings):
             raise ValueError("embedding_batch_size must be > 0.")
         return self
 
+    # Voice (Issue #6 — app/voice/). "local" providers (PocketSphinx STT,
+    # espeak-ng TTS — offline, no API key, no network call) are
+    # the only implementation today, matching `storage_provider`'s/
+    # `embedding_provider`'s pattern — never hardcode a specific vendor.
+    # `max_voice_audio_size_bytes` is enforced while reading the uploaded
+    # audio (bounded reads), matching `max_upload_size_bytes`'s own
+    # pattern — audio input is untrusted input like any other upload
+    # (docs/SECURITY.md).
+    speech_to_text_provider: Literal["local"] = "local"
+    text_to_speech_provider: Literal["local"] = "local"
+    max_voice_audio_size_bytes: int = 10 * 1024 * 1024
+
     # Reserved for future issues — not consumed by any code path yet.
     llm_api_key: str | None = None
     embedding_api_key: str | None = None

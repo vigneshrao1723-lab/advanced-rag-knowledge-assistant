@@ -359,10 +359,10 @@ the client, never a raw exception, filesystem path, or storage key.
 
 ## Implemented: `/api/v1/workspaces/{workspace_id}/conversations`
 
-**Minimal chat/ask flow + conversation listing** (GitHub Issue #4, Slice
-4.3; list added Issue #5, Slice 5.1) — rename/delete/search
-conversations, regenerate/retry, and feedback (docs/REQUIREMENTS.md
-"Chat") are not implemented yet.
+**Minimal chat/ask flow + conversation listing + voice** (GitHub Issue
+#4, Slice 4.3; list added Issue #5, Slice 5.1; voice added Issue #6) —
+rename/delete/search conversations, regenerate/retry, and feedback
+(docs/REQUIREMENTS.md "Chat") are not implemented yet.
 
 | Endpoint | Min. role | Body | Response |
 |---|---|---|---|
@@ -370,6 +370,8 @@ conversations, regenerate/retry, and feedback (docs/REQUIREMENTS.md
 | `POST /api/v1/workspaces/{workspace_id}/conversations` | MEMBER | none | `201` `ConversationRead` |
 | `POST /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages` | MEMBER | `{content}` | `201` `MessageRead`, or `404`/`422`/`429`/`500` (see below) |
 | `GET /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages` | VIEWER | none | `200` `list[MessageRead]`, or `404` |
+| `POST /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/voice-messages` | MEMBER | `multipart/form-data`, one field: `audio` (WAV) | `201` `VoiceMessageRead`, or `400`/`404`/`413`/`422`/`429`/`502` (see below) |
+| `GET /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages/{message_id}/audio` | VIEWER | none | `200` `audio/wav` bytes, or `404` |
 
 `ConversationRead`: `{id, title, created_at, updated_at}`.
 
@@ -409,6 +411,51 @@ non-leaking pattern as every other workspace-scoped lookup in this API).
 shape as `document_process` (IP + authenticated user ID, Tier A,
 20/60s) — posting a message is CPU-bound (embedding the query,
 reranking, generation), same defensive treatment as ingestion.
+
+### Voice (GitHub Issue #6)
+
+Voice is a mode within this same chat flow, not a parallel pipeline —
+`POST .../voice-messages` transcribes the uploaded audio, then calls
+the *exact same* `post_message()` function the text-chat endpoint uses
+(`app/services/conversation_service.py::transcribe_and_post_voice_message()`).
+No retrieval/generation/citation logic is duplicated.
+
+`VoiceMessageRead`: `{transcript, message}`, where `message` is the same
+`MessageRead` shape `POST .../messages` returns.
+
+**Audio input**: only WAV (`audio/wav`/`audio/x-wav`/`audio/wave`) is
+accepted — `400` `unsupported_audio_format` otherwise. Bounded both by
+byte size (`max_voice_audio_size_bytes`, default 10 MiB, streamed the
+same way document upload's size limit is enforced — `413`
+`voice_audio_too_large`) and by decoded duration (120s max, checked via
+the WAV header — also `413` `voice_audio_too_large`). A transcript that
+comes back empty (no recognizable speech) or exceeds `MessageCreate`'s
+own 4000-character bound is `422` (`empty_transcript` or
+`transcription_failed`) — voice can never bypass a validation rule
+typed messages are held to, since it's validated through the same
+`MessageCreate` schema.
+
+**Security**: the transcribed text receives no elevated trust — it
+becomes an ordinary `content` string passed into the same
+`post_message()` path, subject to the same untrusted-retrieved-content
+handling as a typed question (`docs/SECURITY.md` §"Prompt injection
+defense").
+
+**Audio playback**: `GET .../messages/{message_id}/audio` synthesizes
+the given message's `content` as WAV audio on demand — no audio is ever
+persisted. `404` for a non-`ASSISTANT` message (nothing to play back for
+a `USER` message) or one belonging to another conversation/workspace
+(same non-leaking pattern as every other lookup in this API). A
+synthesis-provider failure is `502` `audio_synthesis_failed`.
+
+**Rate limiting**: a dedicated `voice_message` operation, same shape as
+`conversation_message` — a voice message is strictly more expensive
+(adds a real transcription pass over the uploaded audio).
+
+**Providers**: `SpeechToTextProvider`/`TextToSpeechProvider`
+(`backend/app/voice/`) are local, offline implementations (PocketSphinx,
+`espeak-ng`) — no paid API, no vendor selected yet. See
+[ADR 0008](DECISIONS/0008-local-speech-to-text-and-text-to-speech-providers.md).
 
 ## Related documents
 

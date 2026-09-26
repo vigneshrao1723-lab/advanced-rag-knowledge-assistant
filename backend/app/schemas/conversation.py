@@ -35,3 +35,14 @@ class MessageCreate(BaseModel):
     # query text, not stored document content, so there is no ingestion-
     # style large-input case to support here.
     content: str = Field(min_length=1, max_length=4000)
+
+
+class VoiceMessageRead(BaseModel):
+    """Response for a posted voice message (GitHub Issue #6) — the
+    transcript produced by speech-to-text, plus the same `MessageRead`
+    shape the text-message endpoint returns (grounded answer +
+    citations), since voice reuses that exact flow rather than a
+    separate one."""
+
+    transcript: str
+    message: MessageRead
