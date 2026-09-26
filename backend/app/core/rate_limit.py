@@ -142,6 +142,12 @@ process_rate_limiter = FixedWindowRateLimiter(limit=20, window_seconds=60)
 # (a future real LLM/reranker provider would also be a metered external
 # call) -- Tier A, same numbers pending real usage data.
 conversation_message_rate_limiter = FixedWindowRateLimiter(limit=20, window_seconds=60)
+# Issue #6 — posting a voice message (STT + the same retrieval/generation
+# work as a text message). Strictly more expensive than
+# `conversation_message` (adds a real transcription pass over the
+# uploaded audio), so it gets its own dimension rather than sharing one,
+# but the same Tier A numbers pending real usage data.
+voice_message_rate_limiter = FixedWindowRateLimiter(limit=20, window_seconds=60)
 
 
 def client_ip(request: Request) -> str:
@@ -656,6 +662,32 @@ def enforce_conversation_message_rate_limit(
         dimensions=dimensions,
         redis_client=redis_client,
         fallback=conversation_message_rate_limiter,
+        fallback_key=str(user_id),
+        fail_open_on_redis_error=False,
+    )
+
+
+def enforce_voice_message_rate_limit(
+    request: Request,
+    *,
+    user_id: uuid.UUID,
+    redis_client: redis.Redis | None,
+) -> None:
+    """Tier A (ADR 0006 §13) — IP + authenticated user ID. Same shape and
+    rationale as `enforce_conversation_message_rate_limit()` above."""
+    settings = get_settings()
+    ip = resolve_client_ip(request, settings.trusted_proxy_cidrs_list)
+
+    dimensions = [
+        _dimension("voice_message", "ip", ip, voice_message_rate_limiter),
+        _dimension("voice_message", "user", str(user_id), voice_message_rate_limiter),
+    ]
+
+    _check_or_fallback(
+        operation="voice_message",
+        dimensions=dimensions,
+        redis_client=redis_client,
+        fallback=voice_message_rate_limiter,
         fallback_key=str(user_id),
         fail_open_on_redis_error=False,
     )

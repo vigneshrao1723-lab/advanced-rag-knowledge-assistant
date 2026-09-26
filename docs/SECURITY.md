@@ -342,6 +342,45 @@ indexing,** `backend/app/ingestion/chunking.py` +
   metadata never includes raw chunk content, embedding vectors, a raw
   exception, filesystem path, or storage key.
 
+## Voice input safety
+
+**Implemented (GitHub Issue #6 —
+`backend/app/voice/`, `app/services/conversation_service.py`):** audio
+input is untrusted input like any other upload, per the goal stated in
+"Upload & document safety" above, applied to the voice endpoint:
+
+- Only WAV audio is accepted (`400` `unsupported_audio_format`
+  otherwise) — no arbitrary-format parsing surface for the STT provider
+  to have to defend on its own.
+- Size enforced by `max_voice_audio_size_bytes` (default 10 MiB) while
+  *streaming* the upload, the same running-total-checked-chunk-by-chunk
+  pattern as document upload's own size limit.
+- Duration additionally bounded (120s max), checked from the WAV
+  header — a highly compressed or low-bitrate file could otherwise pass
+  the byte-size check while still describing an unreasonably long
+  recording.
+- **The transcribed text receives no elevated trust.** It becomes an
+  ordinary `content` string passed through the *same* `MessageCreate`
+  validation and the *exact same* `post_message()` retrieval/generation
+  path a typed question uses — voice never bypasses a validation rule
+  or authorization check typed messages are held to, and never
+  interprets the transcript as anything other than a user query (see
+  "Prompt injection defense" below — the same untrusted-retrieved-
+  content handling applies regardless of how the query text arrived).
+- Rate-limited (`voice_message` operation, IP + authenticated user ID,
+  same Tier A policy as `conversation_message`) — a voice message is
+  strictly more expensive (a real transcription pass over the uploaded
+  audio) than its text equivalent.
+- Audio playback (`GET .../messages/{message_id}/audio`) synthesizes
+  on demand from already-persisted message text — no audio is ever
+  stored, so there is no new data-at-rest surface to protect; only an
+  `ASSISTANT` message's own content can be synthesized, and the
+  standard workspace-scoped, non-leaking `404` pattern applies to a
+  missing or cross-workspace message ID.
+- No commercial STT/TTS vendor is used, so no recorded audio ever
+  leaves this deployment to a third party — see
+  [ADR 0008](DECISIONS/0008-local-speech-to-text-and-text-to-speech-providers.md).
+
 ## Retrieval workspace isolation
 
 **Implemented (GitHub Issue #4, Slice 4.2 —
@@ -488,8 +527,12 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
   response and a safe `failure_reason`, never a `500` or a crash).
 - **Prompt injection tests** — documents containing instruction-like text
   ("ignore the above," attempts to leak system prompt or other users'
-  data); the system must not comply with injected instructions. Not
-  implemented — no generation surface exists yet (Issue #4).
+  data); the system must not comply with injected instructions.
+  **Implemented (Issue #4, Slice 4.4)** — `backend/tests/test_prompt_injection.py`,
+  a 12-payload corpus tested at both the provider level and the full
+  HTTP pipeline; see "Prompt injection defense" below for the full
+  write-up. Voice's own transcript input reuses this same defense
+  unchanged (Issue #6 — see "Voice input safety" above).
 - **Auth bypass tests** — attempt to access protected endpoints without a
   valid session, with an expired session, or with a session from a
   different workspace. **Implemented (Issue #2)** —
@@ -531,6 +574,15 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
   token rejection, session invalidation after reset, a token issued for one
   user never affecting another user. **Implemented (Issue #2)** —
   `backend/tests/test_password_reset.py`.
+- **Voice input tests** — oversized/over-duration audio, an unsupported
+  format, silent/unrecognizable audio, and a voice message never
+  bypassing the same validation/authorization/rate-limit/workspace-
+  isolation rules a typed message is held to. **Implemented (Issue #6)**
+  — `backend/tests/test_voice_providers.py` (provider-contract unit
+  tests) and `backend/tests/test_voice_conversations.py` (HTTP-level,
+  including a regression test proving a voice-driven question and its
+  text-chat equivalent produce identical grounded/citation output from
+  the same underlying pipeline).
 
 The remaining tests (malicious upload, prompt injection, path traversal)
 are written alongside their corresponding feature per the Definition of
@@ -552,3 +604,5 @@ Done in `AGENTS.md` §7, not deferred to a later "security phase."
 - [`docs/DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md`](DECISIONS/0006-redis-distributed-rate-limiting-abuse-protection.md)
   — the Redis rate-limiting/abuse-protection design referenced above
   (design only; not yet implemented).
+- [`docs/DECISIONS/0008-local-speech-to-text-and-text-to-speech-providers.md`](DECISIONS/0008-local-speech-to-text-and-text-to-speech-providers.md)
+  — the local/offline STT/TTS provider decision referenced above.

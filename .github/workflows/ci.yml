@@ -60,6 +60,12 @@ jobs:
         with:
           python-version: "3.13"
 
+      # `espeak-ng`: the offline TTS backend `app/voice/tts_provider.py`
+      # (Issue #6) shells out to as a subprocess — needed for this job's
+      # own tests, not just the Docker image.
+      - name: Install espeak-ng (voice TTS backend)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends espeak-ng
+
       - name: Install dependencies
         run: uv sync --all-extras --dev
 

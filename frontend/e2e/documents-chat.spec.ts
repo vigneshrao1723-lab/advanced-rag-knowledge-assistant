@@ -52,7 +52,9 @@ test.describe.serial("Upload a document and ask a grounded question about it", (
     await expect(page.getByText("Ask a question to get started.")).toBeVisible();
 
     await page.getByLabel("Ask a question").fill("What is the refund policy?");
-    await page.getByRole("button", { name: "Ask" }).click();
+    // `exact: true` -- Issue #6 added a second "Ask by voice" button to
+    // the same form, which a plain substring match would also resolve.
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
 
     await expect(page.getByText(/refund policy/i)).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/refund-policy\.txt/)).toBeVisible();

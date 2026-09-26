@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import * as api from "@/lib/api-client";
 import { ApiError } from "@/lib/api-client";
 import type { Citation, Conversation, Document, Message } from "@/lib/schemas";
+import { startVoiceRecording, type VoiceRecorder } from "@/lib/voice-recorder";
 import { useWorkspace } from "@/lib/workspace-context";
 
 function ConversationList({
@@ -79,10 +80,72 @@ function citationLabel(citation: Citation, documentsById: Map<string, Document>)
   return parts.join(" · ");
 }
 
+function AudioPlaybackButton({
+  workspaceId,
+  conversationId,
+  messageId,
+}: {
+  workspaceId: string;
+  conversationId: string;
+  messageId: string;
+}) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  function ensureAudioElement(): HTMLAudioElement {
+    if (!audioRef.current) {
+      const audio = new Audio(api.getMessageAudioUrl(workspaceId, conversationId, messageId));
+      audio.addEventListener("ended", () => setIsPlaying(false));
+      audioRef.current = audio;
+    }
+    return audioRef.current;
+  }
+
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+    };
+  }, []);
+
+  async function handleToggle() {
+    setError(null);
+    const audio = ensureAudioElement();
+    if (isPlaying) {
+      // Interrupt/stop: pausing and resetting position, not just muting
+      // -- a re-click starts the answer over, matching "stop," not
+      // "pause and silently resume where it left off."
+      audio.pause();
+      audio.currentTime = 0;
+      setIsPlaying(false);
+      return;
+    }
+    try {
+      await audio.play();
+      setIsPlaying(true);
+    } catch {
+      setError("Could not play audio.");
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <Button type="button" variant="outline" size="sm" onClick={handleToggle}>
+        {isPlaying ? "Stop" : "Play answer"}
+      </Button>
+      {error && <span className="text-destructive text-xs">{error}</span>}
+    </div>
+  );
+}
+
 function MessageBubble({
+  workspaceId,
+  conversationId,
   message,
   documentsById,
 }: {
+  workspaceId: string;
+  conversationId: string;
   message: Message;
   documentsById: Map<string, Document>;
 }) {
@@ -96,6 +159,13 @@ function MessageBubble({
       >
         {message.content}
       </div>
+      {!isUser && !message.id.startsWith("pending-") && (
+        <AudioPlaybackButton
+          workspaceId={workspaceId}
+          conversationId={conversationId}
+          messageId={message.id}
+        />
+      )}
       {message.citations.length > 0 && (
         <ul className="text-muted-foreground flex flex-col gap-0.5 text-xs">
           {message.citations.map((citation) => (
@@ -124,7 +194,10 @@ function ConversationThread({
   const [question, setQuestion] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const recorderRef = useRef<VoiceRecorder | null>(null);
 
   const loadMessages = useCallback(async () => {
     setIsLoading(true);
@@ -177,6 +250,50 @@ function ConversationThread({
     }
   }
 
+  async function handleRecordToggle() {
+    setSendError(null);
+    if (isRecording) {
+      // Interrupt/stop: clicking again while recording stops it and
+      // transcribes whatever was captured so far, rather than requiring
+      // a fixed recording duration.
+      setIsRecording(false);
+      setIsTranscribing(true);
+      try {
+        const audioBlob = await recorderRef.current?.stop();
+        recorderRef.current = null;
+        if (!audioBlob) return;
+        const { transcript, message: assistantMessage } = await api.postVoiceMessage(
+          workspaceId,
+          conversationId,
+          audioBlob
+        );
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `pending-${prev.length}`,
+            role: "USER",
+            content: transcript,
+            created_at: new Date().toISOString(),
+            citations: [],
+          },
+          assistantMessage,
+        ]);
+      } catch (err) {
+        setSendError(err instanceof ApiError ? err.message : "Could not process that recording.");
+      } finally {
+        setIsTranscribing(false);
+      }
+      return;
+    }
+
+    try {
+      recorderRef.current = await startVoiceRecording();
+      setIsRecording(true);
+    } catch {
+      setSendError("Could not access the microphone.");
+    }
+  }
+
   return (
     <Card className="flex flex-1 flex-col">
       <CardHeader>
@@ -193,7 +310,13 @@ function ConversationThread({
             <p className="text-muted-foreground text-sm">Ask a question to get started.</p>
           ) : (
             messages.map((message) => (
-              <MessageBubble key={message.id} message={message} documentsById={documentsById} />
+              <MessageBubble
+                key={message.id}
+                workspaceId={workspaceId}
+                conversationId={conversationId}
+                message={message}
+                documentsById={documentsById}
+              />
             ))
           )}
           <div ref={bottomRef} />
@@ -214,6 +337,14 @@ function ConversationThread({
           </div>
           <Button type="submit" disabled={isSending || !question.trim()}>
             {isSending ? "Asking…" : "Ask"}
+          </Button>
+          <Button
+            type="button"
+            variant={isRecording ? "destructive" : "outline"}
+            disabled={isTranscribing}
+            onClick={handleRecordToggle}
+          >
+            {isRecording ? "Stop recording" : isTranscribing ? "Transcribing…" : "Ask by voice"}
           </Button>
         </form>
         {sendError && <p className="text-destructive text-sm">{sendError}</p>}

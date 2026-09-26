@@ -28,8 +28,14 @@ vi.mock("@/lib/api-client", async () => {
     listDocuments: vi.fn(),
     listMessages: vi.fn(),
     postMessage: vi.fn(),
+    postVoiceMessage: vi.fn(),
   };
 });
+
+const mockStartVoiceRecording = vi.fn();
+vi.mock("@/lib/voice-recorder", () => ({
+  startVoiceRecording: () => mockStartVoiceRecording(),
+}));
 
 import * as api from "@/lib/api-client";
 import ChatPage from "@/app/chat/page";
@@ -159,5 +165,92 @@ describe("ChatPage", () => {
     render(<ChatPage />);
 
     expect(await screen.findByText(/select or create a workspace/i)).toBeInTheDocument();
+  });
+
+  it("records, stops, and posts a voice message, appending the transcript and answer", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([
+      { id: "c1", title: null, created_at: "", updated_at: "" },
+    ]);
+    vi.mocked(api.listDocuments).mockResolvedValue([]);
+    vi.mocked(api.listMessages).mockResolvedValue([]);
+    const recorderStop = vi.fn().mockResolvedValue(new Blob(["audio"], { type: "audio/wav" }));
+    mockStartVoiceRecording.mockResolvedValue({ stop: recorderStop, cancel: vi.fn() });
+    vi.mocked(api.postVoiceMessage).mockResolvedValue({
+      transcript: "what is the refund policy",
+      message: {
+        id: "m2",
+        role: "ASSISTANT",
+        content: "Refunds within 30 days.",
+        created_at: "",
+        citations: [],
+      },
+    });
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText(/ask a question to get started/i);
+    await user.click(screen.getByRole("button", { name: /ask by voice/i }));
+
+    await waitFor(() => expect(mockStartVoiceRecording).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: /stop recording/i }));
+
+    await waitFor(() => expect(recorderStop).toHaveBeenCalled());
+    await waitFor(() => expect(api.postVoiceMessage).toHaveBeenCalledWith("w1", "c1", expect.any(Blob)));
+    expect(await screen.findByText(/what is the refund policy/i)).toBeInTheDocument();
+    expect(await screen.findByText(/refunds within 30 days/i)).toBeInTheDocument();
+  });
+
+  it("shows an error when microphone access is denied", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([
+      { id: "c1", title: null, created_at: "", updated_at: "" },
+    ]);
+    vi.mocked(api.listDocuments).mockResolvedValue([]);
+    vi.mocked(api.listMessages).mockResolvedValue([]);
+    mockStartVoiceRecording.mockRejectedValue(new Error("denied"));
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText(/ask a question to get started/i);
+    await user.click(screen.getByRole("button", { name: /ask by voice/i }));
+
+    expect(await screen.findByText(/could not access the microphone/i)).toBeInTheDocument();
+  });
+
+  it("plays and stops an assistant message's synthesized audio", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([
+      { id: "c1", title: null, created_at: "", updated_at: "" },
+    ]);
+    vi.mocked(api.listDocuments).mockResolvedValue([]);
+    vi.mocked(api.listMessages).mockResolvedValue([
+      {
+        id: "m1",
+        role: "ASSISTANT",
+        content: "Refunds within 30 days.",
+        created_at: "",
+        citations: [],
+      },
+    ]);
+    const play = vi.fn().mockResolvedValue(undefined);
+    const pause = vi.fn();
+    vi.spyOn(window.HTMLMediaElement.prototype, "play").mockImplementation(play);
+    vi.spyOn(window.HTMLMediaElement.prototype, "pause").mockImplementation(pause);
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    const playButton = await screen.findByRole("button", { name: /play answer/i });
+    await user.click(playButton);
+
+    expect(play).toHaveBeenCalled();
+    const stopButton = await screen.findByRole("button", { name: /^stop$/i });
+    await user.click(stopButton);
+
+    expect(pause).toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: /play answer/i })).toBeInTheDocument();
   });
 });

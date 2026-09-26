@@ -174,3 +174,12 @@ export const MessageSchema = z.object({
 });
 export type Message = z.infer<typeof MessageSchema>;
 export const MessageListSchema = z.array(MessageSchema);
+
+// --- Voice (Issue #6) ---
+// Mirrors backend/app/schemas/conversation.py's VoiceMessageRead.
+
+export const VoiceMessageSchema = z.object({
+  transcript: z.string(),
+  message: MessageSchema,
+});
+export type VoiceMessage = z.infer<typeof VoiceMessageSchema>;
