@@ -10,11 +10,45 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-29 — Issue #7: Evaluation, Security & Observability
+### 2026-09-29 — Issue #8: Finalization (in progress)
+
+*(Working directly on `main`, cut from the merged Issue #7 (`6865166`,
+PR #32). Not yet committed as of this entry.)*
+
+- Rewrites `README.md` from a stale Issue #1/#2-only status to reflect
+  the real, current Issues #1–#7 state: a status banner, a real pipeline
+  diagram, a Quickstart, an environment-variables section, a
+  running-tests section, a running-the-evaluation-harness section, a
+  citations/retrieval/security explainer, and an updated architecture/
+  development-status table.
+- Updates `docs/DEPLOYMENT.md`: status header, backend Dockerfile
+  description (`espeak-ng`), verification-log paragraph (full product
+  flow, not just auth), CI section (Redis service container +
+  `espeak-ng` install step), a stale "not yet pushed" line, and an
+  expanded "Target deployment environment" section explaining the
+  deliberate scope boundary.
+- Rewrites `PROJECT_STATE.md` from a severely stale snapshot (its header
+  still described "Issue #2" as the current phase) into a condensed,
+  accurate, current-state summary — the exhaustive historical narrative
+  it used to carry stays in this file (`CHANGELOG.md`) instead.
+- Verifies, with no code changes needed: a full cold-container Docker
+  Compose restart; a comprehensive 10-step manual "CRITICAL FINAL
+  END-TO-END TEST" walkthrough via `curl` (register/workspace/upload/
+  process/READY/conversation/ask/citations/source-inspection/
+  cross-workspace-isolation/prompt-injection-resistance/malformed-
+  document-handling/auth-CSRF-boundaries — all passed); the full backend
+  pytest suite fresh (717/722, 5 known-artifact failures re-confirmed
+  unrelated); the full Playwright E2E suite fresh (20/20);
+  `docs/API_CONTRACT.md` read through for staleness (found accurate).
+
+## [Unreleased — committed]
+
+### 2026-09-29 — `feat: evaluation experiment tracking, observability, and security hardening (Issue #7)` (#32), merged as `6865166`
 
 *(Branch `issue-7-evaluation-security-observability`, cut from the
-merged Issue #6 (`90bd0b7`, PR #31). Implemented and fully tested; not
-yet committed as of this entry.)*
+merged Issue #6 (`90bd0b7`, PR #31). Opened as **PR #32**, verified green
+on GitHub Actions CI, and **merged into `main` as squash commit
+`6865166`**.)*
 
 - Adds `evaluation_runs`/`evaluation_results` (migration `0008`,
   `backend/app/models/evaluation_run.py`/`evaluation_result.py`,
@@ -72,8 +106,6 @@ yet committed as of this entry.)*
 - Docs updated in the same working tree: `docs/EVALUATION.md`,
   `docs/DATA_MODEL.md`, `docs/RAG_DESIGN.md`, `docs/ARCHITECTURE.md`,
   `docs/SECURITY.md`, `PROJECT_STATE.md`, `HANDOFF.md`, `SOLVING.md`.
-
-## [Unreleased — committed]
 
 ### 2026-09-26 — `feat: add voice (STT/TTS) as a mode within chat (Issue #6)` (#31), merged as `90bd0b7`
 
@@ -1173,8 +1205,6 @@ pre-review + 1 new), 3 consecutive runs.
 - No application code, dependencies, database schema, Docker services, or
   API endpoints were added — this was a documentation-only initialization
   task.
-
-## [Unreleased — committed]
 
 ### 2026-09-21 — `feat: add document upload API (Issue #3, Slice 3.3)` (b81b7d2) + docs (b3cf3cf), merged as `a6762e2`
 
