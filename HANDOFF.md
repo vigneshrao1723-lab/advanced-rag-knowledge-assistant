@@ -182,18 +182,38 @@ commit `0687d07`.** `main`/`origin/main` are at `0687d07`. See
 Documents/Chat pages)" below for the full design, including a real
 citations-in-history bug found and fixed along the way.
 
-**GitHub Issue #6 (Voice) has started, per the 5-day plan's Day 3/4
-scope.** STT/TTS provider abstractions (`backend/app/voice/`) wired
-into the existing chat flow — no separate pipeline; voice transcribes
-audio, then calls the *exact same* `post_message()` the text flow uses.
-**Is IMPLEMENTED and FULLY TESTED, on branch `issue-6-voice`** (cut from
-`0687d07`) — not yet committed, pushed, or opened as a PR; see "Exact
-next recommended action" at the end of this file. See "Completed work
-(Issue #6 — Voice: STT/TTS provider abstractions + chat integration)"
-below for the full design, including a genuine `pyttsx3`
-implementation-time finding (replaced with a direct `espeak-ng`
-subprocess call) and a real end-to-end manual verification against a
-live, freshly rebuilt Docker stack via `curl`.
+**GitHub Issue #6 (Voice)** — STT/TTS provider abstractions
+(`backend/app/voice/`) wired into the existing chat flow — no separate
+pipeline; voice transcribes audio, then calls the *exact same*
+`post_message()` the text flow uses — **was committed, pushed, opened
+as PR #31, and merged into `main` as squash commit `90bd0b7`**
+(including a follow-up commit fixing a real E2E test regression: the
+new "Ask by voice" button made `documents-chat.spec.ts`'s existing
+`getByRole("button", {name: "Ask"})` locator ambiguous). `main`/
+`origin/main` are at `90bd0b7`. See "Completed work (Issue #6 — Voice:
+STT/TTS provider abstractions + chat integration)" below for the full
+design, including a genuine `pyttsx3` implementation-time finding
+(replaced with a direct `espeak-ng` subprocess call) and a real
+end-to-end manual verification against a live, freshly rebuilt Docker
+stack via `curl`.
+
+**GitHub Issue #7 (Evaluation, Security & Observability) has started,
+per the 5-day plan's Day 4 scope.** Extends Issue #4 Slice 4.4's
+fixture-scale evaluation hooks into real, persisted experiment
+tracking (`evaluation_runs`/`evaluation_results`, migration `0008`)
+comparing 4 retrieval methods × 2 chunking strategies; adds per-stage
+retrieval/generation latency + a token-usage-proxy as structured logs;
+closes a real cross-workspace audit-logging gap found via a dedicated
+review. **Is IMPLEMENTED and FULLY TESTED, on branch
+`issue-7-evaluation-security-observability`** (cut from `90bd0b7`) —
+not yet committed, pushed, or opened as a PR; see "Exact next
+recommended action" at the end of this file. See "Completed work
+(Issue #7 — Evaluation, Security & Observability)" below for the full
+design, including two genuine findings (a metric-persistence design
+decision and a real Alembic-`fileConfig`-disables-loggers bug found via
+a `caplog` test) and a real, honest retrieval-comparison result
+(lexical-only retrieval is genuinely weaker than dense/hybrid on the
+eval fixture).
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -3352,8 +3372,10 @@ pages against it.
 
 ## Completed work (Issue #6 — Voice: STT/TTS provider abstractions + chat integration)
 
-**Uncommitted, working-tree-only, on branch `issue-6-voice` (cut from
-`0687d07`).** Per the GitHub issue's own explicit scope: voice is a mode
+**Committed, pushed, opened as PR #31, and merged into `main` as squash
+commit `90bd0b7`** (plus a small follow-up commit on the same PR fixing
+a real E2E locator regression the new voice UI caused — see "Current
+task" above). Per the GitHub issue's own explicit scope: voice is a mode
 within the existing chat flow, not a parallel product surface or a
 duplicated RAG pipeline — every voice-driven answer runs through the
 *exact same* retrieval/generation/citation code Issue #4 already built.
@@ -3578,6 +3600,212 @@ duplicated RAG pipeline — every voice-driven answer runs through the
   and already known-stale), `docs/DECISIONS/0008-...md` (new ADR), this
   file, `CHANGELOG.md`.
 
+## Completed work (Issue #7 — Evaluation, Security & Observability)
+
+**Uncommitted, working-tree-only, on branch
+`issue-7-evaluation-security-observability` (cut from `90bd0b7`).** Per
+the GitHub issue's own explicit scope: "measure and harden what Issues
+#2–#4 already built; does not add new retrieval/generation capability."
+Started with a background research-agent audit of `docs/SECURITY.md`'s
+"Security testing" checklist, `backend/app/observability/`,
+`backend/app/core/audit.py`, rate-limit dimension coverage, and the
+existing eval harness, to find the *real* gaps rather than
+re-implementing already-covered ground — its report was independently
+spot-checked (and two of its claimed gaps — cross-workspace tests for
+conversations/voice, and rate-limit-under-load tests for
+document_process/conversation_message/voice_message — turned out to
+already exist; verified directly via `grep` before trusting the report,
+per this project's own "before recommending from memory, verify"
+discipline).
+
+- **Full evaluation harness / experiment tracking** (migration `0008`,
+  `backend/app/models/evaluation_run.py`/`evaluation_result.py`,
+  `app/repositories/evaluation_run_repository.py`/
+  `evaluation_result_repository.py`):
+  - `evaluation_runs`: embedding model, chunking strategy/size/overlap,
+    retrieval method, top-K, reranker, LLM provider, document/query
+    count. `workspace_id` nullable with `ON DELETE SET NULL` (not
+    CASCADE) — deliberate: the eval script runs against a dedicated,
+    throwaway workspace deleted at the end of every run, but a run's
+    whole purpose is to be a durable, comparable-over-time record that
+    must outlive that cleanup (verified directly: after a real run,
+    `evaluation_runs.workspace_id` was confirmed `NULL` in the database
+    while the run/result rows themselves remained).
+  - `evaluation_results`: one row per metric per run (`recall@3`,
+    `precision@3`, `mrr`, `ndcg@3`, `hit_rate@3`), not a wide/sparse
+    fixed-column table — matches `RetrievalEvent.method`'s own "plain
+    string, open-ended taxonomy" reasoning. `ON DELETE CASCADE` from
+    `evaluation_runs`.
+  - `backend/app/ingestion/chunking.py` gains `FixedSizeChunker` (new):
+    a naive, non-structure-aware baseline (fixed-size character
+    windows, no boundary preference) — exists purely as the second
+    chunking-strategy comparison point this issue's Definition of Done
+    requires ("at least two chunking strategies"); the real ingestion
+    pipeline (`document_service.process_document()`) is unaffected and
+    still uses only `StructureAwareChunker`. The module's own
+    pre-existing docstring had already anticipated this exact addition
+    ("a future strategy (fixed-size, recursive...) can be swapped in").
+    7 new unit tests (`tests/test_chunking.py`) — windowing, overlap,
+    determinism, no cross-section merging, gapless indexes, empty
+    input, and the defining "may cut mid-word, unlike
+    `StructureAwareChunker`" behavioral difference.
+  - `eval/scripts/run_retrieval_evaluation.py` (extended, not
+    rewritten from scratch): now runs **4 retrieval methods** per
+    chunking strategy — dense-only, lexical-only, hybrid (no rerank),
+    hybrid+reranked — reconstructed from the same lower-level building
+    blocks `hybrid_search()` itself composes (`dense_search()`/
+    `lexical_search()`/`reciprocal_rank_fusion()`/the reranker)
+    *inside the eval script*, not as a new "method" parameter bolted
+    onto the real, tested production entry point — so no application
+    code changed shape merely to serve evaluation. One dedicated
+    throwaway workspace per chunking strategy (2 total), 8
+    `EvaluationRun`+`EvaluationResult` row sets persisted per execution.
+  - **Actually run against real Postgres** (`cd backend && uv run
+    python ../eval/scripts/run_retrieval_evaluation.py`), twice, with
+    identical metric output both times (confirmed determinism).
+    **Real, honest results, committed in
+    `eval/results/retrieval_evaluation.json`**: dense/hybrid/
+    hybrid+reranked all reach Recall@3=1.0/MRR=1.0/nDCG@3=1.0/
+    HitRate@3=1.0/Precision@3=0.33 on both chunking strategies
+    (identical between the two — every fixture document is short
+    enough to become exactly one chunk under either chunker, so
+    chunking strategy has no differentiating effect at this fixture's
+    scale, not a claim the two chunkers are equivalent in general).
+    **Lexical-only retrieval is genuinely weaker** (0.71 across those
+    same metrics) — a real finding from this run, reported exactly as
+    computed, not adjusted or hidden, per `docs/EVALUATION.md`'s "never
+    fabricate results" rule.
+  - Verified real persistence directly (not just trusting the script's
+    own stdout): queried `evaluation_runs`/`evaluation_results` after a
+    run — 8 runs, 40 results, `workspace_id` correctly `NULL` after the
+    throwaway workspace's own deletion.
+  - 12 new schema tests (`backend/tests/test_evaluation_schema.py`,
+    mirroring `test_conversation_schema.py`'s own structure/depth):
+    table existence, FK validity/rejection, the deliberate `SET NULL`
+    (not `CASCADE`) behavior on workspace deletion, cascade delete from
+    `evaluation_runs` to `evaluation_results`, nullable-field defaults,
+    database-assigned timestamps.
+- **Observability — per-stage latency + a token-usage proxy**
+  (`app/retrieval/service.py`, `app/generation/service.py`), per
+  `docs/RAG_DESIGN.md`'s "Observability" section, as structured JSON
+  logs (`app/observability/logging.py`'s existing convention) rather
+  than new database columns — debugging/telemetry detail, distinct from
+  the durably-persisted `evaluation_runs`/`retrieval_events` history
+  above:
+  - `hybrid_search()` logs `retrieval_stage_latencies` —
+    `embed_ms`/`dense_ms`/`lexical_ms`/`rerank_ms`/`total_ms` plus
+    per-stage candidate counts. The existing `RetrievalEvent.latency_ms`
+    column (end-to-end, Issue #4) is unchanged.
+  - `generate_answer()` logs `generation_stage_latencies` —
+    `context_build_ms`/`generation_ms`, plus `context_chars`/
+    `answer_chars` as a **character-count proxy for token usage**: the
+    shipped `LocalGroundedExtractiveProvider` is deterministic and
+    non-tokenizing (ADR 0007), so character counts are the closest
+    honest analog available today, not a claim of real token
+    accounting.
+  - 2 new tests using pytest's `caplog` fixture
+    (`test_retrieval.py::test_hybrid_search_logs_per_stage_latencies`,
+    `test_generation.py::test_generate_answer_logs_per_stage_latencies_and_usage`)
+    — confirms the telemetry actually records data for a real pipeline
+    run, per this issue's own explicit testing requirement, not just
+    that the logging code doesn't crash.
+  - **A genuine, non-obvious bug found and fixed while writing these
+    tests**: both new `caplog` tests initially failed with zero
+    captured records, even in complete isolation, despite the
+    production code unquestionably calling `logger.info(...)` (confirmed
+    via a temporary `print()` alongside it). Root cause:
+    `backend/alembic/env.py`'s `fileConfig(config.config_file_name)`
+    call used its own default `disable_existing_loggers=True`, which
+    silently disables every logger not explicitly listed in
+    `alembic.ini` (only `root`/`sqlalchemy`/`alembic` are) —
+    `tests/conftest.py`'s session-scoped, autouse migration fixture
+    runs `command.upgrade()` (triggering this) once per pytest session,
+    permanently disabling `app.retrieval`/`app.generation`/every other
+    `app.*` logger for the rest of that session. Invisible before this
+    slice (no prior test used `caplog` against any `app.*` logger) and
+    invisible in production (Alembic runs as a separate one-shot CLI
+    process there, never touching the running app process). Fixed:
+    `fileConfig(config.config_file_name, disable_existing_loggers=False)`
+    — Alembic's own logging configuration is completely unaffected; this
+    only stops it from disabling *other* loggers it was never Alembic's
+    concern to control. Full write-up, including the diagnostic process
+    (standalone reproduction passed, in-suite reproduction failed,
+    narrowing to `conftest.py`'s session setup), in `SOLVING.md`.
+- **Security hardening — cross-workspace resource-access audit logging**
+  (`app/core/audit.py`, `app/services/document_service.py`,
+  `app/services/conversation_service.py`, `app/api/v1/documents.py`,
+  `app/api/v1/conversations.py`): a real gap found during the research
+  audit and independently confirmed — `AuditEvent.AUTHORIZATION_DENIED`
+  already fires at the workspace-membership gate
+  (`require_workspace_role`, Issue #2), but once inside a
+  workspace-authorized request, a document/conversation ID belonging to
+  *another* workspace (or a genuinely nonexistent one) returned a plain,
+  unaudited `404` — `document_service._document_not_found_error()`/
+  `conversation_service._conversation_not_found_error()`'s call sites
+  had zero audit calls.
+  - New `AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` — wired
+    into `document_service.get_document()`/`process_document()` and
+    every `conversation_service` entry point that resolves a
+    conversation ID (`list_messages`/`post_message`/
+    `transcribe_and_post_voice_message`/`synthesize_message_audio`).
+    Metadata: `resource_type` (`"document"`/`"conversation"`) and the
+    attempted resource ID — never content. `user_id`/`ip_address`
+    threaded through from each endpoint (`ctx.user.id`/`client_ip(request)`),
+    matching the existing `require_workspace_role` audit pattern exactly.
+  - Deliberately scoped out: the voice-audio-playback endpoint's
+    `_message_not_found_error()` (a valid conversation but wrong-role or
+    missing message ID) is left unaudited — the conversation-level check
+    already covers the primary cross-workspace attack vector, and a
+    wrong-role message lookup within *your own* workspace is a much
+    weaker signal, not worth the added complexity for this slice.
+  - 2 new tests
+    (`test_document_listing.py::test_get_document_not_found_records_an_audit_event`,
+    `test_conversations.py::test_conversation_not_found_records_an_audit_event`)
+    — real HTTP request, real audit row queried back, correct
+    `event_type`/`workspace_id`/`user_id`/metadata.
+- **Security documentation audit and reconciliation** (`docs/SECURITY.md`):
+  the "Cross-workspace access tests" bullet under "Security testing"
+  still said "Conversations/collections don't exist yet" — stale
+  (conversations have had real cross-workspace tests since Issue #4
+  Slice 4.3, voice since Issue #6) — corrected with exact test-file
+  references. The "Rate limiting tests" bullet extended with an
+  explicit finding: GitHub Issue #7's "rate limiting completed across
+  uploads, embedding calls, LLM calls" requirement is **already met by
+  existing coverage, not a new dimension** — `document_process` already
+  covers every embedding call (it only happens inside that endpoint's
+  own pipeline) and `conversation_message`/`voice_message` already
+  cover every LLM call (generation only happens inside those two
+  endpoints); no code path calls either provider outside an
+  already-rate-limited operation, so a distinct dimension would be
+  redundant. New "Voice input safety"/"Voice input tests" references
+  were already added in Issue #6; this slice's `CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED`
+  event documented in "Audit logging."
+- **Verification**: backend — `ruff check .`/`mypy .` clean (host, and
+  inside a rebuilt Docker container for the voice-dependent tests this
+  host shell can't run natively). Full backend suite inside the
+  container: **717 passed, 5 failed** (all 5 isolated to the same
+  pre-existing, already-documented `EMAIL_PROVIDER` container-runtime
+  artifact in `test_password_reset.py` — confirmed via a targeted
+  `-e EMAIL_PROVIDER=console` re-run passing 16/16 cleanly; 722 total =
+  699 pre-slice + 23 new: 7 `FixedSizeChunker` + 12 evaluation schema +
+  2 observability/`caplog` + 2 audit-logging). Host-only run (excluding
+  the 21 voice tests this host can't run): 701/701 passing, confirming
+  the same result set minus voice. No frontend file changed this slice
+  — not re-run.
+- **Documentation updated this slice**: `docs/EVALUATION.md` (status
+  header, "Evaluation hooks"/"Configuration comparison"/"Experiment
+  tracking" sections rewritten for real IMPLEMENTED status, new
+  "Observability" section, real comparison-table results),
+  `docs/DATA_MODEL.md` (`evaluation_runs`/`evaluation_results` rows now
+  IMPLEMENTED), `docs/RAG_DESIGN.md` ("Observability" section's
+  Implemented note), `docs/ARCHITECTURE.md` (`evaluation/`/`eval/`
+  status), `docs/SECURITY.md` (as above), `PROJECT_STATE.md` (header,
+  "Evaluation harness"/"Observability / audit logging"/"Testing"/"Voice
+  (STT/TTS)"/"GitHub remote & issues" component-status rows, "Known
+  limitations", "Immediate priorities" — also corrected several rows
+  left stale from Issue #6's pre-merge state), `SOLVING.md` (the
+  Alembic-`fileConfig` finding), this file, `CHANGELOG.md`.
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -3640,9 +3868,9 @@ duplicated RAG pipeline — every voice-driven answer runs through the
   feedback, conversational context/query rewriting, responsive-mobile
   polish beyond what Tailwind's existing utility classes already give
   for free.
-- **Issue #6 (voice)** — implemented and fully tested, on branch
-  `issue-6-voice`, not yet merged — see "Completed work (Issue #6 —
-  Voice)" above. No live-browser (Playwright) voice test exists yet —
+- **Issue #6 (voice)** — merged (`90bd0b7`, PR #31) — see "Completed
+  work (Issue #6 — Voice)" above. No live-browser (Playwright) voice
+  test exists yet —
   real microphone/audio-device automation was judged disproportionately
   expensive for this slice given the backend is already fully verified
   via real `curl` calls and the frontend is fully component-tested with
@@ -3654,6 +3882,24 @@ duplicated RAG pipeline — every voice-driven answer runs through the
   not implemented — the shipped providers don't support it, and neither
   does the issue's own explicit Definition of Done require it beyond
   "streaming where the provider supports it."
+- **Issue #7 (evaluation, security & observability)** — implemented and
+  fully tested, on branch `issue-7-evaluation-security-observability`,
+  not yet merged — see "Completed work (Issue #7 — ...)" above. Not
+  done within this issue's own scope: a `recursive` third chunking
+  strategy and a chunk-size/overlap sweep (two strategies satisfies the
+  explicit "at least two" Definition-of-Done wording); the
+  voice-audio-playback endpoint's message-not-found path is not audited
+  (deliberately scoped out — see "Completed work" above for why);
+  `evaluation_runs`/`evaluation_results` have no dedicated API endpoint
+  to query them (not required by the issue — the eval script's own
+  stdout/JSON output and direct DB queries are the only access path
+  today, matching this issue's own "measure and harden," not "build a
+  dashboard" scope); no full production-scale evaluation corpus exists
+  (the 6-document/7-query fixture remains deliberately small — building
+  a larger, more realistic corpus was judged out of scope for a
+  security/observability-focused issue, and the existing fixture's own
+  documented limitation already explains why its numbers aren't a
+  production-quality claim).
 - **Endpoint-driven concurrency test under real HTTP load** — not added
   in the Slice 2 review-fix pass either; the property is proven at the
   engine level (`test_redis_rate_limiter.py`, merged with Slice 1) and
@@ -3667,79 +3913,82 @@ duplicated RAG pipeline — every voice-driven answer runs through the
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: GitHub Issue #6 — Voice
+## Next major task: GitHub Issue #8 — Finalization
 
-**GitHub Issue #3 (Knowledge Ingestion) and Issue #4 (Hybrid RAG
-Pipeline) are both fully merged and functionally complete** (PR #17
-`79d4787` through PR #28 `fd2041c`). **GitHub Issue #5 (Product
-Experience), Slice 5.1 — document list/get endpoints, real Documents/
-Chat pages, and browser E2E coverage — is fully merged** (PR #29
-`2ad720f`, PR #30 `0687d07`) and manually verified end-to-end in a real
-browser (20/20 Playwright tests, including the new
-`documents-chat.spec.ts` proving LOGIN → WORKSPACE → UPLOAD → READY →
-CHAT → ASK → ANSWER → CITATIONS genuinely works).
+**GitHub Issues #3, #4, #5 (Slice 5.1), and #6 are all fully merged and
+functionally complete** (PR #17 `79d4787` through PR #31 `90bd0b7`).
+Issue #6 (Voice) was manually verified end-to-end against a live,
+freshly rebuilt Docker stack via real `curl` calls — a real synthesized
+question was transcribed (imperfectly, an honestly documented
+PocketSphinx limitation), still correctly retrieved and cited the right
+document, and the answer's audio played back as a genuine WAV file.
 
-**GitHub Issue #6 (Voice) is implemented and fully tested**, on branch
-`issue-6-voice` (cut from `0687d07`) — not yet committed, pushed, or
-opened as a PR. See "Completed work (Issue #6 — Voice)" above for the
-full design: `SpeechToTextProvider`/`TextToSpeechProvider`
-(`backend/app/voice/`, PocketSphinx + a direct `espeak-ng` subprocess
-call — see that section for a genuine `pyttsx3` finding this slice
-fixed), two new endpoints wired into the *existing* conversations flow
-(`POST .../voice-messages`, `GET .../messages/{id}/audio`), and a
-record/stop + play/stop voice UI added directly into
-`frontend/app/chat/page.tsx`. Manually verified end-to-end against a
-live, freshly rebuilt Docker stack via real `curl` calls — a real
-synthesized question was transcribed (imperfectly, an honestly
-documented PocketSphinx limitation), still correctly retrieved and
-cited the right document, and the answer's audio played back as a
-genuine WAV file.
+**GitHub Issue #7 (Evaluation, Security & Observability) is implemented
+and fully tested**, on branch
+`issue-7-evaluation-security-observability` (cut from `90bd0b7`) — not
+yet committed, pushed, or opened as a PR. See "Completed work (Issue
+#7 — ...)" above for the full design: real, persisted
+`evaluation_runs`/`evaluation_results` experiment tracking (migration
+`0008`) comparing 4 retrieval methods × 2 chunking strategies (a new
+`FixedSizeChunker` naive baseline, evaluation-only); per-stage
+retrieval/generation latency + a token-usage proxy as structured logs;
+a new `CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` audit event closing a
+real gap (a resource-ID-from-another-workspace lookup previously
+returned an unaudited `404`); confirmation that rate-limiting for
+embedding/LLM calls is already covered by existing dimensions; a
+genuine Alembic-`fileConfig`-disables-loggers bug found and fixed via a
+`caplog` test (see `SOLVING.md`).
 
-**Before anything else starts**: commit Issue #6, push the branch, open
-a PR, confirm CI green (the CI workflow now installs `espeak-ng` on the
-backend job's runner — already wired in this branch), and **merge it
-promptly** — the 5-day timeline (see "Current task" above) authorizes
-this without waiting for a separate per-PR instruction.
+**Before anything else starts**: commit Issue #7, push the branch, open
+a PR, confirm CI green, and **merge it promptly** — the 5-day timeline
+(see "Current task" above) authorizes this without waiting for a
+separate per-PR instruction.
 
-**Then**: move to Issue #7 (security/evaluation/observability) per the
-5-day plan — see that GitHub issue's own scope for the explicit
-security-boundary test list (cross-workspace isolation via ID
-manipulation for documents/conversations/citations — much of this is
-already covered by existing tests, confirm and close any gap;
-secrets-not-in-errors; API-keys-never-in-frontend; tokens-not-
-insecurely-stored — already true, see `lib/api-client.ts`'s own tests;
-oversized-input-rejection — already true for documents/voice audio;
-abuse-control-enforcement; malformed-document-crash-resistance —
-already true, Issue #3), observability additions (request IDs — already
-implemented since Issue #1, confirm coverage extends to the new voice
-endpoints; latency breakdowns; retrieval-event metadata — already
-recorded, Issue #4; error categories; provider failures; structured
-logs with an explicit do-not-log list), and the **explicit instruction
-to inspect and fix `InsecureKeyLengthWarning` if it's a real
-configuration issue** — already investigated and fixed as a test-
-fixture-only issue during Issue #4 Slice 4.4 (see `SOLVING.md`), confirm
-it hasn't regressed. Then Issue #8 (finalization) — Docker/Compose
-verification (both images have been rebuilt and manually exercised
-multiple times already this session), health/readiness (already
-implemented since Issue #1), CI, deployment config, API docs, README
-(still deferred — Issue #8's own job), final security checks, final E2E
-tests, final end-to-end demonstration path. Issue #5's remaining lower-
-priority scope (source inspection needs a new backend endpoint first;
-feedback; rename/delete conversations; the `/chat/[id]`/`/documents/[id]`
-deep-link stub routes) remains deferred and documented, not forgotten —
-revisit if time remains after Issues #7/#8's critical paths land. Use
-the existing frontend architecture/design system (`frontend/app/`,
-`frontend/lib/api-client.ts`'s existing `credentials: "include"` + CSRF-
-header pattern) — do not invent a new one. Inspect `docs/API_CONTRACT.md`
-before implementing further — do not assume detail beyond what it
-documents (update it as part of the same change if it's missing
-something you add). **Critical, explicitly restated security requirement
-(already implemented and tested on the backend, do not regress)**:
-retrieved document content — and now transcribed voice input — is
-untrusted data, never instructions — see `docs/SECURITY.md`
+**Then**: move to **GitHub Issue #8 (Finalization)** per the 5-day
+plan — its own scope: Docker/Compose verification (both images have
+been rebuilt and manually exercised multiple times already across
+Issues #5/#6/#7 this session — a final clean `docker compose up`
+end-to-end smoke test from a cold state is still worth doing),
+health/readiness (already implemented since Issue #1, confirm no
+regression), CI (already green across every merged PR — confirm the
+full pipeline including the new `espeak-ng` step and `evaluation_runs`
+migration), deployment config (`docs/DEPLOYMENT.md` — review for
+staleness given how much has shipped since it was last substantially
+updated), API docs (`docs/API_CONTRACT.md` has been kept current
+per-slice — a final full read-through for consistency is still
+worthwhile), **README.md** (still deferred until this issue — a new
+developer should be able to understand what the project does,
+architecture, setup, env vars, how to start it, upload documents, ask
+questions, how citations/retrieval/security/voice work, how to run
+tests/evaluation, how to deploy), final security checks (re-run the
+full `docs/SECURITY.md` "Security testing" checklist one more time
+against `main` post-Issue-#7-merge), final E2E tests (the existing
+Playwright suite — auth/password-recovery + documents-chat — plus a
+final full manual walkthrough of the "CRITICAL FINAL END-TO-END TEST"
+flow described in the original project brief: register → login →
+workspace → upload → process → READY → conversation → ask → retrieve →
+generate → answer → citations → inspect source → feedback → voice
+input/TTS → workspace-isolation test with two workspaces →
+malicious/prompt-injection document test → unsupported/malformed
+document test → auth/authz boundary tests). Issue #5's remaining
+lower-priority scope (source inspection needs a new backend endpoint
+first; feedback; rename/delete conversations; the
+`/chat/[id]`/`/documents/[id]` deep-link stub routes) remains deferred
+and documented — revisit only if time remains after Issue #8's critical
+path lands, since Issue #8 is the last issue in the 5-day plan. Use the
+existing frontend architecture/design system (`frontend/app/`,
+`frontend/lib/api-client.ts`'s existing `credentials: "include"` +
+CSRF-header pattern) — do not invent a new one. **Critical, explicitly
+restated security requirement (already implemented and tested, do not
+regress)**: retrieved document content — and transcribed voice input —
+is untrusted data, never instructions — see `docs/SECURITY.md`
 §"Prompt injection defense" and §"Voice input safety"; never store an
 auth token in `localStorage`/`sessionStorage` (the existing
-`lib/api-client.ts` already gets this right — see its own tests).
+`lib/api-client.ts` already gets this right — see its own tests); never
+fabricate evaluation numbers, deployment claims, or test results in
+Issue #8's own documentation work — everything in a finalization pass
+must be either actually verified or explicitly marked as not yet
+verified.
 
 ## Blockers
 
@@ -4148,8 +4397,8 @@ Postgres — a stronger check than a Docker rebuild would add on its own.
   open Chat → ask a question → grounded, cited answer appears. **Full
   Playwright suite: 20/20 passing** (19 pre-existing + 1 new), one clean
   run. Committed, pushed, opened as PR #30, and merged (`0687d07`).
-- **Issue #6 (Voice) — uncommitted, working tree only, on branch
-  `issue-6-voice`.** This host shell has no `espeak-ng`/system audio
+- **Issue #6 (Voice) — committed, pushed, opened as PR #31, merged
+  (`90bd0b7`).** This host shell has no `espeak-ng`/system audio
   libraries, so all backend voice testing ran inside a freshly rebuilt
   Docker container: `docker compose build backend` (picks up the new
   `espeak-ng` apt dependency and `pocketsphinx`/`speechrecognition`
@@ -4180,49 +4429,82 @@ Postgres — a stronger check than a Docker rebuild would add on its own.
   valid, non-empty WAV file returned for playback (142,483 frames,
   22,050 Hz, confirmed parseable via Python's `wave` module). Docker
   Compose: both images rebuilt this slice (new system + Python
-  dependencies); no new migration. Not yet committed, pushed, or opened
-  as a PR — see "Exact next recommended action" below.
+  dependencies); no new migration. Committed, pushed, opened as PR #31,
+  and merged (`90bd0b7`) — including a follow-up commit on the same PR
+  fixing a real E2E locator regression (`documents-chat.spec.ts`'s
+  "Ask" button locator became ambiguous once the new "Ask by voice"
+  button existed; fixed with an exact match, re-verified 20/20
+  Playwright passing before merge).
+- **Issue #7 (Evaluation, Security & Observability) — uncommitted,
+  working tree only, on branch
+  `issue-7-evaluation-security-observability`.** Backend: `cd backend &&
+  uv run ruff check .` (pass, host), `uv run mypy .` (pass, host),
+  migration `0008` applied and reversibility-verified directly against
+  real Postgres (`alembic downgrade -1` then `upgrade head`, both
+  clean). Voice-dependent tests again required the Docker container
+  (this host lacks `espeak-ng`): `docker compose build backend &&
+  docker compose run --rm --entrypoint bash backend -c "uv run ruff
+  check . && uv run mypy . && uv run alembic upgrade head && uv run
+  pytest -q"` — **717 passed, 5 failed** (the same pre-existing,
+  already-diagnosed `EMAIL_PROVIDER` container artifact in
+  `test_password_reset.py`, confirmed again via a targeted
+  `-e EMAIL_PROVIDER=console` re-run passing 16/16). 722 total = 699
+  pre-slice + 23 new (7 `FixedSizeChunker`, 12 evaluation schema, 2
+  observability/`caplog`, 2 audit-logging). Host-only run (excluding
+  the 21 voice tests): **701/701 passing**, confirming the same result
+  set minus voice. The evaluation script itself
+  (`eval/scripts/run_retrieval_evaluation.py`) was **actually run
+  twice** against real local Postgres, producing identical metric
+  output both times (confirmed determinism) and real, committed results
+  in `eval/results/retrieval_evaluation.json`; direct database queries
+  after the run confirmed 8 `evaluation_runs` + 40 `evaluation_results`
+  rows persisted, with `workspace_id` correctly `NULL` after each run's
+  own throwaway-workspace cleanup. Frontend: not touched this slice —
+  not re-run (no frontend file changed). Docker/Compose: `backend`
+  image rebuilt this slice (no new system dependency — the migration
+  and new Python-only code needed no Dockerfile change beyond what
+  Issue #6 already added). Not yet committed, pushed, or opened as a
+  PR — see "Exact next recommended action" below.
 
 ## Exact next recommended action
 
 Redis Slices 1/2/3a/3b/3c, Playwright E2E, all of Issue #3 (Slices
-3.1–3.7), all of Issue #4 (Slices 4.1–4.4), and all of Issue #5 Slice
-5.1 (endpoints + pages + E2E coverage) are merged into `main`
-(`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13, `42529e3` PR #14,
-`75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17, `941c1a7` PR #18,
-`5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62` PR #21, `237be97` PR #22,
-`aa68079` PR #23, `7241ec8` PR #24, `5e4a626` PR #25, `378fec4` PR #26,
-`54b08b2` PR #27, `fd2041c` PR #28, `2ad720f` PR #29, `0687d07` PR #30)
-— nothing pending for any of them. `main`/`origin/main` are at
-`0687d07`. **GitHub Issues #3, #4, and #5's Slice 5.1 are fully
-complete and merged.** **GitHub Issue #6 (Voice) is implemented and
-fully tested**, on branch `issue-6-voice` (cut from `0687d07`) — not
+3.1–3.7), all of Issue #4 (Slices 4.1–4.4), all of Issue #5 (Slice 5.1
+— endpoints + pages + E2E coverage), and Issue #6 (Voice) are merged
+into `main` (`46ef03b` PR #11, `5391a78` PR #12, `026dcf3` PR #13,
+`42529e3` PR #14, `75dd466` PR #15, `e1c4858` PR #16, `79d4787` PR #17,
+`941c1a7` PR #18, `5e6fdc2` PR #19, `a6762e2` PR #20, `2961b62` PR #21,
+`237be97` PR #22, `aa68079` PR #23, `7241ec8` PR #24, `5e4a626` PR #25,
+`378fec4` PR #26, `54b08b2` PR #27, `fd2041c` PR #28, `2ad720f` PR #29,
+`0687d07` PR #30, `90bd0b7` PR #31) — nothing pending for any of them.
+`main`/`origin/main` are at `90bd0b7`. **GitHub Issue #7 (Evaluation,
+Security & Observability) is implemented and fully tested**, on branch
+`issue-7-evaluation-security-observability` (cut from `90bd0b7`) — not
 yet committed, pushed, or opened as a PR. See "Completed work (Issue
-#6 — Voice...)" above. The next work, in order:
+#7 — ...)" above. The next work, in order:
 
-1. **Commit Issue #6** on the current branch, push it, and open a PR
-   against `main`. This slice's own validation (21 new backend voice
-   tests + full 694/699-passing backend suite — 5 pre-existing
-   unrelated failures confirmed isolated, see "Tests run" — verified
-   inside a rebuilt Docker container since this host shell lacks
-   `espeak-ng`; 12 new frontend tests + full 70/70-passing frontend
-   suite; a real manual `curl` round trip against a freshly rebuilt live
-   Docker stack) is already done. Get CI green (the workflow now
-   installs `espeak-ng` on the backend job's runner, already committed
-   on this branch), then **merge it promptly** — the 5-day timeline
+1. **Commit Issue #7** on the current branch, push it, and open a PR
+   against `main`. This slice's own validation (23 new backend tests +
+   full 717/722-passing backend suite — 5 pre-existing unrelated
+   failures confirmed isolated, see "Tests run" — verified inside a
+   rebuilt Docker container since this host shell lacks `espeak-ng`;
+   host-only run excluding voice: 701/701 passing; the evaluation
+   script actually run twice against real Postgres with real,
+   deterministic, committed output; direct database verification of
+   persisted `evaluation_runs`/`evaluation_results` rows) is already
+   done. Get CI green, then **merge it promptly** — the 5-day timeline
    authorizes this without waiting for a separate per-PR instruction
    (see "Current task"/"Next major task" above).
 2. **Immediately after merging, with no further go-ahead needed:**
    switch to `main`, pull, confirm a clean tree, delete the merged
-   branch locally and on `origin`, rebuild and restart the Docker
-   backend/frontend images if continuing manual verification (both were
-   last rebuilt from this branch's own code). Move to **GitHub Issue #7
-   (security/evaluation/observability)** per the 5-day plan — see "Next
-   major task" above for the concrete scope (security-boundary test
-   gaps to confirm/close, observability additions, the
-   `InsecureKeyLengthWarning` re-check). Then Issue #8 (finalization).
-   Issue #5's remaining lower-priority scope (source inspection,
-   feedback, rename/delete conversations, the `/chat/[id]`/
-   `/documents/[id]` deep-link stub routes) remains deferred and
-   documented — revisit if time remains after Issues #7/#8's critical
-   paths land.
+   branch locally and on `origin`, run the full backend/frontend
+   suites once more against `main` to confirm. Move to **GitHub Issue
+   #8 (Finalization)** — the last issue in the 5-day plan — see "Next
+   major task" above for the concrete scope (Docker/Compose final
+   verification, README, deployment docs, a final full read-through of
+   `docs/API_CONTRACT.md`/`docs/SECURITY.md`, and the "CRITICAL FINAL
+   END-TO-END TEST" manual walkthrough described there). Issue #5's
+   remaining lower-priority scope (source inspection, feedback, rename/
+   delete conversations, the `/chat/[id]`/`/documents/[id]` deep-link
+   stub routes) remains deferred and documented — revisit only if time
+   remains after Issue #8's critical path lands.
