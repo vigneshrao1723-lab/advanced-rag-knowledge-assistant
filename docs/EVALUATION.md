@@ -1,14 +1,15 @@
 # Evaluation
 
-**Status:** PARTIALLY IMPLEMENTED — describes the intended evaluation
-methodology. **Evaluation "hooks" (GitHub Issue #4) exist and have been
-run against a small, deterministic fixture set — see "Evaluation hooks"
-below for the real, reproducible numbers this produced.** The full
-evaluation/experiment-tracking system (`evaluation_runs`/
-`evaluation_results` persistence, cross-configuration comparison
-dashboards) described elsewhere in this document remains PROPOSED
-(Issue #7). No number in this document was fabricated — see "Rule:
-never fabricate results" below.
+**Status:** IMPLEMENTED (experiment tracking + configuration comparison,
+GitHub Issue #7, extending Issue #4 Slice 4.4's fixture-scale hooks).
+`evaluation_runs`/`evaluation_results` are real, persisted Postgres
+tables (migration `0008`), populated by an actually-executed run of
+`eval/scripts/run_retrieval_evaluation.py` comparing **4 retrieval
+methods** (dense-only, lexical-only, hybrid, hybrid+reranked) across
+**2 chunking strategies** (structure-aware, fixed-size) — see
+"Evaluation hooks" below for the real, reproducible numbers this
+produced. No number in this document was fabricated — see "Rule: never
+fabricate results" below.
 
 ## Purpose
 
@@ -17,11 +18,10 @@ document defines the metrics and comparisons the system is designed to
 support once an ingestion + retrieval + generation pipeline actually exists
 to evaluate.
 
-## Evaluation hooks (GitHub Issue #4, Slice 4.4)
+## Evaluation hooks (GitHub Issue #4, Slice 4.4; extended by Issue #7)
 
-**Proves the pipeline is measurable — the full experiment-tracking
-system below (`evaluation_runs`/`evaluation_results`) is Issue #7's
-job, not this.**
+**Proves the pipeline is measurable, and now persists real, comparable
+experiment history via `evaluation_runs`/`evaluation_results`.**
 
 - **Metrics implementation**: `backend/app/evaluation/metrics.py` — pure
   functions for every retrieval metric below (binary relevance:
@@ -54,30 +54,64 @@ job, not this.**
   rather than testing an idealized embedding model this project doesn't
   have.
 - **Runnable script**: `eval/scripts/run_retrieval_evaluation.py` —
-  ingests the fixture set through the real pipeline (cleaning,
-  structure-aware chunking, embedding — the same modules
-  `process_document()` itself uses), runs `hybrid_search()` for every
-  fixture query, computes the metrics above, runs `generate_answer()`
-  for two representative queries and computes the citation checks, and
-  writes `eval/results/retrieval_evaluation.json`. Uses a dedicated,
-  throwaway workspace, deleted at the end of every run (verified via a
-  direct query showing zero leftover rows) — safely re-runnable,
-  confirmed deterministic across repeated runs (identical output twice
-  in a row). Run it yourself: `cd backend && uv run python
+  ingests the fixture set through the real pipeline (cleaning, then
+  chunking — once per chunking strategy compared — embedding, the same
+  modules `process_document()` itself uses), then for each of the 4
+  retrieval methods (dense-only, lexical-only, hybrid, hybrid+reranked
+  — reconstructed from `dense_search()`/`lexical_search()`/
+  `reciprocal_rank_fusion()`/the reranker directly, without changing
+  `hybrid_search()` itself) computes the metrics above and **persists
+  one `EvaluationRun` + its `EvaluationResult` rows** (8 runs total: 2
+  chunking strategies × 4 retrieval methods). Also runs
+  `generate_answer()` for two representative queries (against the
+  hybrid+reranked configuration only) and computes the citation checks.
+  Writes `eval/results/retrieval_evaluation.json`. Uses one dedicated,
+  throwaway workspace per chunking strategy, deleted at the end of every
+  run (verified via a direct query showing zero leftover rows) —
+  `evaluation_runs.workspace_id` uses `ON DELETE SET NULL` specifically
+  so the persisted run/result rows survive that cleanup (see
+  `backend/app/models/evaluation_run.py`). Safely re-runnable, confirmed
+  deterministic across repeated runs (identical metric output twice in a
+  row; each run appends new `evaluation_runs` rows, by design, so
+  history accumulates). Run it yourself: `cd backend && uv run python
   ../eval/scripts/run_retrieval_evaluation.py`.
+- **`FixedSizeChunker`** (`backend/app/ingestion/chunking.py`, new,
+  Issue #7): a naive, non-structure-aware baseline chunker (fixed-size
+  character windows, no boundary preference) — exists purely as the
+  second chunking strategy this comparison needs; the real ingestion
+  pipeline (`document_service.process_document()`) is unaffected and
+  continues to use `StructureAwareChunker` exclusively.
 - **Real results from the run committed in `eval/results/retrieval_evaluation.json`**
-  (top-K = 3, 6 documents, 7 queries): **Recall@3 = 1.0, Precision@3 =
-  0.33, MRR = 1.0, nDCG@3 = 1.0, Hit Rate@3 = 1.0**, averaged across all
-  7 queries — every query's single relevant document was always
-  retrieved and ranked first; Precision@3 is exactly `1/3` because only
-  one of the three retrieved slots is ever relevant in a 6-document
-  corpus at `k=3`, not a retrieval defect. Generation checks on 2
-  sample queries: citation completeness/correctness both `1.0`, and
-  `is_extractive_answer_grounded` `true` for both — expected, since
-  `LocalGroundedExtractiveProvider` only ever quotes retrieved evidence
-  by construction (see `app/generation/llm_provider.py`). **These
-  numbers describe this specific fixture set and this project's current
-  local/deterministic providers ([ADR 0007](DECISIONS/0007-local-providers-for-embedding-reranking-generation.md))
+  (top-K = 3, 6 documents, 7 queries), averaged across all 7 queries,
+  for both chunking strategies (identical between the two on this
+  fixture — each fixture document is short enough to become exactly one
+  chunk under either chunker, so chunking strategy has no
+  differentiating effect at this fixture's scale; a real difference
+  would only emerge on longer, multi-chunk documents):
+
+  | Retrieval method | Recall@3 | Precision@3 | MRR | nDCG@3 | Hit Rate@3 |
+  |---|---|---|---|---|---|
+  | Dense only | 1.0 | 0.33 | 1.0 | 1.0 | 1.0 |
+  | Lexical only | 0.71 | 0.71 | 0.71 | 0.71 | 0.71 |
+  | Hybrid (no rerank) | 1.0 | 0.33 | 1.0 | 1.0 | 1.0 |
+  | Hybrid + reranked | 1.0 | 0.33 | 1.0 | 1.0 | 1.0 |
+
+  Every query's single relevant document was always retrieved by dense/
+  hybrid/hybrid+reranked and ranked first; Precision@3 is exactly `1/3`
+  for those methods because only one of the three retrieved slots is
+  ever relevant in a 6-document corpus at `k=3`, not a retrieval defect.
+  **Lexical-only retrieval is genuinely weaker on this fixture** (0.71
+  vs. 1.0) — a real, honest finding from this run, not adjusted or
+  hidden: Postgres full-text search's `ts_rank_cd` did not always rank
+  the single relevant (keyword-overlapping) document first among this
+  small corpus, where the (deterministic, hashed) dense embeddings did.
+  Generation checks on 2 sample queries: citation completeness/
+  correctness both `1.0`, and `is_extractive_answer_grounded` `true` for
+  both — expected, since `LocalGroundedExtractiveProvider` only ever
+  quotes retrieved evidence by construction (see
+  `app/generation/llm_provider.py`). **These numbers describe this
+  specific fixture set and this project's current local/deterministic
+  providers ([ADR 0007](DECISIONS/0007-local-providers-for-embedding-reranking-generation.md))
   — they are not a claim of production-scale retrieval quality**, which
   would need a larger, more realistic corpus and a real embedding
   model, per "Rule: never fabricate results" below.
@@ -106,36 +140,84 @@ job, not this.**
 
 ## Configuration comparison
 
-The evaluation harness is intended to compare, on the same query set:
+**Implemented (Issue #7)** — the evaluation harness compares, on the
+same query set, in one run:
 
 - Dense retrieval only
-- BM25 only
-- Hybrid (dense + BM25 + fusion)
+- Lexical (Postgres full-text search) only
+- Hybrid (dense + lexical + RRF fusion)
 - Hybrid + Reranker
 
 Independently of retrieval-method comparisons, **chunking strategy
-comparisons are also part of this framework**: the same query set and
-retrieval configuration can be re-run against corpora chunked with
-different strategies (fixed-size, recursive, structure-aware) and
-parameters (size, overlap) to measure their effect on the retrieval
-metrics above. Chunking strategy is already tracked per run — see
-"Experiment tracking" below.
+comparisons are also implemented**: the same query set and retrieval
+configuration is re-run against corpora chunked with two strategies —
+`StructureAwareChunker` (the real pipeline's own chunker) and
+`FixedSizeChunker` (a naive baseline, Issue #7) — to measure their
+effect on the retrieval metrics above. A `recursive` strategy or
+size/overlap sweep is not implemented — the Definition of Done's "at
+least two chunking strategies" is met by these two; see
+`backend/app/ingestion/chunking.py`'s own docstring for why a third
+strategy wasn't added (matches this project's established "one real
+implementation, `ChunkingStrategy`/`Protocol`-ready for more" pattern
+already used for `EmbeddingProvider`/`Reranker`/`LLMProvider`).
+Chunking strategy is tracked per run — see "Experiment tracking" below.
 
 ## Experiment tracking
 
-Each evaluation run should record the configuration that produced its
-results, so results are reproducible and comparable:
+**Implemented (Issue #7)** — `evaluation_runs`/`evaluation_results`
+(migration `0008`, `backend/app/models/evaluation_run.py`/
+`evaluation_result.py`) record the configuration that produced each
+run's results, so results are reproducible and comparable over time:
 
 - Embedding model
-- Chunking strategy and chunk size
-- Retrieval method (dense / BM25 / hybrid / hybrid+rerank)
+- Chunking strategy and chunk size/overlap
+- Retrieval method (dense / lexical / hybrid / hybrid+reranked)
 - Top-K
 - Reranker (if used)
 - LLM used for generation
-- The resulting metric values
+- Document/query count
+- The resulting metric values (`evaluation_results`, one row per metric
+  per run)
 
-This maps to the `evaluation_runs` / `evaluation_results` entities in
-[`docs/DATA_MODEL.md`](DATA_MODEL.md).
+`evaluation_runs.workspace_id` is nullable (`ON DELETE SET NULL`): an
+evaluation run must outlive the (often throwaway) workspace it was
+computed against — see the model's own docstring. This maps to the
+`evaluation_runs` / `evaluation_results` entities in
+[`docs/DATA_MODEL.md`](DATA_MODEL.md), now IMPLEMENTED there too.
+
+## Observability (GitHub Issue #7)
+
+**Implemented** — per docs/RAG_DESIGN.md's "Observability" section,
+per-stage latency and a token-usage analog are tracked as structured
+JSON log records (`app/observability/logging.py`'s existing convention
+— not new database columns, since this is debugging/telemetry detail,
+distinct from the durably-persisted `evaluation_runs`/`retrieval_events`
+history above):
+
+- `app/retrieval/service.py::hybrid_search()` logs
+  `retrieval_stage_latencies` — `embed_ms`/`dense_ms`/`lexical_ms`/
+  `rerank_ms`/`total_ms` plus candidate counts per stage. The existing
+  `RetrievalEvent.latency_ms` column (end-to-end, Issue #4) is
+  unchanged.
+- `app/generation/service.py::generate_answer()` logs
+  `generation_stage_latencies` — `context_build_ms`/`generation_ms`,
+  plus `context_chars`/`answer_chars` as a **character-count proxy for
+  token usage**: the shipped `LocalGroundedExtractiveProvider` is
+  deterministic and non-tokenizing ([ADR 0007](DECISIONS/0007-local-providers-for-embedding-reranking-generation.md)),
+  so character counts are the closest honest analog available today,
+  not a claim of real token accounting — a future tokenizing provider
+  can report real token counts through the same log field names.
+- Tested via `caplog` (`backend/tests/test_retrieval.py`,
+  `test_generation.py`) — confirms the telemetry actually records data
+  for a real pipeline run, not just that logging code doesn't crash.
+- **A genuine bug found and fixed while writing these tests**:
+  `alembic/env.py`'s `fileConfig()` call used its default
+  `disable_existing_loggers=True`, which silently disabled every
+  `app.*` logger not explicitly listed in `alembic.ini` for the rest of
+  a pytest session once migrations ran — invisible in production (where
+  Alembic runs as a separate one-shot process) but would have silently
+  swallowed all future `app.*` structured logging in tests. Fixed by
+  passing `disable_existing_loggers=False`. See `SOLVING.md`.
 
 ## Rule: never fabricate results
 
@@ -152,13 +234,16 @@ tempting to "fill in" with plausible-looking numbers:
 
 ## Related documents
 
-- [`docs/RAG_DESIGN.md`](RAG_DESIGN.md) — the pipeline being evaluated.
+- [`docs/RAG_DESIGN.md`](RAG_DESIGN.md) — the pipeline being evaluated,
+  and its "Observability" section.
 - [`docs/DATA_MODEL.md`](DATA_MODEL.md) — `evaluation_runs`,
-  `evaluation_results` entities (still PROPOSED — Issue #7).
+  `evaluation_results` entities (IMPLEMENTED, migration `0008`).
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — `backend/app/evaluation/`
   module (metrics implemented, Issue #4) and `eval/` directory
-  (`datasets/`/`scripts/`/`results/` — fixture hooks implemented,
-  Issue #4; full experiment-tracking PLANNED, Issue #7).
+  (`datasets/`/`scripts/`/`results/` — fixture hooks + full experiment
+  tracking + configuration comparison, Issues #4/#7).
 - [`docs/DECISIONS/0007-local-providers-for-embedding-reranking-generation.md`](DECISIONS/0007-local-providers-for-embedding-reranking-generation.md)
   — why the numbers above describe local/deterministic providers, not a
   commercial vendor.
+- [`docs/SECURITY.md`](SECURITY.md) — audit logging and security testing
+  this evaluation/observability work extends (Issue #7).

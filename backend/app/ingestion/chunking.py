@@ -385,4 +385,62 @@ class StructureAwareChunker:
         return text[-overlap:]
 
 
-__all__ = ["Chunk", "ChunkingConfig", "ChunkingError", "ChunkingStrategy", "StructureAwareChunker"]
+class FixedSizeChunker:
+    """A naive, non-structure-aware baseline: splits each section into
+    fixed-size character windows with a fixed overlap and no boundary
+    preference at all (may cut mid-word or mid-sentence). Exists purely
+    as an evaluation-comparison baseline against `StructureAwareChunker`
+    (GitHub Issue #7's explicit chunking-strategy-comparison requirement
+    -- this module's own docstring already anticipated a future
+    "fixed-size" strategy) — the real ingestion pipeline
+    (`document_service.process_document()`) is unaffected and continues
+    to use `StructureAwareChunker` exclusively. Still never merges
+    across `ExtractedSection`s, for the same schema-compatibility reason
+    `StructureAwareChunker` doesn't (see the module docstring).
+
+    Deterministic, same guarantee as `StructureAwareChunker`. `step =
+    target_chunk_size - chunk_overlap` is always `> 0` by construction —
+    `ChunkingConfig.__post_init__` already guarantees
+    `chunk_overlap < min_chunk_size <= target_chunk_size`.
+    """
+
+    def __init__(self, *, config: ChunkingConfig | None = None) -> None:
+        self._config = config or ChunkingConfig()
+
+    def chunk(self, document: ExtractedDocument) -> list[Chunk]:
+        chunks: list[Chunk] = []
+        next_index = 0
+        for section in document.sections:
+            section_chunks = self._chunk_section(section, start_index=next_index)
+            chunks.extend(section_chunks)
+            next_index += len(section_chunks)
+        return chunks
+
+    def _chunk_section(self, section: ExtractedSection, *, start_index: int) -> list[Chunk]:
+        text = section.text.strip()
+        if not text:
+            return []
+        step = self._config.target_chunk_size - self._config.chunk_overlap
+        pieces = [
+            text[position : position + self._config.target_chunk_size]
+            for position in range(0, len(text), step)
+        ]
+        return [
+            Chunk(
+                chunk_index=start_index + i,
+                page=section.page,
+                section=section.heading,
+                content=piece,
+            )
+            for i, piece in enumerate(pieces)
+        ]
+
+
+__all__ = [
+    "Chunk",
+    "ChunkingConfig",
+    "ChunkingError",
+    "ChunkingStrategy",
+    "FixedSizeChunker",
+    "StructureAwareChunker",
+]

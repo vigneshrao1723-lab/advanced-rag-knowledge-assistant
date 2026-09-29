@@ -38,8 +38,8 @@ status.
 | `messages` | Individual messages within a conversation (user + assistant) | IMPLEMENTED (migration `0006`; native `message_role` enum, `USER`/`ASSISTANT`) |
 | `citations` | Links between a generated answer/message and the evidence (chunks) it cites | IMPLEMENTED (migration `0006`; denormalizes `document_id`/`page`/`section` from the cited chunk at write time) |
 | `retrieval_events` | Record of a retrieval operation (query, method, results, scores) for observability/evaluation | IMPLEMENTED (migration `0006`; `results` is `JSONB`, `rewritten_query_text` kept separate from `query_text` so the original query is always preserved) |
-| `evaluation_runs` | A configured evaluation experiment (embedding model, chunking strategy, retrieval method, etc.) | PROPOSED |
-| `evaluation_results` | Computed metrics for an `evaluation_run` | PROPOSED |
+| `evaluation_runs` | A configured evaluation experiment (embedding model, chunking strategy, retrieval method, etc.) | IMPLEMENTED (migration `0008`, GitHub Issue #7) |
+| `evaluation_results` | Computed metrics for an `evaluation_run` | IMPLEMENTED (migration `0008`, GitHub Issue #7) |
 | `audit_logs` | Security-relevant action log (see [`docs/SECURITY.md`](SECURITY.md)) | IMPLEMENTED (auth/workspace event types; document-related events land with Issue #3) |
 
 ## Potential entities (subject to architectural validation)

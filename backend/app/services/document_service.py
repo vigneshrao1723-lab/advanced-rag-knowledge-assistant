@@ -232,11 +232,26 @@ def list_documents(db: Session, *, workspace_id: uuid.UUID) -> list[DocumentRead
     return [_to_document_read(document) for document in documents]
 
 
-def get_document(db: Session, *, workspace_id: uuid.UUID, document_id: uuid.UUID) -> DocumentRead:
+def get_document(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    document_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
+) -> DocumentRead:
     document = document_repository.get_by_id_for_workspace(
         db, workspace_id=workspace_id, document_id=document_id
     )
     if document is None:
+        record_audit_event(
+            db,
+            event_type=AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+            metadata={"resource_type": "document", "attempted_document_id": str(document_id)},
+        )
         raise _document_not_found_error()
     return _to_document_read(document)
 
@@ -564,6 +579,14 @@ async def process_document(
         db, workspace_id=workspace_id, document_id=document_id
     )
     if document is None:
+        record_audit_event(
+            db,
+            event_type=AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED,
+            user_id=triggered_by,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+            metadata={"resource_type": "document", "attempted_document_id": str(document_id)},
+        )
         raise _document_not_found_error()
     if document.status not in _REPROCESSABLE_STATUSES:
         raise _document_already_processed_error()

@@ -16,7 +16,13 @@ import pytest
 from pypdf import PdfWriter
 
 from app.ingestion import extraction
-from app.ingestion.chunking import Chunk, ChunkingConfig, ChunkingError, StructureAwareChunker
+from app.ingestion.chunking import (
+    Chunk,
+    ChunkingConfig,
+    ChunkingError,
+    FixedSizeChunker,
+    StructureAwareChunker,
+)
 from app.ingestion.extraction import ExtractedDocument, ExtractedSection
 
 _CONFIG = ChunkingConfig(
@@ -592,3 +598,76 @@ def test_chunking_composes_with_real_extraction_output_for_pdf() -> None:
     # sections, rather than erroring.
     chunks = _chunker().chunk(extracted)
     assert chunks == []
+
+
+# --- FixedSizeChunker (Issue #7: a naive comparison baseline) --------------
+
+
+def test_fixed_size_chunker_splits_into_target_size_windows() -> None:
+    config = ChunkingConfig(
+        target_chunk_size=10, chunk_overlap=0, min_chunk_size=1, max_chunk_size=10
+    )
+    text = "a" * 25
+    chunks = FixedSizeChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    assert [len(c.content) for c in chunks] == [10, 10, 5]
+
+
+def test_fixed_size_chunker_overlap_tail_appears_in_next_chunk() -> None:
+    config = ChunkingConfig(
+        target_chunk_size=10, chunk_overlap=3, min_chunk_size=4, max_chunk_size=10
+    )
+    text = "0123456789abcdefghij"
+    chunks = FixedSizeChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    assert chunks[0].content == "0123456789"
+    assert chunks[1].content.startswith("789")  # last 3 chars of chunk 0
+
+
+def test_fixed_size_chunker_is_deterministic() -> None:
+    config = ChunkingConfig(
+        target_chunk_size=12, chunk_overlap=2, min_chunk_size=3, max_chunk_size=12
+    )
+    text = "The quick brown fox jumps over the lazy dog many times over."
+    first = FixedSizeChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    second = FixedSizeChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    assert first == second
+
+
+def test_fixed_size_chunker_never_merges_across_sections() -> None:
+    config = ChunkingConfig(
+        target_chunk_size=100, chunk_overlap=0, min_chunk_size=1, max_chunk_size=100
+    )
+    chunks = FixedSizeChunker(config=config).chunk(
+        _doc(
+            ExtractedSection(text="Section A content.", page=1, heading="A"),
+            ExtractedSection(text="Section B content.", page=2, heading="B"),
+        )
+    )
+    assert [c.section for c in chunks] == ["A", "B"]
+    assert [c.page for c in chunks] == [1, 2]
+
+
+def test_fixed_size_chunker_produces_gapless_zero_based_indexes() -> None:
+    config = ChunkingConfig(
+        target_chunk_size=5, chunk_overlap=0, min_chunk_size=1, max_chunk_size=5
+    )
+    chunks = FixedSizeChunker(config=config).chunk(
+        _doc(ExtractedSection(text="a" * 12), ExtractedSection(text="b" * 8))
+    )
+    assert [c.chunk_index for c in chunks] == list(range(len(chunks)))
+
+
+def test_fixed_size_chunker_empty_section_produces_no_chunks() -> None:
+    chunks = FixedSizeChunker().chunk(_doc(ExtractedSection(text="   ")))
+    assert chunks == []
+
+
+def test_fixed_size_chunker_may_cut_mid_word_unlike_structure_aware_chunker() -> None:
+    # The defining behavioral difference this baseline exists to
+    # illustrate: StructureAwareChunker prefers word boundaries,
+    # FixedSizeChunker does not.
+    config = ChunkingConfig(
+        target_chunk_size=7, chunk_overlap=0, min_chunk_size=1, max_chunk_size=7
+    )
+    text = "abcdefghijklmnop"
+    chunks = FixedSizeChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    assert chunks[0].content == "abcdefg"

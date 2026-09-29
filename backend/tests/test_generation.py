@@ -4,7 +4,11 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
+from typing import Any
+
+import pytest
 
 from app.generation.context_builder import build_context
 from app.generation.llm_provider import LocalGroundedExtractiveProvider
@@ -126,3 +130,29 @@ def test_generate_answer_with_no_candidates_gives_the_no_evidence_answer() -> No
     answer, context = generate_answer(query="anything", candidates=[], llm_provider=provider)
     assert "don't have enough information" in answer
     assert context.blocks == []
+
+
+def test_generate_answer_logs_per_stage_latencies_and_usage(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # docs/RAG_DESIGN.md "Observability": context-build/generation
+    # latency and token usage tracked (GitHub Issue #7) -- character
+    # counts stand in for real tokens, see generate_answer()'s docstring
+    # for why.
+    provider = LocalGroundedExtractiveProvider()
+    with caplog.at_level(logging.INFO, logger="app.generation"):
+        answer, context = generate_answer(
+            query="What is the refund policy?",
+            candidates=[_candidate("Refunds are accepted within 30 days.")],
+            llm_provider=provider,
+        )
+
+    records = [r for r in caplog.records if r.message == "generation_stage_latencies"]
+    assert len(records) == 1
+    record: Any = records[0]
+    assert isinstance(record.context_build_ms, int)
+    assert isinstance(record.generation_ms, int)
+    assert record.context_chars == len(context.text)
+    assert record.answer_chars == len(answer)
+    assert record.candidate_count == 1
+    assert record.citation_count == 1

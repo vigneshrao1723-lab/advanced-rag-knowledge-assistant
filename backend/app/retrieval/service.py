@@ -16,6 +16,7 @@ recorded distinctly on the `RetrievalEvent` row per that same requirement
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 
@@ -28,6 +29,8 @@ from app.retrieval.fusion import reciprocal_rank_fusion
 from app.retrieval.lexical import lexical_search
 from app.retrieval.reranker import Reranker
 from app.retrieval.types import RetrievalCandidate
+
+logger = logging.getLogger("app.retrieval")
 
 _DEFAULT_DENSE_TOP_K = 20
 _DEFAULT_LEXICAL_TOP_K = 20
@@ -69,8 +72,12 @@ def hybrid_search(
     started = time.monotonic()
 
     search_text = rewritten_query_text or query_text
-    [query_embedding] = embed_with_retry(embedding_provider, [search_text])
 
+    embed_started = time.monotonic()
+    [query_embedding] = embed_with_retry(embedding_provider, [search_text])
+    embed_ms = int((time.monotonic() - embed_started) * 1000)
+
+    dense_started = time.monotonic()
     dense_results = dense_search(
         db,
         workspace_id=workspace_id,
@@ -78,6 +85,9 @@ def hybrid_search(
         top_k=dense_top_k,
         document_id=document_id,
     )
+    dense_ms = int((time.monotonic() - dense_started) * 1000)
+
+    lexical_started = time.monotonic()
     lexical_results = lexical_search(
         db,
         workspace_id=workspace_id,
@@ -85,11 +95,37 @@ def hybrid_search(
         top_k=lexical_top_k,
         document_id=document_id,
     )
+    lexical_ms = int((time.monotonic() - lexical_started) * 1000)
+
     fused = reciprocal_rank_fusion([dense_results, lexical_results])
     pool = fused[: final_top_k * _RERANK_POOL_MULTIPLIER]
+
+    rerank_started = time.monotonic()
     reranked = reranker.rerank(query=search_text, candidates=pool)[:final_top_k]
+    rerank_ms = int((time.monotonic() - rerank_started) * 1000)
 
     latency_ms = int((time.monotonic() - started) * 1000)
+
+    # docs/RAG_DESIGN.md "Observability": "retrieval latency, embedding
+    # latency, reranker latency" as distinct, per-stage figures -- the
+    # `RetrievalEvent.latency_ms` column keeps the existing end-to-end
+    # number (Slice 4.1) unchanged; the per-stage breakdown is
+    # structured-logged (`app/observability/logging.py`'s JSON log
+    # convention) rather than persisted to a new column, since it's
+    # debugging/telemetry detail, not evaluation-relevant history.
+    logger.info(
+        "retrieval_stage_latencies",
+        extra={
+            "embed_ms": embed_ms,
+            "dense_ms": dense_ms,
+            "lexical_ms": lexical_ms,
+            "rerank_ms": rerank_ms,
+            "total_ms": latency_ms,
+            "dense_candidate_count": len(dense_results),
+            "lexical_candidate_count": len(lexical_results),
+            "final_candidate_count": len(reranked),
+        },
+    )
 
     if record_event:
         retrieval_event_repository.create(

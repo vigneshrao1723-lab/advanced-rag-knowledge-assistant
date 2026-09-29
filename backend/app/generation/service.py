@@ -6,9 +6,14 @@ to treat that evidence as untrusted data, never instructions.
 
 from __future__ import annotations
 
+import logging
+import time
+
 from app.generation.context_builder import BuiltContext, build_context
 from app.generation.llm_provider import LLMProvider
 from app.retrieval.types import RetrievalCandidate
+
+logger = logging.getLogger("app.generation")
 
 # Structurally separate from `context`/`query` at the LLMProvider.generate()
 # call site (three distinct arguments, never concatenated) -- see
@@ -37,9 +42,36 @@ def generate_answer(
     `built_context.blocks` afterward to build `Citation` rows (see
     `app.generation.citation_engine`), so it's returned rather than
     discarded once generation is done.
+
+    Logs per-stage latency (docs/RAG_DESIGN.md "Observability": "context
+    build latency, generation latency") as one structured record per
+    call. "Token usage" is tracked as character counts of the context/
+    answer, not real model tokens: the shipped `LocalGroundedExtractiveProvider`
+    is deterministic and non-tokenizing (see
+    `docs/DECISIONS/0007-local-providers-for-embedding-reranking-generation.md`)
+    -- character counts are the closest honest analog available today,
+    not a claim of real token accounting; a future tokenizing provider
+    can report real token counts through the same log field names.
     """
+    build_started = time.monotonic()
     context = build_context(candidates)
+    context_build_ms = int((time.monotonic() - build_started) * 1000)
+
+    generate_started = time.monotonic()
     answer = llm_provider.generate(system_prompt=_SYSTEM_PROMPT, context=context.text, query=query)
+    generation_ms = int((time.monotonic() - generate_started) * 1000)
+
+    logger.info(
+        "generation_stage_latencies",
+        extra={
+            "context_build_ms": context_build_ms,
+            "generation_ms": generation_ms,
+            "context_chars": len(context.text),
+            "answer_chars": len(answer),
+            "candidate_count": len(candidates),
+            "citation_count": len(context.blocks),
+        },
+    )
     return answer, context
 
 

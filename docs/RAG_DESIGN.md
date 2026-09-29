@@ -189,6 +189,13 @@ usage, errors, ingestion failures, and retrieval events (query, method,
 ranked results, scores) — feeding both debugging and
 [`docs/EVALUATION.md`](EVALUATION.md).
 
+**Implemented**: request IDs (`app/observability/request_id.py`, Issue
+#1), retrieval events (`retrieval_events` table, Issue #4), per-stage
+retrieval/embedding/reranker latency and generation latency/token-usage
+(structured JSON logs, Issue #7 — see `docs/EVALUATION.md`'s
+"Observability" section for exact fields), ingestion failures (`document_*_failed`
+audit events, Issue #3), errors (structured logging throughout).
+
 ## Related documents
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — module layout implementing

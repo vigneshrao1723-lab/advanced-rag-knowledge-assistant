@@ -121,7 +121,7 @@ advanced-rag-knowledge-assistant/
 │   │   ├── retrieval/             # dense, BM25, fusion, rerank, filters — IMPLEMENTED (Issue #4, Slice 4.2; wired to the conversations endpoint since Slice 4.3)
 │   │   ├── generation/            # context builder, LLM calls, citations — IMPLEMENTED (Issue #4, Slice 4.3)
 │   │   ├── voice/                 # STT/TTS provider abstractions — IMPLEMENTED (Issue #6): PocketSphinx STT, espeak-ng TTS, wired through the existing conversations endpoint (no separate pipeline)
-│   │   ├── evaluation/            # metrics, experiment runner — PARTIALLY IMPLEMENTED (metrics: Issue #4, Slice 4.4; experiment runner: PLANNED, Issue #7)
+│   │   ├── evaluation/            # metrics, experiment runner — IMPLEMENTED (metrics: Issue #4, Slice 4.4; experiment runner + evaluation_runs/evaluation_results persistence: Issue #7)
 │   │   └── observability/         # logging, tracing, metrics — implemented (structured logging, request IDs)
 │   └── tests/                     # implemented (health/config/security/rate-limit/auth/workspaces coverage)
 ├── frontend/                     # IMPLEMENTED (Issues #1–#2); documents/chat real (Issue #5, Slice 5.1); voice input/playback in chat (Issue #6)
@@ -131,7 +131,7 @@ advanced-rag-knowledge-assistant/
 │   ├── lib/                       # includes wav-encoder.ts/voice-recorder.ts (Issue #6) — client-side WAV encoding, no ffmpeg/transcoding dependency
 │   ├── types/
 │   └── tests/
-├── eval/                          # PARTIALLY IMPLEMENTED (fixture hooks: Issue #4, Slice 4.4; full experiment-tracking system: PLANNED, Issue #7)
+├── eval/                          # IMPLEMENTED (fixture hooks: Issue #4, Slice 4.4; full experiment-tracking + configuration comparison: Issue #7)
 │   ├── datasets/                   # retrieval_fixture.py — 6 documents, 7 queries, known relevance
 │   ├── scripts/                    # run_retrieval_evaluation.py — computes real docs/EVALUATION.md metrics
 │   └── results/                    # retrieval_evaluation.json — real, committed output of the script above

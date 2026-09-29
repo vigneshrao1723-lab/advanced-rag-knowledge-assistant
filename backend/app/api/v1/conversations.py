@@ -16,6 +16,7 @@ from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.dependencies import WorkspaceContext, require_workspace_role
 from app.core.rate_limit import (
+    client_ip,
     enforce_conversation_message_rate_limit,
     enforce_voice_message_rate_limit,
 )
@@ -84,6 +85,8 @@ async def post_message(
         embedding_provider=embedding_provider,
         reranker=reranker,
         llm_provider=llm_provider,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
     )
 
 
@@ -92,12 +95,17 @@ async def post_message(
     response_model=list[MessageRead],
 )
 async def list_messages(
+    request: Request,
     conversation_id: uuid.UUID,
     ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.VIEWER)),
     db: Session = Depends(get_db),
 ) -> list[MessageRead]:
     return conversation_service.list_messages(
-        db, workspace_id=ctx.workspace.id, conversation_id=conversation_id
+        db,
+        workspace_id=ctx.workspace.id,
+        conversation_id=conversation_id,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
     )
 
 
@@ -135,6 +143,8 @@ async def post_voice_message(
         reranker=reranker,
         llm_provider=llm_provider,
         max_audio_size_bytes=settings.max_voice_audio_size_bytes,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
     )
 
 
@@ -142,6 +152,7 @@ async def post_voice_message(
     "/{workspace_id}/conversations/{conversation_id}/messages/{message_id}/audio",
 )
 async def get_message_audio(
+    request: Request,
     conversation_id: uuid.UUID,
     message_id: uuid.UUID,
     ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.VIEWER)),
@@ -156,5 +167,7 @@ async def get_message_audio(
         conversation_id=conversation_id,
         message_id=message_id,
         tts_provider=tts_provider,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
     )
     return Response(content=audio_bytes, media_type="audio/wav")

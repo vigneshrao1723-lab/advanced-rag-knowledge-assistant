@@ -11,7 +11,19 @@ from app.models import Base  # noqa: F401 — import registers all models on Bas
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers=False`: `fileConfig()`'s own default
+    # (True) disables every logger that already exists at call time
+    # except the ones `alembic.ini`'s `[loggers]` section explicitly
+    # lists (`root`/`sqlalchemy`/`alembic`) -- harmless for a one-shot
+    # `alembic upgrade` CLI process, but genuinely breaking when
+    # migrations run inside the same process as the rest of the test
+    # suite (`tests/conftest.py`'s session-scoped migration fixture):
+    # every `app.*` logger created before this point (e.g.
+    # `app.retrieval`, `app.generation`) would otherwise be silently
+    # disabled for the remainder of the pytest session, discovered via
+    # a real `caplog`-based observability test unexpectedly seeing zero
+    # log records (GitHub Issue #7) -- see `SOLVING.md`.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 

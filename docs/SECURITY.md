@@ -490,7 +490,24 @@ implemented** (Issue #3, Slice 3.4) — emitted exactly once per
 `409` rejection, which never reaches the extraction step at all); see
 "Upload & document safety" above for the exact metadata. Document-delete
 and other document-lifecycle audit events will be added when those
-surfaces exist.
+surfaces exist. **`AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` is
+implemented** (Issue #7) — distinct from `AUTHORIZATION_DENIED` (which
+fires at the workspace-membership gate, before a request ever reaches an
+endpoint's own logic): this fires when an already-workspace-authorized
+request supplies a document/conversation ID that doesn't resolve within
+that workspace (a genuinely nonexistent ID, or one belonging to a
+workspace the caller has no access to — both produce the same
+non-leaking `404`, and both are audited identically, since the
+application itself cannot always distinguish the two without a
+separate, unscoped lookup). Wired into
+`document_service.get_document()`/`process_document()` and every
+`conversation_service` entry point that resolves a conversation ID
+(`list_messages`/`post_message`/`transcribe_and_post_voice_message`/
+`synthesize_message_audio`). Metadata: `resource_type`
+(`"document"`/`"conversation"`) and the attempted resource ID — never
+document/message content. Tested:
+`backend/tests/test_document_listing.py::test_get_document_not_found_records_an_audit_event`,
+`backend/tests/test_conversations.py::test_conversation_not_found_records_an_audit_event`.
 
 ## Security testing
 
@@ -501,14 +518,24 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
   **Implemented (Issue #2)** for workspaces/membership themselves —
   `backend/tests/test_workspaces.py` proves a non-member gets `404` (never
   `403`, never real data) on every workspace-scoped endpoint. **Extended
-  to documents (Issue #3, Slices 3.3–3.4)** —
-  `backend/tests/test_document_upload.py` proves the same 404-not-403
-  behavior for document upload, and that a duplicate-checksum match in
-  one workspace never affects or is visible from another;
-  `backend/tests/test_document_processing.py` proves the same for
-  `/process` — a document ID from one workspace is unreachable through
-  another workspace's ID, even for a real member of that other
-  workspace. Conversations/collections don't exist yet.
+  to documents (Issue #3, Slices 3.3–3.4; list/get, Issue #5)** —
+  `backend/tests/test_document_upload.py`/`test_document_processing.py`/
+  `test_document_listing.py` prove the same 404-not-403 behavior for
+  upload/process/list/get, and that a duplicate-checksum match in one
+  workspace never affects or is visible from another — a document ID
+  from one workspace is unreachable through another workspace's ID, even
+  for a real member of that other workspace. **Extended to conversations/
+  messages/citations (Issue #4, Slice 4.3) and voice messages (Issue
+  #6)** — `backend/tests/test_conversations.py`
+  (`test_cross_workspace_conversation_is_not_reachable`,
+  `test_answers_never_include_content_from_another_workspaces_documents`)
+  and `test_voice_conversations.py`
+  (`test_cross_workspace_voice_message_is_not_reachable`,
+  `test_get_message_audio_from_another_workspace_is_not_reachable`)
+  prove the same for the conversation/voice surface. Collections don't
+  exist yet (not implemented by any issue so far). **Now also audited,
+  not just rejected (Issue #7)** — see "Audit logging" below's
+  `CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` entry.
 - **Malicious upload tests** — oversized files, mismatched
   extension/content, malformed PDFs/DOCX, zip-bomb-style payloads; must be
   rejected or safely contained. **Implemented (Issue #3, Slices 3.3–3.4)**
@@ -556,7 +583,22 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
   `document_upload` limit (20/60s) and asserts `429`, proves the real
   Redis IP/user dimension keys are created, and proves the Tier A
   fallback (a genuinely unreachable Redis) still enforces the same
-  threshold rather than failing open.
+  threshold rather than failing open. **Extended to document processing
+  (embedding calls), conversation messages, and voice messages (LLM
+  calls) (Issues #3/#4/#6)** —
+  `backend/tests/test_document_processing.py::test_process_rate_limit_enforced_at_threshold`,
+  `backend/tests/test_conversations.py::test_message_rate_limit_enforced_at_threshold`,
+  `backend/tests/test_voice_conversations.py::test_voice_message_rate_limit_enforced_at_threshold`
+  each drive real calls past their own 20/60s limit and assert `429`.
+  **GitHub Issue #7's explicit "rate limiting completed across uploads,
+  embedding calls, LLM calls" requirement is met by this existing
+  coverage, not a new dimension**: `document_process` already covers
+  every embedding call (it only ever happens inside that endpoint's
+  pipeline), and `conversation_message`/`voice_message` already cover
+  every LLM call (generation only ever happens inside those two
+  endpoints) — no code path calls the embedding or LLM provider outside
+  an already-rate-limited operation, so a distinct dimension would be
+  redundant, not additive.
 - **CSRF tests** — missing/mismatched token rejected, valid token accepted,
   safe methods exempt, login/register themselves protected (login CSRF),
   a token from one client's cookie jar rejected against another's request.
