@@ -19,6 +19,8 @@ from fastapi import HTTPException, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.core.audit import AuditEvent
+from app.core.audit import record as record_audit_event
 from app.generation.citation_engine import create_citations
 from app.generation.context_builder import BuiltContext
 from app.generation.llm_provider import LLMProvider
@@ -55,7 +57,33 @@ _MAX_VOICE_AUDIO_DURATION_SECONDS = 120.0
 _VOICE_UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 
-def _conversation_not_found_error() -> HTTPException:
+def _conversation_not_found_error(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+    ip_address: str | None,
+) -> HTTPException:
+    """Audits the lookup denial before returning the same non-leaking
+    `404` every workspace-scoped resource lookup in this codebase
+    already uses -- distinct from `AUTHORIZATION_DENIED` (which fires
+    at the workspace-membership gate, before a request ever reaches
+    here): this covers an already-workspace-authorized request
+    supplying a conversation ID that doesn't resolve within that
+    workspace (GitHub Issue #7 "cross-workspace access attempts
+    (successful or blocked)")."""
+    record_audit_event(
+        db,
+        event_type=AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        ip_address=ip_address,
+        metadata={
+            "resource_type": "conversation",
+            "attempted_conversation_id": str(conversation_id),
+        },
+    )
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail={"code": "conversation_not_found", "message": "Conversation not found."},
@@ -106,13 +134,24 @@ def list_conversations(db: Session, *, workspace_id: uuid.UUID) -> list[Conversa
 
 
 def list_messages(
-    db: Session, *, workspace_id: uuid.UUID, conversation_id: uuid.UUID
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
 ) -> list[MessageRead]:
     conversation = conversation_repository.get_by_id_for_workspace(
         db, workspace_id=workspace_id, conversation_id=conversation_id
     )
     if conversation is None:
-        raise _conversation_not_found_error()
+        raise _conversation_not_found_error(
+            db,
+            workspace_id=workspace_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            ip_address=ip_address,
+        )
 
     messages = message_repository.list_for_conversation(db, conversation_id=conversation.id)
     citations_by_message = citation_repository.list_for_messages(
@@ -172,6 +211,8 @@ async def post_message(
     embedding_provider: EmbeddingProvider,
     reranker: Reranker,
     llm_provider: LLMProvider,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
 ) -> MessageRead:
     """Persists the user's message, runs retrieval + generation off the
     event loop, then persists the assistant's answer and its citations
@@ -184,7 +225,13 @@ async def post_message(
         db, workspace_id=workspace_id, conversation_id=conversation_id
     )
     if conversation is None:
-        raise _conversation_not_found_error()
+        raise _conversation_not_found_error(
+            db,
+            workspace_id=workspace_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            ip_address=ip_address,
+        )
 
     user_message = message_repository.create(
         db,
@@ -328,6 +375,8 @@ async def transcribe_and_post_voice_message(
     reranker: Reranker,
     llm_provider: LLMProvider,
     max_audio_size_bytes: int,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
 ) -> VoiceMessageRead:
     """Transcribes the uploaded audio, then hands the transcript to the
     *exact same* `post_message()` the text-chat flow uses (Issue #6's
@@ -351,7 +400,13 @@ async def transcribe_and_post_voice_message(
         )
         is None
     ):
-        raise _conversation_not_found_error()
+        raise _conversation_not_found_error(
+            db,
+            workspace_id=workspace_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            ip_address=ip_address,
+        )
 
     audio_bytes = await _read_and_validate_voice_upload(
         upload, max_size_bytes=max_audio_size_bytes
@@ -388,6 +443,8 @@ async def transcribe_and_post_voice_message(
         embedding_provider=embedding_provider,
         reranker=reranker,
         llm_provider=llm_provider,
+        user_id=user_id,
+        ip_address=ip_address,
     )
     return VoiceMessageRead(transcript=validated.content, message=message)
 
@@ -399,6 +456,8 @@ async def synthesize_message_audio(
     conversation_id: uuid.UUID,
     message_id: uuid.UUID,
     tts_provider: TextToSpeechProvider,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
 ) -> bytes:
     """Synthesizes audio on demand from a persisted assistant message's
     text -- no audio is ever stored; this is a pure, cheap-to-regenerate
@@ -412,7 +471,13 @@ async def synthesize_message_audio(
         db, workspace_id=workspace_id, conversation_id=conversation_id
     )
     if conversation is None:
-        raise _conversation_not_found_error()
+        raise _conversation_not_found_error(
+            db,
+            workspace_id=workspace_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            ip_address=ip_address,
+        )
 
     message = message_repository.get_by_id_for_conversation(
         db, conversation_id=conversation.id, message_id=message_id

@@ -17,9 +17,11 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session as DbSession
 
+from app.core.audit import AuditEvent
+from app.models.audit_log import AuditLog
 from app.models.document import Document
 from app.services.storage_provider import LocalStorage, get_storage_provider
 from tests.conftest import csrf_headers
@@ -188,6 +190,39 @@ def test_get_document_not_found_returns_404(client: TestClient) -> None:
         headers=csrf_headers(client),
     )
     assert response.status_code == 404
+
+
+def test_get_document_not_found_records_an_audit_event(
+    client: TestClient, db_session: DbSession
+) -> None:
+    # GitHub Issue #7: a resource-ID lookup denied within an
+    # already-workspace-authorized request is audited (distinct from
+    # AUTHORIZATION_DENIED, which fires at the workspace-membership gate).
+    _register(client)
+    workspace = _create_workspace(client)
+    attempted_id = uuid.uuid4()
+
+    response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/documents/{attempted_id}",
+        headers=csrf_headers(client),
+    )
+    assert response.status_code == 404
+
+    rows = (
+        db_session.execute(
+            select(AuditLog).where(
+                AuditLog.event_type == AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED,
+                AuditLog.workspace_id == uuid.UUID(workspace["id"]),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].event_metadata is not None
+    assert rows[0].event_metadata["resource_type"] == "document"
+    assert rows[0].event_metadata["attempted_document_id"] == str(attempted_id)
+    assert rows[0].user_id is not None
 
 
 def test_get_document_from_another_workspace_is_not_reachable(

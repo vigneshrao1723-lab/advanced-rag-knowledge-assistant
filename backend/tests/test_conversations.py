@@ -20,6 +20,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session as DbSession
 
+from app.core.audit import AuditEvent
+from app.models.audit_log import AuditLog
 from app.models.citation import Citation
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
@@ -256,6 +258,36 @@ def test_conversation_not_found_returns_404(client: TestClient) -> None:
     workspace = _create_workspace(client)
     response = _post_message(client, workspace["id"], str(uuid.uuid4()), "anything")
     assert response.status_code == 404
+
+
+def test_conversation_not_found_records_an_audit_event(
+    client: TestClient, db_session: DbSession
+) -> None:
+    # GitHub Issue #7: a resource-ID lookup denied within an
+    # already-workspace-authorized request is audited (distinct from
+    # AUTHORIZATION_DENIED, which fires at the workspace-membership gate).
+    _register(client)
+    workspace = _create_workspace(client)
+    attempted_id = uuid.uuid4()
+
+    response = _post_message(client, workspace["id"], str(attempted_id), "anything")
+    assert response.status_code == 404
+
+    rows = (
+        db_session.execute(
+            select(AuditLog).where(
+                AuditLog.event_type == AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED,
+                AuditLog.workspace_id == uuid.UUID(workspace["id"]),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].event_metadata is not None
+    assert rows[0].event_metadata["resource_type"] == "conversation"
+    assert rows[0].event_metadata["attempted_conversation_id"] == str(attempted_id)
+    assert rows[0].user_id is not None
 
 
 # --- list messages -------------------------------------------------------

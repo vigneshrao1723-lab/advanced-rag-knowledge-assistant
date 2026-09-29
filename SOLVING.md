@@ -581,3 +581,77 @@ any length/format minimum the consuming library documents, the same way
 production configuration already is (`.env.example`'s own
 `openssl rand -hex 32` guidance already got this right for real
 deployments — the test fixture just hadn't been held to the same bar).
+
+## 2026-09-28 — New `app.*` observability logging silently produced zero log records in tests
+
+**Symptom:** New `caplog`-based tests for the per-stage latency logging
+added to `hybrid_search()` (`app/retrieval/service.py`) and
+`generate_answer()` (`app/generation/service.py`) — GitHub Issue #7 —
+failed with zero captured records
+(`assert len(records) == 1` → `assert 0 == 1`), even though the
+production code unquestionably called `logger.info(...)` on every
+invocation (confirmed by adding a temporary `print()` right next to the
+`logger.info()` call, which *did* fire). A minimal standalone
+reproduction script (a bare `logging.getLogger("app.generation")` +
+`caplog.at_level(...)`, no `conftest.py` involved) worked correctly,
+narrowing the cause to something `conftest.py`'s fixtures did.
+
+**Root cause:** `backend/alembic/env.py` calls
+`logging.config.fileConfig(config.config_file_name)` to apply
+`alembic.ini`'s `[loggers]`/`[handlers]`/`[formatters]` configuration.
+`fileConfig()`'s own default is `disable_existing_loggers=True` — it
+sets `.disabled = True` on **every** logger that already exists at call
+time except the ones `alembic.ini` explicitly lists (`root`,
+`sqlalchemy`, `alembic`). `tests/conftest.py`'s session-scoped,
+autouse `_apply_migrations` fixture runs `command.upgrade(config,
+"head")` once per pytest session, which triggers this `fileConfig()`
+call *inside the same process* as the rest of the test suite — silently
+disabling `app.retrieval`, `app.generation`, and every other `app.*`
+logger already created via module-level `logging.getLogger("app.x")`
+calls at import time, for the remainder of the session. A disabled
+logger's `isEnabledFor()` unconditionally returns `False`, so
+`logger.info(...)` becomes a silent no-op regardless of `caplog`'s own
+`at_level()` context manager (which only ever adjusts `.level`, never
+`.disabled`). This was invisible before this slice because no prior
+test used `caplog` against any `app.*` logger — the bug has existed
+since whichever migration first ran inside a test session, just never
+had a test that could observe it. It is also invisible in *production*,
+because there `alembic upgrade` runs as its own short-lived CLI process,
+entirely separate from the running FastAPI application process
+`fileConfig()`'s disabling never touches.
+
+**Failed attempts:** None — the standalone reproduction (passing) vs.
+in-suite reproduction (failing) comparison pointed directly at
+`conftest.py`'s session setup, and `alembic/env.py` was the only
+plausible source of a one-time, session-wide `logging` side effect in
+that setup path.
+
+**Fix:** `alembic/env.py`: `fileConfig(config.config_file_name,
+disable_existing_loggers=False)`. Alembic's own logging configuration
+(`root`/`sqlalchemy`/`alembic` loggers, per `alembic.ini`) is completely
+unaffected — this only stops it from disabling *other* loggers that
+happen to already exist in the process, which was never Alembic's own
+concern to control.
+
+**Verification:** The two new `caplog` tests
+(`test_hybrid_search_logs_per_stage_latencies`,
+`test_generate_answer_logs_per_stage_latencies_and_usage`) pass, both in
+isolation and as part of the full suite. Full backend suite re-run
+inside the real Docker container: 717 passed (plus the 5 pre-existing,
+already-documented `EMAIL_PROVIDER` container-artifact failures in
+`test_password_reset.py`, unrelated) — no regression in any other test,
+confirming the fix doesn't change Alembic's own logging behavior.
+
+**Prevention/lesson:** **a one-time, process-global side effect
+triggered by test *setup* (not the code under test) can silently break
+an entirely unrelated feature, and it will only surface the first time
+something actually exercises the affected behavior — "no prior test
+caught this" is not evidence it wasn't already broken.** Any future code
+that configures Python's `logging` module via `fileConfig`/
+`dictConfig`/`basicConfig` (or reassigns `logging.getLogger().handlers`
+directly) should default to *not* disabling loggers it doesn't own,
+especially in a codebase where that configuration can run inside a
+shared test process. When a `caplog`-based test unexpectedly captures
+zero records despite the code under test definitely calling the
+logger, checking `logger.disabled` (not just `logger.level` or
+`caplog`'s own setup) is a fast, high-value first diagnostic step.

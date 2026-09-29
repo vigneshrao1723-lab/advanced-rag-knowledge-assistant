@@ -48,12 +48,17 @@ async def list_documents(
     response_model=DocumentRead,
 )
 async def get_document(
+    request: Request,
     document_id: uuid.UUID,
     ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.VIEWER)),
     db: Session = Depends(get_db),
 ) -> DocumentRead:
     return document_service.get_document(
-        db, workspace_id=ctx.workspace.id, document_id=document_id
+        db,
+        workspace_id=ctx.workspace.id,
+        document_id=document_id,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
     )
 
 

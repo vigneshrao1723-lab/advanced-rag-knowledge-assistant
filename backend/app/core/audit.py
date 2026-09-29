@@ -36,6 +36,17 @@ class AuditEvent:
     WORKSPACE_MEMBER_REMOVED = "workspace_member_removed"
     WORKSPACE_MEMBER_ROLE_CHANGED = "workspace_member_role_changed"
     AUTHORIZATION_DENIED = "authorization_denied"
+    # Distinct from AUTHORIZATION_DENIED (which fires at the
+    # workspace-membership gate, before a request ever reaches an
+    # endpoint's own logic): this fires when an already-workspace-
+    # authorized request supplies a resource ID (document/conversation/
+    # message) that doesn't resolve within that workspace -- i.e. either
+    # a genuinely nonexistent ID, or one belonging to a workspace the
+    # caller has no access to. Both cases return the same non-leaking
+    # `404`; this audits that the resource-scoped lookup itself was
+    # denied, whichever reason produced it (GitHub Issue #7 "cross-
+    # workspace access attempts (successful or blocked)").
+    CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED = "cross_workspace_resource_access_denied"
     RATE_LIMITED = "rate_limited"
     ABUSE_TEMPORARY_BLOCK_APPLIED = "abuse_temporary_block_applied"
     DOCUMENT_UPLOADED = "document_uploaded"

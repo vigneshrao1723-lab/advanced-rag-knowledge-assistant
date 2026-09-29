@@ -10,11 +10,79 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-26 — Issue #6: Voice (STT/TTS provider abstractions + chat integration)
+### 2026-09-29 — Issue #7: Evaluation, Security & Observability
+
+*(Branch `issue-7-evaluation-security-observability`, cut from the
+merged Issue #6 (`90bd0b7`, PR #31). Implemented and fully tested; not
+yet committed as of this entry.)*
+
+- Adds `evaluation_runs`/`evaluation_results` (migration `0008`,
+  `backend/app/models/evaluation_run.py`/`evaluation_result.py`,
+  `app/repositories/evaluation_run_repository.py`/
+  `evaluation_result_repository.py`): real, persisted experiment
+  tracking. `workspace_id` is nullable with `ON DELETE SET NULL` so a
+  run outlives the (often throwaway) workspace it was computed against.
+- Adds `backend/app/ingestion/chunking.py::FixedSizeChunker`: a naive,
+  non-structure-aware baseline chunker — the second chunking strategy
+  GitHub Issue #7's comparison requirement needs. The real ingestion
+  pipeline is unaffected and continues to use only
+  `StructureAwareChunker`.
+- Extends `eval/scripts/run_retrieval_evaluation.py` to compare **4
+  retrieval methods** (dense-only, lexical-only, hybrid, hybrid
+  +reranked) across **2 chunking strategies**, persisting 8
+  `EvaluationRun`+`EvaluationResult` row sets per execution. **Actually
+  run twice against real Postgres, producing identical, real, committed
+  numbers**: dense/hybrid/hybrid+reranked all reach Recall@3=1.0/
+  MRR=1.0/nDCG@3=1.0/HitRate@3=1.0/Precision@3=0.33 on both chunking
+  strategies (identical between the two on this small fixture);
+  **lexical-only is genuinely weaker** (0.71 across those metrics) — a
+  real, honest finding, not adjusted.
+- Adds per-stage retrieval (`embed_ms`/`dense_ms`/`lexical_ms`/
+  `rerank_ms`) and generation (`context_build_ms`/`generation_ms`) 
+  latency, plus a character-count token-usage proxy, as structured JSON
+  logs (`app/retrieval/service.py`, `app/generation/service.py`) — no
+  new database columns, per `docs/RAG_DESIGN.md` "Observability".
+- **Fixes a real, non-obvious bug found while testing the above**:
+  `alembic/env.py`'s `fileConfig()` call used its own default
+  `disable_existing_loggers=True`, silently disabling every `app.*`
+  logger for the rest of a pytest session once migrations ran (invisible
+  in production, where Alembic runs as its own one-shot process) — fixed
+  with `disable_existing_loggers=False`. See `SOLVING.md`.
+- Adds `AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED`: a real gap
+  found via a dedicated audit — a document/conversation ID belonging to
+  another workspace previously returned a plain, unaudited `404`. Wired
+  into `document_service.get_document()`/`process_document()` and every
+  `conversation_service` entry point resolving a conversation ID.
+- Confirms (documents, doesn't add code for) that rate limiting for
+  embedding/LLM calls is already covered by the existing
+  `document_process`/`conversation_message`/`voice_message` dimensions —
+  no code path calls either provider outside an already-rate-limited
+  operation.
+- Corrects a stale `docs/SECURITY.md` line ("Conversations/collections
+  don't exist yet" under cross-workspace tests) with exact,
+  already-passing test-file references.
+- 23 new backend tests (7 `FixedSizeChunker`, 12 evaluation schema, 2
+  observability/`caplog`, 2 audit-logging) — full backend suite **717
+  passed, 5 failed** (the same pre-existing, unrelated `EMAIL_PROVIDER`
+  container-runtime artifact, confirmed via a targeted re-run); 722
+  total = 699 pre-slice + 23 new. `ruff`/`mypy` clean. No frontend file
+  changed.
+- No new frontend dependency. New migration `0008`. No new Python
+  dependency (only the models/repositories/script/chunker above).
+- Docs updated in the same working tree: `docs/EVALUATION.md`,
+  `docs/DATA_MODEL.md`, `docs/RAG_DESIGN.md`, `docs/ARCHITECTURE.md`,
+  `docs/SECURITY.md`, `PROJECT_STATE.md`, `HANDOFF.md`, `SOLVING.md`.
+
+## [Unreleased — committed]
+
+### 2026-09-26 — `feat: add voice (STT/TTS) as a mode within chat (Issue #6)` (#31), merged as `90bd0b7`
 
 *(Branch `issue-6-voice`, cut from the merged Slice 5.1 follow-up
-(`0687d07`, PR #30). Implemented and fully tested; not yet committed as
-of this entry.)*
+(`0687d07`, PR #30). Opened as **PR #31**, verified green on GitHub
+Actions CI (after a follow-up commit fixed a real E2E test regression —
+the new "Ask by voice" button made `documents-chat.spec.ts`'s existing
+"Ask" button locator ambiguous, fixed with an exact match), and
+**merged into `main` as squash commit `90bd0b7`**.)*
 
 - Adds `backend/app/voice/`: `SpeechToTextProvider` protocol +
   `PocketSphinxSpeechToTextProvider` (CMU PocketSphinx, offline, no API
@@ -71,11 +139,9 @@ of this entry.)*
   (`infra/docker/backend.Dockerfile`, `.github/workflows/ci.yml`). New
   Python dependencies: `pocketsphinx`, `speechrecognition`. No new
   migration.
-- Docs updated in the same working tree: `PROJECT_STATE.md`,
+- Docs updated in the same commit: `PROJECT_STATE.md`,
   `HANDOFF.md`, `docs/API_CONTRACT.md`, `docs/ARCHITECTURE.md`,
   `docs/SECURITY.md`, `docs/DECISIONS/0008-...md` (new).
-
-## [Unreleased — committed]
 
 ### 2026-09-25 — `test: add browser E2E coverage for the document-upload/chat flow (Issue #5, Slice 5.1 follow-up)` (#30), merged as `0687d07`
 

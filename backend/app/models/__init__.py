@@ -7,6 +7,8 @@ from app.models.citation import Citation
 from app.models.conversation import Conversation
 from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
+from app.models.evaluation_result import EvaluationResult
+from app.models.evaluation_run import EvaluationRun
 from app.models.message import Message, MessageRole
 from app.models.password_reset_token import PasswordResetToken
 from app.models.retrieval_event import RetrievalEvent
@@ -23,6 +25,8 @@ __all__ = [
     "Document",
     "DocumentChunk",
     "DocumentStatus",
+    "EvaluationResult",
+    "EvaluationRun",
     "Message",
     "MessageRole",
     "PasswordResetToken",

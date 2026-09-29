@@ -6,9 +6,11 @@ Postgres, no mocks, matching this project's established convention.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import replace
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
@@ -425,6 +427,36 @@ def test_hybrid_search_returns_results_and_records_a_retrieval_event(
     assert event.results[0]["chunk_id"] == str(results[0].chunk_id)
     assert event.latency_ms is not None
     assert event.rewritten_query_text is None
+
+
+def test_hybrid_search_logs_per_stage_latencies(
+    db_session: DbSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    # docs/RAG_DESIGN.md "Observability": embedding/dense/lexical/
+    # reranker latency tracked as distinct figures (GitHub Issue #7) --
+    # verifies the telemetry actually records data for a real pipeline
+    # run, not just that the code doesn't crash.
+    workspace = _make_workspace(db_session)
+    document = _make_document(db_session, workspace=workspace)
+    _make_chunk(
+        db_session, workspace=workspace, document=document, chunk_index=0, content="Some content."
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.retrieval"):
+        hybrid_search(
+            db_session,
+            workspace_id=workspace.id,
+            query_text="Some content.",
+            embedding_provider=_PROVIDER,
+            reranker=LexicalOverlapReranker(),
+        )
+
+    records = [r for r in caplog.records if r.message == "retrieval_stage_latencies"]
+    assert len(records) == 1
+    record = records[0]
+    for field in ("embed_ms", "dense_ms", "lexical_ms", "rerank_ms", "total_ms"):
+        assert isinstance(getattr(record, field), int)
+        assert getattr(record, field) >= 0
 
 
 def test_hybrid_search_record_event_false_skips_persisting_an_event(
