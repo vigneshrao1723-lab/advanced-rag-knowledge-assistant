@@ -156,11 +156,25 @@ export const ConversationListSchema = z.array(ConversationSchema);
 
 export const CitationSchema = z.object({
   document_id: z.string(),
+  chunk_id: z.string(),
   page: z.number().nullable(),
   section: z.string().nullable(),
   rank: z.number(),
 });
 export type Citation = z.infer<typeof CitationSchema>;
+
+// --- Source inspection (Issue #8) ---
+// Mirrors backend/app/schemas/document.py's DocumentChunkRead.
+
+export const DocumentChunkSchema = z.object({
+  id: z.string(),
+  document_id: z.string(),
+  chunk_index: z.number(),
+  page: z.number().nullable(),
+  section: z.string().nullable(),
+  content: z.string(),
+});
+export type DocumentChunk = z.infer<typeof DocumentChunkSchema>;
 
 export const MessageRoleSchema = z.enum(["USER", "ASSISTANT"]);
 export type MessageRole = z.infer<typeof MessageRoleSchema>;

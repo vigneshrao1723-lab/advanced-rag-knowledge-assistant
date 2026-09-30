@@ -50,6 +50,23 @@ def bulk_create(
     return rows
 
 
+def get_by_id_for_document(
+    db: Session, *, document_id: uuid.UUID, chunk_id: uuid.UUID
+) -> DocumentChunk | None:
+    """Scoped to `document_id` (not a bare primary-key lookup) so a chunk
+    ID belonging to a different document -- and therefore, transitively,
+    a different workspace -- can never be fetched through this document's
+    own URL, matching every other workspace-scoped lookup's non-leaking
+    `404` pattern (source-inspection callers must already have resolved
+    `document_id` against the workspace first -- see
+    `document_service.get_document_chunk()`)."""
+    return db.execute(
+        select(DocumentChunk).where(
+            DocumentChunk.id == chunk_id, DocumentChunk.document_id == document_id
+        )
+    ).scalar_one_or_none()
+
+
 def get_by_document(db: Session, *, document_id: uuid.UUID) -> list[DocumentChunk]:
     """Ordered by `chunk_index` -- the caller-facing, deterministic
     ordering `chunking.py` itself guarantees, not insertion order."""

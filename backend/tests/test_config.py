@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -218,3 +220,43 @@ def test_trusted_proxy_cidrs_list_parses_comma_separated_values(
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
 
     assert settings.trusted_proxy_cidrs_list == ["127.0.0.1/32", "10.0.0.0/8", "::1/128"]
+
+
+def test_blank_numeric_env_value_is_treated_as_unset_not_a_parse_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`.env.example` deliberately leaves optional variables blank
+    (`FOO=`) as a template — a literal `cp .env.example .env` must not
+    crash config loading just because a numeric/bool/Literal field's
+    line has no value after the `=`. Without `env_ignore_empty=True`,
+    pydantic tries to parse the empty string itself and fails."""
+    _base_env(monkeypatch)
+    monkeypatch.setenv("MAX_UPLOAD_SIZE_BYTES", "")
+    monkeypatch.setenv("COOKIE_SECURE", "")
+    monkeypatch.setenv("SMTP_USE_TLS", "")
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.max_upload_size_bytes == 50 * 1024 * 1024
+    assert settings.cookie_secure is None
+    assert settings.smtp_use_tls is False
+
+
+def test_env_example_loads_cleanly_as_a_literal_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The documented Quickstart (`README.md`) is `cp .env.example .env`
+    — this test loads the real, repository-root `.env.example` file
+    exactly as pydantic-settings would load a `.env` copied from it,
+    proving that flow actually works rather than only being plausible."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/db")
+    monkeypatch.setenv("SECRET_KEY", "a-real-enough-secret-for-this-test-0123456789")
+
+    env_example = Path(__file__).resolve().parents[2] / ".env.example"
+    assert env_example.exists(), f"expected {env_example} to exist"
+
+    settings = Settings(_env_file=str(env_example))  # type: ignore[call-arg]
+
+    assert settings.access_token_expire_minutes == 15
+    assert settings.max_upload_size_bytes == 50 * 1024 * 1024
+    assert settings.embedding_batch_size == 64
+    assert settings.max_voice_audio_size_bytes == 10 * 1024 * 1024
+    assert settings.password_reset_token_expire_minutes == 60

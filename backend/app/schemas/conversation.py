@@ -17,6 +17,7 @@ class ConversationRead(BaseModel):
 
 class CitationRead(BaseModel):
     document_id: uuid.UUID
+    chunk_id: uuid.UUID
     page: int | None
     section: str | None
     rank: int

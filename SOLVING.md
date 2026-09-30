@@ -655,3 +655,114 @@ shared test process. When a `caplog`-based test unexpectedly captures
 zero records despite the code under test definitely calling the
 logger, checking `logger.disabled` (not just `logger.level` or
 `caplog`'s own setup) is a fast, high-value first diagnostic step.
+
+## 2026-09-29 — The documented `EMAIL_PROVIDER` test fix didn't actually fix anything until the image was rebuilt
+
+**Symptom:** `backend/tests/test_password_reset.py` had 5 failing tests
+(`test_full_password_reset_flow` and four others), previously documented
+across several sessions as a "known, pre-existing artifact" caused by
+`infra/compose/docker-compose.yml`'s backend service defaulting
+`EMAIL_PROVIDER=smtp` (for real local dev, so Mailpit shows real
+emails), while these tests use pytest's `capsys` to capture the
+password-reset link from stdout — which only the `console` provider
+prints to. Force-setting `os.environ["EMAIL_PROVIDER"] = "console"`
+unconditionally at the top of `backend/tests/conftest.py` (before any
+`app.*` import) is the obviously-correct fix, matching the same
+`os.environ.setdefault()`-adjacent pattern already used there for
+`DATABASE_URL`/`SECRET_KEY`/`REDIS_URL`. Running the full suite
+afterward via `docker compose run --rm --entrypoint bash backend -c
+"uv run pytest -q"` still showed the exact same 5 failures — the fix
+appeared to do nothing.
+
+**Root cause:** `infra/compose/docker-compose.yml`'s `backend` service
+has no bind-mounted source volume — `build: context: ../../backend`
+means the image is built once via `COPY` and reused; `docker compose
+run` starts a fresh *container* from that already-built *image*, not a
+live view of the host filesystem. Editing `backend/tests/conftest.py`
+on the host changed nothing inside the already-built
+`compose-backend:latest` image, so every "verification" run was
+silently executing the pre-fix conftest.py. A quick standalone
+`os.environ["EMAIL_PROVIDER"] = "console"` + `get_settings()` sanity
+check run via `docker compose run ... uv run python -c "..."` (an
+inline script, not a file on disk) worked correctly, confirming the
+*mechanism* was right and narrowing the mystery specifically to "why
+does the real test file behave differently" — which led to checking
+whether the image actually contained the edited file.
+
+**Fix:** `docker compose -f infra/compose/docker-compose.yml build
+backend` before re-running tests. After rebuilding: 722/722 passing
+(0 failures) — not just the 5 previously-failing tests fixed, but
+proof the whole suite is green with no compensating regression.
+
+**Verification:** Full suite rerun (`ruff check`/`mypy`/`pytest`) after
+every subsequent backend change in this session always rebuilds the
+image first — `docker compose ... build backend && docker compose ...
+run --rm ... pytest -q`, never a bare `run` reusing a possibly-stale
+image.
+
+**Prevention/lesson:** **in a Docker Compose setup where a service has
+no source bind-mount, "edit a file, then `docker compose run` the
+existing image" is a silent no-op — the image must be rebuilt first, or
+the edit is invisible.** This cost real time here because the visible
+symptom (unchanged test failures) looked exactly like "the fix is
+wrong," when the fix was already correct and simply hadn't been
+deployed into the container being tested. Before concluding a source
+change "didn't work" inside a Compose service, check whether that
+service bind-mounts source (`docker compose config` shows its
+`volumes:`) — if not, rebuild before re-testing, every time.
+
+## 2026-09-29 — `.env.example`'s own documented "leave it blank" convention crashed config loading
+
+**Symptom:** An independent audit flagged `.env.example` as missing
+several environment variables `app/core/config.py` actually declares
+(`MAX_UPLOAD_SIZE_BYTES`, `EMBEDDING_BATCH_SIZE`,
+`SPEECH_TO_TEXT_PROVIDER`/`TEXT_TO_SPEECH_PROVIDER`,
+`MAX_VOICE_AUDIO_SIZE_BYTES`, `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES`).
+While adding them (blank, `FOO=`, matching every other optional
+variable's existing style in that file) and then empirically verifying
+the fix by loading the file exactly as `README.md`'s own documented
+Quickstart instructs (`cp .env.example .env`), loading crashed with
+three `pydantic_core.ValidationError`s — not on the new variables, but
+on **pre-existing** ones (`cookie_samesite`, `cookie_secure`,
+`smtp_use_tls`) that had always been left blank in this file.
+
+**Root cause:** Pydantic (and `pydantic-settings`) treats an env/dotenv
+variable that is *present with an empty string value* as genuinely
+"the value is `''`," not as "unset, use the field default" — so
+`COOKIE_SECURE=` (a `bool | None` field) fails to parse `''` as a bool,
+and `ACCESS_TOKEN_EXPIRE_MINUTES=` (an `int` field) fails to parse `''`
+as an int. `.env.example`'s own established convention — leave a line
+as bare `FOO=` to mean "accept the default" — was never actually valid
+for any non-`str` field; it only happened to work by accident for the
+`str | None` fields anyone had tried blank so far (`REDIS_URL=`,
+`COOKIE_DOMAIN=`, etc. — an empty string *is* a valid, if slightly odd,
+value for those). A literal `cp .env.example .env` with zero edits
+would have crashed the application at startup, contradicting the
+Quickstart's own implied "just fill in `SECRET_KEY` and go" promise.
+
+**Fix:** Added `env_ignore_empty=True` to `Settings.model_config`
+(`app/core/config.py`) — pydantic-settings' own built-in option for
+exactly this case: a blank env/dotenv value is treated as if the
+variable were absent, falling through to the field's default,
+regardless of the field's type. One line, no per-field workarounds
+needed, and it makes every existing and future blank line in
+`.env.example` behave the way its own convention always implied it
+should.
+
+**Verification:** Two new tests in `backend/tests/test_config.py` —
+`test_blank_numeric_env_value_is_treated_as_unset_not_a_parse_error`
+(a targeted case) and `test_env_example_loads_cleanly_as_a_literal_env_file`
+(loads the real, repository-root `.env.example` file directly via
+`Settings(_env_file=str(env_example))`, the strongest possible
+regression guard against this exact class of bug recurring). Full
+backend suite: 727/727 passing after the fix, `ruff`/`mypy` clean.
+
+**Prevention/lesson:** **a config-template file's own "leave it blank"
+convention is a testable claim, not just documentation** — this project
+had followed that convention for several sessions without anyone
+actually loading the file as a literal `.env` and checking it didn't
+crash. `test_env_example_loads_cleanly_as_a_literal_env_file` now makes
+this specific claim self-verifying: if a future field addition breaks
+the "blank means default" contract again (e.g. a custom validator that
+rejects `env_ignore_empty`'s fallback), this test fails immediately
+instead of silently shipping a broken Quickstart.

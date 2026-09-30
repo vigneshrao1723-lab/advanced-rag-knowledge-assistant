@@ -59,7 +59,7 @@ from app.ingestion.extraction import ExtractedDocument, ExtractionError
 from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
 from app.repositories import document_chunk_repository, document_repository
-from app.schemas.document import DocumentRead
+from app.schemas.document import DocumentChunkRead, DocumentRead
 from app.services.storage_provider import StorageError, StorageProvider
 
 logger = logging.getLogger("app.documents")
@@ -441,6 +441,77 @@ def _document_not_found_error() -> HTTPException:
         status_code=status.HTTP_404_NOT_FOUND,
         detail={"code": "document_not_found", "message": "Document not found."},
     )
+
+
+def _document_chunk_not_found_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"code": "document_chunk_not_found", "message": "Document chunk not found."},
+    )
+
+
+def _to_document_chunk_read(chunk: DocumentChunk) -> DocumentChunkRead:
+    return DocumentChunkRead(
+        id=chunk.id,
+        document_id=chunk.document_id,
+        chunk_index=chunk.chunk_index,
+        page=chunk.page,
+        section=chunk.section,
+        content=chunk.content,
+    )
+
+
+def get_document_chunk(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    document_id: uuid.UUID,
+    chunk_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
+) -> DocumentChunkRead:
+    """Source inspection: lets a caller who can already see a citation
+    (a `document_id`/`chunk_id` pair from a `CitationRead`) view the
+    exact evidence text the answer was grounded in. Resolves the
+    document through the workspace first -- the same non-leaking `404`
+    every other workspace-scoped lookup here uses -- then the chunk
+    scoped to that already-authorized document, so a chunk ID from
+    another document (and therefore another workspace) can never be
+    fetched by guessing/reusing it against a document the caller does
+    have access to.
+    """
+    document = document_repository.get_by_id_for_workspace(
+        db, workspace_id=workspace_id, document_id=document_id
+    )
+    if document is None:
+        record_audit_event(
+            db,
+            event_type=AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+            metadata={"resource_type": "document", "attempted_document_id": str(document_id)},
+        )
+        raise _document_not_found_error()
+
+    chunk = document_chunk_repository.get_by_id_for_document(
+        db, document_id=document.id, chunk_id=chunk_id
+    )
+    if chunk is None:
+        record_audit_event(
+            db,
+            event_type=AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+            metadata={
+                "resource_type": "document_chunk",
+                "attempted_chunk_id": str(chunk_id),
+                "document_id": str(document.id),
+            },
+        )
+        raise _document_chunk_not_found_error()
+    return _to_document_chunk_read(chunk)
 
 
 def _document_already_processed_error() -> HTTPException:

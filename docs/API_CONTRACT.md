@@ -1,12 +1,18 @@
 # API Contract
 
-**Status:** PARTIALLY IMPLEMENTED — `/api/v1/health` (Issue #1) and
-`/api/v1/auth`, `/api/v1/users`, `/api/v1/workspaces` (Issue #2 —
-Authentication & Workspaces) are implemented, with the concrete
-request/response schemas below. Every other namespace remains PROPOSED /
-target only; this document records the intended API namespace layout to
-keep future implementation consistent, not a claim that those endpoints
-exist. See [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
+**Status:** PARTIALLY IMPLEMENTED — `/api/v1/health`, `/api/v1/auth`,
+`/api/v1/users`, `/api/v1/workspaces`, `/api/v1/workspaces/{id}/documents`
+(including chunk-level source inspection), and
+`/api/v1/workspaces/{id}/conversations` (including voice) are all
+implemented, with the concrete request/response schemas below.
+`/api/v1/collections`, `/api/v1/search`, `/api/v1/evaluations`, and
+`/api/v1/workspaces/{id}/audit-logs` remain PROPOSED / target only —
+evaluation runs exist as real, persisted database rows (see
+`docs/EVALUATION.md`) but are produced by a standalone script, not a
+queryable API endpoint. This document records the intended full API
+namespace layout to keep future implementation consistent, not a claim
+that every namespace below exists. See
+[`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 
 ## Conventions (intended)
 
@@ -145,8 +151,9 @@ from Issue #1: `{"error": {"code", "message", "request_id"}}` — see
 
 ## Implemented: `/api/v1/workspaces/{workspace_id}/documents`
 
-**Upload, listing, and full processing pipeline** (GitHub Issue #3,
-Slices 3.3–3.7; list/get added Issue #5, Slice 5.1) —
+**Upload, listing, full processing pipeline, and source inspection**
+(GitHub Issue #3, Slices 3.3–3.7; list/get added Issue #5, Slice 5.1;
+chunk/source inspection added Issue #8) —
 search/filter/sort/rename/delete/re-index/download are not implemented
 yet. Documents reach `UPLOADED` (upload), then progress through
 `PROCESSING → PARSED → CLEANED → CHUNKED → EMBEDDED → INDEXED → READY`
@@ -160,8 +167,19 @@ chunk's embedding vector once `EMBEDDED` is reached.
 | `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}` | VIEWER | none | `200` `DocumentRead`, or `404` |
 | `POST /api/v1/workspaces/{workspace_id}/documents` | MEMBER | `multipart/form-data`, one field: `file` | `201` `DocumentRead`, or `400`/`409`/`413`/`429`/`500` (see below) |
 | `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` | MEMBER | none | `200` `DocumentRead`, or `404`/`409`/`429`/`500` (see below) |
+| `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}/chunks/{chunk_id}` | VIEWER | none | `200` `DocumentChunkRead`, or `404` |
 
 `DocumentRead`: `{id, filename, mime_type, size_bytes, checksum_sha256, status, page_count, failure_reason, created_at, updated_at}` — never `storage_key` (internal only). Both `GET` endpoints follow the same non-leaking `404` pattern as every other workspace-scoped lookup (a missing document or one belonging to another workspace is indistinguishable).
+
+**Source inspection** (Issue #8): `DocumentChunkRead`:
+`{id, document_id, chunk_index, page, section, content}` — the exact
+evidence text a citation (`CitationRead.chunk_id`, below) was grounded
+in, so a user can verify an answer against its real source rather than
+just a filename/page/section label. Resolves `document_id` against the
+workspace first, then `chunk_id` scoped to that already-authorized
+document — a `chunk_id` genuinely belonging to a different document (and
+therefore a different workspace) is `404`, never reachable by guessing
+or reusing it against a document the caller does have access to.
 
 Resolves `workspace_id` through the same `require_workspace_role`
 dependency every other workspace-scoped route uses — a non-member or
@@ -376,9 +394,12 @@ rename/delete/search conversations, regenerate/retry, and feedback
 `ConversationRead`: `{id, title, created_at, updated_at}`.
 
 `MessageRead`: `{id, role, content, created_at, citations}`, where
-`citations` is `list[CitationRead]` — `{document_id, page, section, rank}`
-(never the chunk's raw content or ID; `rank` is the citation's 1-based
-position in the answer, matching its `[n]` marker in `content`).
+`citations` is `list[CitationRead]` — `{document_id, chunk_id, page,
+section, rank}` (never the chunk's raw content — `chunk_id` is exposed,
+as of Issue #8, only so a client can fetch that content explicitly
+through the workspace-and-document-scoped source-inspection endpoint
+above, never inline on the citation itself; `rank` is the citation's
+1-based position in the answer, matching its `[n]` marker in `content`).
 `GET .../messages` returns each historical message's real, persisted
 citations (not just the citations of the most-recently-posted answer).
 

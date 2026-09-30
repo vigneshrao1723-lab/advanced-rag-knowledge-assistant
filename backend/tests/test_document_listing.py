@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.core.audit import AuditEvent
 from app.models.audit_log import AuditLog
 from app.models.document import Document
+from app.models.document_chunk import DocumentChunk
 from app.services.storage_provider import LocalStorage, get_storage_provider
 from tests.conftest import csrf_headers
 
@@ -242,3 +243,138 @@ def test_get_document_from_another_workspace_is_not_reachable(
         headers=csrf_headers(owner_b),
     )
     assert response.status_code == 404
+
+
+# --- get document chunk (source inspection) ----------------------------------
+
+
+def _process(client: TestClient, workspace_id: str, document_id: str) -> Any:
+    return client.post(
+        f"/api/v1/workspaces/{workspace_id}/documents/{document_id}/process",
+        headers=csrf_headers(client),
+    )
+
+
+_TXT_BYTES = (
+    b"Our refund policy allows returns within thirty days of purchase. "
+    b"Contact support for assistance with your return."
+)
+
+
+def _ingest_ready_document(
+    client: TestClient, workspace_id: str, *, content: bytes = _TXT_BYTES
+) -> dict[str, Any]:
+    document = _upload(client, workspace_id, content=content)
+    response = _process(client, workspace_id, document["id"])
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "READY", response.text
+    return document
+
+
+def test_get_document_chunk_returns_the_actual_evidence_text(
+    client: TestClient, db_session: DbSession
+) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    document = _ingest_ready_document(client, workspace["id"])
+
+    chunk = db_session.execute(
+        select(DocumentChunk).where(DocumentChunk.document_id == uuid.UUID(document["id"]))
+    ).scalars().first()
+    assert chunk is not None
+
+    response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/documents/{document['id']}/chunks/{chunk.id}",
+        headers=csrf_headers(client),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["id"] == str(chunk.id)
+    assert body["document_id"] == document["id"]
+    assert body["content"] == chunk.content
+    assert "refund policy" in body["content"]
+
+
+def test_get_document_chunk_not_found_returns_404(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    document = _ingest_ready_document(client, workspace["id"])
+
+    response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/documents/{document['id']}/chunks/{uuid.uuid4()}",
+        headers=csrf_headers(client),
+    )
+    assert response.status_code == 404
+
+
+def test_get_document_chunk_from_another_document_is_not_reachable(
+    client: TestClient, db_session: DbSession
+) -> None:
+    # A chunk_id that genuinely exists, but belongs to a *different*
+    # document within the same workspace, must not be fetchable through
+    # this document's own URL -- IDOR-shaped, even inside one workspace.
+    _register(client)
+    workspace = _create_workspace(client)
+    document_a = _ingest_ready_document(client, workspace["id"], content=_TXT_BYTES)
+    document_b = _ingest_ready_document(
+        client, workspace["id"], content=b"Shipping takes five to seven business days."
+    )
+
+    chunk_b = db_session.execute(
+        select(DocumentChunk).where(DocumentChunk.document_id == uuid.UUID(document_b["id"]))
+    ).scalars().first()
+    assert chunk_b is not None
+
+    response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/documents/{document_a['id']}/chunks/{chunk_b.id}",
+        headers=csrf_headers(client),
+    )
+    assert response.status_code == 404
+
+
+def test_get_document_chunk_from_another_workspace_is_not_reachable(
+    client_factory: Callable[[], TestClient], db_session: DbSession
+) -> None:
+    owner_a = client_factory()
+    _register(owner_a)
+    workspace_a = _create_workspace(owner_a, name="A")
+    document = _ingest_ready_document(owner_a, workspace_a["id"])
+    chunk = db_session.execute(
+        select(DocumentChunk).where(DocumentChunk.document_id == uuid.UUID(document["id"]))
+    ).scalars().first()
+    assert chunk is not None
+
+    owner_b = client_factory()
+    _register(owner_b)
+    workspace_b = _create_workspace(owner_b, name="B")
+
+    response = owner_b.get(
+        f"/api/v1/workspaces/{workspace_b['id']}/documents/{document['id']}/chunks/{chunk.id}",
+        headers=csrf_headers(owner_b),
+    )
+    assert response.status_code == 404
+
+
+def test_viewer_can_get_document_chunk(
+    client_factory: Callable[[], TestClient], db_session: DbSession
+) -> None:
+    owner = client_factory()
+    _register(owner)
+    workspace = _create_workspace(owner)
+    document = _ingest_ready_document(owner, workspace["id"])
+    chunk = db_session.execute(
+        select(DocumentChunk).where(DocumentChunk.document_id == uuid.UUID(document["id"]))
+    ).scalars().first()
+    assert chunk is not None
+
+    viewer_email = _unique_email()
+    _register(client_factory(), viewer_email)
+    _add_member(owner, workspace["id"], viewer_email, "VIEWER")
+    viewer = client_factory()
+    _login(viewer, viewer_email)
+
+    response = viewer.get(
+        f"/api/v1/workspaces/{workspace['id']}/documents/{document['id']}/chunks/{chunk.id}",
+        headers=csrf_headers(viewer),
+    )
+    assert response.status_code == 200, response.text

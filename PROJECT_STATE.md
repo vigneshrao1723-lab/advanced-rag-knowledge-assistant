@@ -1,11 +1,13 @@
 # PROJECT_STATE.md
 
 **Last updated:** 2026-09-29
-**Current phase:** GitHub Issues #1–#7 are implemented, tested, and merged
-to `main`. Issue #8 (Finalization — README, deployment docs, final
-end-to-end verification) is **in progress**, working directly on `main`
-(not yet its own branch/PR as of this line — see "Immediate priorities").
-`main`/`origin/main` are at `6865166` (Issue #7's merge commit).
+**Current phase:** GitHub Issues #1–#8 are all implemented, tested, and
+merged to `main` — the full original 5-day plan is complete. A final
+project-completion / requirements-audit / quality-hardening pass (not
+tied to a specific numbered issue) is now **in progress**, working
+directly on `main` — see "Immediate priorities". `main`/`origin/main`
+are at `a4afb2e` (Issue #8's merge commit, PR #33) as of the point this
+pass began.
 (repository: `vigneshrao1723-lab/advanced-rag-knowledge-assistant`)
 
 This is the authoritative, living snapshot of the project's real state. If
@@ -50,11 +52,11 @@ offline implementation — no paid API key required (see ADRs 0007, 0008).
 | Retrieval (dense / lexical / fusion / reranking) | IMPLEMENTED | #4 — `dense_search()` (pgvector cosine), `lexical_search()` (Postgres FTS), `reciprocal_rank_fusion()` (RRF, k=60), `LexicalOverlapReranker`; `hybrid_search()` is the orchestrating entry point, workspace-scoped and READY-only at the SQL level, records a `RetrievalEvent` per call. |
 | Generation & citations | IMPLEMENTED | #4 — `build_context()` (budgeted, deduped, order-preserving), `LocalGroundedExtractiveProvider` (grounded by construction — quotes evidence, never paraphrases beyond it), `create_citations()`. No-evidence-found returns an honest fixed answer, zero citations, never fabricated content. |
 | Conversations / chat | IMPLEMENTED (ask flow + history; no rewrite/regenerate/feedback) | #4/#5 — create conversation, post message (full retrieval+generation pipeline synchronously), list messages with real persisted citations. Not implemented: rename/delete/search conversations, regenerate/retry, feedback, conversational context/query rewriting across turns. |
-| Product frontend (Documents, Chat) | IMPLEMENTED (primary flow) | #5 — real `app/documents/page.tsx` (upload, live-polling status list, retry) and `app/chat/page.tsx` (conversation list, message thread, citations, voice controls), consuming the real backend APIs. `login/register/forgot-password/reset-password/dashboard/settings/workspace` also real. Deferred, documented, not forgotten: standalone document search UI, per-conversation/per-document deep-link routes, viewing a cited chunk's raw source text, message feedback, rename/delete conversations. |
+| Product frontend (Documents, Chat) | IMPLEMENTED (primary flow) | #5/#8 — real `app/documents/page.tsx` (upload, live-polling status list, retry) and `app/chat/page.tsx` (conversation list, message thread, citations with click-to-inspect source text, voice controls), consuming the real backend APIs. `login/register/forgot-password/reset-password/dashboard/settings/workspace` also real. Deferred, documented, not forgotten: standalone document search UI, per-conversation/per-document deep-link routes, message feedback, rename/delete conversations. |
 | Voice (STT/TTS) as a mode within chat | IMPLEMENTED | #6 — `PocketSphinxSpeechToTextProvider` (offline, empirically weaker accuracy against synthetic audio — honestly documented, not hidden) + `EspeakTextToSpeechProvider` (subprocess-based, after `pyttsx3` was found to corrupt state across calls). `POST .../voice-messages` calls the *exact same* `post_message()` the text flow uses — no duplicated pipeline. `GET .../messages/{id}/audio` synthesizes on demand, nothing persisted. See [ADR 0008](docs/DECISIONS/0008-local-speech-to-text-and-text-to-speech-providers.md). |
 | Evaluation harness | IMPLEMENTED | #4/#7 — `evaluation_runs`/`evaluation_results` tables (migration `0008`); `eval/scripts/run_retrieval_evaluation.py` compares 4 retrieval methods × 2 chunking strategies against real Postgres. Real, non-fabricated results: dense/hybrid/hybrid+reranked reach Recall@3=1.0/MRR=1.0/nDCG@3=1.0/HitRate@3=1.0/Precision@3=0.33 on both chunking strategies; lexical-only is genuinely weaker (0.71 across those metrics). See `docs/EVALUATION.md`. |
 | Observability / audit logging | IMPLEMENTED | #1/#2/#3/#7 — structured JSON logging, request-ID propagation, persistent `audit_logs` (auth/password-reset/workspace/document-lifecycle/`CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` events), per-stage retrieval/generation latency + character-count token-usage-proxy structured logs (`caplog`-tested). |
-| Testing (unit/integration/security) | IMPLEMENTED | Backend: 722 pytest tests, 717 passing in the Docker environment (5 failures are a known, pre-existing `EMAIL_PROVIDER=smtp`-vs-console container-config artifact in `test_password_reset.py`, unrelated to any code — confirmed 16/16 passing with `EMAIL_PROVIDER=console`). Frontend: vitest suite passing, `eslint`/`tsc --noEmit` clean, `next build` succeeds. |
+| Testing (unit/integration/security) | IMPLEMENTED | Backend: **727/727 passing** (`ruff`/`mypy` clean) — the prior 5 `test_password_reset.py` failures were a real test-environment bug (the Docker Compose backend service's own `EMAIL_PROVIDER=smtp` default leaked into `docker compose run` test invocations, defeating the capsys-based reset-link capture those tests need), fixed by force-setting `EMAIL_PROVIDER=console` unconditionally in `backend/tests/conftest.py` — a hard test requirement, not an infra location that should vary by environment. Frontend: 71/71 vitest, `eslint`/`tsc --noEmit` clean, `next build` succeeds. Playwright: 20/20. |
 | Browser E2E (Playwright) | IMPLEMENTED | `frontend/e2e/` — 20/20 tests passing (app availability, auth/session/CSRF/password-recovery, and `documents-chat.spec.ts`'s full upload→process→READY→chat→cited-answer flow) against a freshly rebuilt real Docker stack. Voice has no Playwright E2E (judged disproportionately expensive vs. real-device audio automation) but is fully unit/HTTP-level tested and was manually verified end-to-end via `curl`. |
 | CI/CD (`.github/workflows/ci.yml`) | IMPLEMENTED | backend (lint/typecheck/pytest against real Postgres+Redis service containers, `espeak-ng` installed), frontend (lint/typecheck/vitest/build), e2e (Playwright against real services), docker-build (image builds + `docker compose config`) — all required, green on every merged PR #9–#32. |
 | Docker / deployment (`infra/`) | IMPLEMENTED for local development | `infra/docker/*.Dockerfile`, `infra/compose/docker-compose.yml` (db/redis/mailpit/backend/frontend). A real hosting/production target is a deliberate, undecided scope boundary — see `docs/DEPLOYMENT.md` "Target deployment environment" and CLAUDE.md §4 (this is exactly the kind of infrastructure decision this project stops and asks a human about). |
@@ -104,29 +106,26 @@ offline implementation — no paid API key required (see ADRs 0007, 0008).
 
 ## Immediate priorities
 
-Issues #1–#7 are done and merged to `main` (`6865166`). Issue #8
-(Finalization) is in progress:
+Issues #1–#8 are done and merged to `main` (`a4afb2e`). A final
+project-completion / requirements-audit / quality-hardening pass is in
+progress:
 
-1. `README.md` rewritten and `docs/DEPLOYMENT.md` updated to reflect the
-   real, current Issues #1–#7 state (done, on `main` working tree as of
-   this line — see `HANDOFF.md`).
-2. A full cold-container Docker Compose restart was verified healthy.
-3. A comprehensive manual end-to-end verification (register → workspace →
-   upload → process → READY → conversation → ask → grounded answer with
-   citations → source inspection → a second workspace for isolation →
-   cross-workspace access blocked both directions → a prompt-injection
-   document (quoted, not obeyed, no secrets leaked) → a malformed/corrupt
-   document (graceful `FAILED`, not a crash) → auth/CSRF boundary tests)
-   was run against a freshly rebuilt stack — all steps passed. See
-   `HANDOFF.md` for the exact results.
-4. The full backend pytest suite (717/722, the 5 known-artifact failures
-   confirmed unrelated) and the full Playwright E2E suite (20/20) were
-   re-run fresh against `main` and pass.
-5. `docs/API_CONTRACT.md` was reviewed for staleness — found accurate,
-   no changes needed.
-6. Remaining: commit this work on an `issue-8-finalization` branch, push,
-   open a PR, confirm CI green, merge — following the same workflow used
-   for Issues #5/#6/#7.
+1. Fixed the real cause of `test_password_reset.py`'s 5 failures
+   (backend now 727/727) and two deprecation warnings — see `SOLVING.md`.
+2. Implemented source inspection end-to-end (backend endpoint, frontend
+   UI, tests at every layer) after finding it was genuinely missing
+   despite prior documentation implying otherwise.
+3. Ran an independent background requirements audit across every spec
+   area — clean except one finding (`.env.example` completeness), fixed.
+4. Fixed `.env.example` completeness and a real, latent config-loading
+   bug (`env_ignore_empty=True`) found while verifying that fix — see
+   `SOLVING.md`.
+5. Full regression (backend 727/727, frontend 71/71, Playwright 20/20,
+   `ruff`/`mypy`/`eslint`/`tsc` clean, Docker/Alembic verified) — all
+   green, against a freshly rebuilt stack.
+6. Remaining: commit this work on a feature branch, push, open a PR,
+   confirm CI green, merge — following the same workflow used for every
+   prior issue.
 
 ## How to keep this file honest
 

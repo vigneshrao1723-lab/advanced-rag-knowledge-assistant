@@ -31,6 +31,16 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key-for-pytest-only-not-a-real-
 # the Redis-backed rate limiter depends on. Only overridden if the
 # environment doesn't already set it (CI/Docker Compose do).
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+# Unlike the above, this is not an infra location that legitimately
+# varies by environment — it's a hard requirement of how
+# tests/test_password_reset.py is written (it captures the reset link
+# via pytest's `capsys`, which only the console provider prints to).
+# `infra/compose/docker-compose.yml`'s own EMAIL_PROVIDER default is
+# deliberately "smtp" (so a real local dev session sees real emails via
+# Mailpit) — that's correct for the running app but wrong for this test
+# process, so it's force-set here unconditionally rather than deferred
+# to the ambient environment.
+os.environ["EMAIL_PROVIDER"] = "console"
 
 from app.core.db import engine, get_db  # noqa: E402
 from app.core.rate_limit import (  # noqa: E402

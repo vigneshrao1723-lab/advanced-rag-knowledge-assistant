@@ -10,10 +10,69 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-29 — Issue #8: Finalization (in progress)
+### 2026-09-29 — Final project completion / requirements audit / quality hardening pass (in progress)
 
-*(Working directly on `main`, cut from the merged Issue #7 (`6865166`,
-PR #32). Not yet committed as of this entry.)*
+*(Working directly on `main`, cut from the merged Issue #8 (`a4afb2e`,
+PR #33). Not yet committed as of this entry. Not tied to a specific
+numbered GitHub issue — #1–#8 are all already merged.)*
+
+- **Fixes the real cause of the 5 `test_password_reset.py` failures**
+  previously only documented as a "known artifact": `backend/tests/conftest.py`
+  now force-sets `EMAIL_PROVIDER=console` unconditionally (these tests
+  need `capsys`-captured stdout, a hard test requirement, not an infra
+  location that should vary by environment); separately, the backend
+  Docker image has no source bind-mount, so verification must rebuild
+  it before re-running tests. Backend: **727/727 passing** (up from
+  717/722), `ruff`/`mypy` clean. See `SOLVING.md`.
+- **Fixes the `HTTP_422_UNPROCESSABLE_ENTITY` deprecation warning**
+  (`app/core/errors.py`, `app/services/conversation_service.py` →
+  `HTTP_422_UNPROCESSABLE_CONTENT`) and Alembic's own suggested
+  `path_separator = os` addition to `backend/alembic.ini`. Remaining
+  warnings are all third-party library internals, not this codebase.
+- **Implements source inspection** — a genuinely missing RAG-product
+  requirement found by re-verifying `docs/RAG_DESIGN.md`'s own "NOT YET
+  IMPLEMENTED" claim against the actual frontend (citations rendered as
+  text only, no way to view cited evidence). New endpoint `GET
+  .../documents/{document_id}/chunks/{chunk_id}` (workspace- and
+  document-scoped, IDOR-safe), `CitationRead.chunk_id` now exposed, a
+  clickable `CitationSource` component in `frontend/app/chat/page.tsx`
+  revealing the real evidence text. 5 new backend tests, 1 new frontend
+  test, extended Playwright coverage. Manually verified end-to-end via
+  `curl` (including a real cross-workspace-denial proof) before any
+  automated test was written. Docs updated: `docs/RAG_DESIGN.md`,
+  `docs/API_CONTRACT.md` (including fixing its own long-stale
+  Issue-#2-era status header), `docs/SECURITY.md`, `PROJECT_STATE.md`.
+- **Independent background requirements audit** across every spec area
+  (auth, workspaces, ingestion, RAG, chat, voice, security,
+  observability, evaluation, product frontend, deployment) — came back
+  clean except one real finding, fixed below.
+- **Fixes `.env.example` completeness and a real latent config-loading
+  bug**: adds the missing `MAX_UPLOAD_SIZE_BYTES`/`EMBEDDING_PROVIDER`/
+  `EMBEDDING_BATCH_SIZE`/`SPEECH_TO_TEXT_PROVIDER`/
+  `TEXT_TO_SPEECH_PROVIDER`/`MAX_VOICE_AUDIO_SIZE_BYTES`/
+  `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES` variables `app/core/config.py`
+  already declared but `.env.example` never listed; while verifying the
+  fix by actually loading a literal `cp .env.example .env`, found it
+  crashed config loading on three *pre-existing* blank variables
+  (`COOKIE_SECURE`, `SMTP_USE_TLS`, `COOKIE_SAMESITE`) — pydantic
+  treats a present-but-empty env value as a real value to parse, not
+  "unset." Root-cause fixed with `env_ignore_empty=True` on
+  `Settings.model_config`. 2 new tests, including one that loads the
+  real `.env.example` directly as a regression guard. See `SOLVING.md`.
+- TODO/FIXME/dead-code/debug-print/hardcoded-secret sweep: clean,
+  nothing found.
+- Full regression, every layer, against a freshly rebuilt/recreated
+  Docker stack: backend 727/727, frontend 71/71, Playwright 20/20,
+  `ruff`/`mypy`/`eslint`/`tsc --noEmit` clean, `next build` succeeds,
+  Alembic at head and applying cleanly, `docker compose config` valid.
+
+## [Unreleased — committed]
+
+### 2026-09-29 — `docs: finalize README, deployment docs, and project-state tracking (Issue #8)` (#33), merged as `a4afb2e`
+
+*(Branch `issue-8-finalization`, cut from the merged Issue #7 (`6865166`,
+PR #32). Opened as **PR #33**, verified green on GitHub Actions CI (4/4
+checks), and **merged into `main` as squash commit `a4afb2e`**.)*
 
 - Rewrites `README.md` from a stale Issue #1/#2-only status to reflect
   the real, current Issues #1–#7 state: a status banner, a real pipeline
@@ -40,8 +99,6 @@ PR #32). Not yet committed as of this entry.)*
   pytest suite fresh (717/722, 5 known-artifact failures re-confirmed
   unrelated); the full Playwright E2E suite fresh (20/20);
   `docs/API_CONTRACT.md` read through for staleness (found accurate).
-
-## [Unreleased — committed]
 
 ### 2026-09-29 — `feat: evaluation experiment tracking, observability, and security hardening (Issue #7)` (#32), merged as `6865166`
 

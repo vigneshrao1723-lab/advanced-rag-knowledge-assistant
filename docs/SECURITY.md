@@ -532,7 +532,14 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
   and `test_voice_conversations.py`
   (`test_cross_workspace_voice_message_is_not_reachable`,
   `test_get_message_audio_from_another_workspace_is_not_reachable`)
-  prove the same for the conversation/voice surface. Collections don't
+  prove the same for the conversation/voice surface. **Extended to
+  document-chunk source inspection (Issue #8)** —
+  `backend/tests/test_document_listing.py`
+  (`test_get_document_chunk_from_another_workspace_is_not_reachable`,
+  `test_get_document_chunk_from_another_document_is_not_reachable`) prove
+  a chunk ID can be fetched neither across workspaces nor through a
+  different document's URL within the same workspace (an IDOR-shaped
+  check, not just a workspace-boundary one). Collections don't
   exist yet (not implemented by any issue so far). **Now also audited,
   not just rejected (Issue #7)** — see "Audit logging" below's
   `CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` entry.

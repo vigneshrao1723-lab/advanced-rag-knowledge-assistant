@@ -29,6 +29,7 @@ vi.mock("@/lib/api-client", async () => {
     listMessages: vi.fn(),
     postMessage: vi.fn(),
     postVoiceMessage: vi.fn(),
+    getDocumentChunk: vi.fn(),
   };
 });
 
@@ -120,7 +121,7 @@ describe("ChatPage", () => {
         role: "ASSISTANT",
         content: "Based on the available documents:\n\n[1] Refunds within 30 days.",
         created_at: "",
-        citations: [{ document_id: "doc-1", page: 1, section: null, rank: 1 }],
+        citations: [{ document_id: "doc-1", chunk_id: "chunk-1", page: 1, section: null, rank: 1 }],
       },
     ]);
 
@@ -128,6 +129,56 @@ describe("ChatPage", () => {
 
     expect(await screen.findByText(/what is the refund policy/i)).toBeInTheDocument();
     expect(screen.getByText(/refund_policy\.txt/)).toBeInTheDocument();
+  });
+
+  it("fetches and reveals the cited chunk's source text on click", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([
+      { id: "c1", title: "First question", created_at: "", updated_at: "" },
+    ]);
+    vi.mocked(api.listDocuments).mockResolvedValue([
+      {
+        id: "doc-1",
+        filename: "refund_policy.txt",
+        mime_type: "text/plain",
+        size_bytes: 100,
+        checksum_sha256: "abc",
+        status: "READY",
+        page_count: null,
+        failure_reason: null,
+        created_at: "",
+        updated_at: "",
+      },
+    ]);
+    vi.mocked(api.listMessages).mockResolvedValue([
+      {
+        id: "m2",
+        role: "ASSISTANT",
+        content: "[1] Refunds within 30 days.",
+        created_at: "",
+        citations: [{ document_id: "doc-1", chunk_id: "chunk-1", page: 1, section: null, rank: 1 }],
+      },
+    ]);
+    vi.mocked(api.getDocumentChunk).mockResolvedValue({
+      id: "chunk-1",
+      document_id: "doc-1",
+      chunk_index: 0,
+      page: 1,
+      section: null,
+      content: "Our refund policy allows returns within thirty days of purchase.",
+    });
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    const citationButton = await screen.findByRole("button", { name: /refund_policy\.txt/i });
+    await user.click(citationButton);
+
+    expect(await screen.findByText(/returns within thirty days/i)).toBeInTheDocument();
+    expect(api.getDocumentChunk).toHaveBeenCalledWith("w1", "doc-1", "chunk-1");
+
+    await user.click(citationButton);
+    expect(screen.queryByText(/returns within thirty days/i)).not.toBeInTheDocument();
   });
 
   it("sends a question and appends the assistant's answer", async () => {

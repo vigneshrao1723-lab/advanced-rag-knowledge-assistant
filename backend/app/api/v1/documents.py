@@ -25,7 +25,7 @@ from app.core.rate_limit import (
 from app.core.redis_client import get_redis_client
 from app.ingestion.embedding import EmbeddingProvider, get_embedding_provider
 from app.models.workspace_member import WorkspaceRole
-from app.schemas.document import DocumentRead
+from app.schemas.document import DocumentChunkRead, DocumentRead
 from app.services import document_service
 from app.services.storage_provider import StorageProvider, get_storage_provider
 
@@ -57,6 +57,30 @@ async def get_document(
         db,
         workspace_id=ctx.workspace.id,
         document_id=document_id,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
+    )
+
+
+@router.get(
+    "/{workspace_id}/documents/{document_id}/chunks/{chunk_id}",
+    response_model=DocumentChunkRead,
+)
+async def get_document_chunk(
+    request: Request,
+    document_id: uuid.UUID,
+    chunk_id: uuid.UUID,
+    ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.VIEWER)),
+    db: Session = Depends(get_db),
+) -> DocumentChunkRead:
+    """Source inspection: the exact evidence text a citation (see
+    `CitationRead.chunk_id` in app/schemas/conversation.py) was grounded
+    in, so a user can verify an answer against its actual source."""
+    return document_service.get_document_chunk(
+        db,
+        workspace_id=ctx.workspace.id,
+        document_id=document_id,
+        chunk_id=chunk_id,
         user_id=ctx.user.id,
         ip_address=client_ip(request),
     )

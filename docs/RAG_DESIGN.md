@@ -154,14 +154,23 @@ string) — see `app/generation/__init__.py`'s docstring.
 
 ## Citations
 
-**IMPLEMENTED** (Slice 4.3) — `Citation` rows carry `document_id`/
-`page`/`section` (copied from the cited chunk at write time) and `rank`
-(the citation's position, matching its `[n]` marker in the generated
-answer's own text).
+**IMPLEMENTED** (Slice 4.3, extended Issue #8) — `Citation` rows carry
+`document_id`/`chunk_id`/`page`/`section` (copied from the cited chunk
+at write time) and `rank` (the citation's position, matching its `[n]`
+marker in the generated answer's own text).
 
 - Each citation references document, page, and section.
-- Citations are clickable in the UI and link to the exact location in a
-  document viewer. **NOT YET IMPLEMENTED** — no UI exists yet (Issue #5).
+- **Source inspection — IMPLEMENTED (Issue #8)**: each citation is
+  clickable in the UI (`frontend/app/chat/page.tsx`'s `CitationSource`
+  component); clicking fetches and reveals the exact evidence chunk's
+  text via `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}/chunks/{chunk_id}`
+  (`app/api/v1/documents.py::get_document_chunk`,
+  `app/services/document_service.py::get_document_chunk`) — workspace-
+  and document-scoped, so a chunk ID can never be fetched across
+  workspaces or through a different document's URL (see
+  `docs/SECURITY.md`). Not a full document viewer with in-context
+  highlighting — that remains a possible future enhancement, not a
+  documented requirement this project commits to.
 
 ## Collections
 

@@ -58,5 +58,17 @@ test.describe.serial("Upload a document and ask a grounded question about it", (
 
     await expect(page.getByText(/refund policy/i)).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/refund-policy\.txt/)).toBeVisible();
+
+    // Source inspection: clicking the citation fetches and reveals the
+    // exact evidence chunk the answer was grounded in (in a dedicated
+    // <blockquote>), not just its filename/page/section label. The
+    // extractive answer itself already echoes the evidence verbatim, so
+    // this asserts on the <blockquote> specifically rather than on
+    // matching text anywhere on the page.
+    await expect(page.locator("blockquote")).not.toBeVisible();
+    await page.getByRole("button", { name: /refund-policy\.txt/ }).click();
+    await expect(page.locator("blockquote")).toContainText(
+      /returns within thirty days of purchase/i
+    );
   });
 });
