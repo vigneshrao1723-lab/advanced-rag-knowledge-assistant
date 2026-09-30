@@ -24,6 +24,13 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # `.env.example` deliberately leaves optional variables blank as
+        # a template (`FOO=` rather than `FOO=<value>`) — without this,
+        # a literal `cp .env.example .env` crashes config loading the
+        # moment any blank line lands on a non-`str` field (an empty
+        # string isn't a valid int/bool/Literal), which is not what
+        # "leave it blank to accept the default" is supposed to mean.
+        env_ignore_empty=True,
     )
 
     environment: Literal["local", "test", "staging", "production"] = "local"

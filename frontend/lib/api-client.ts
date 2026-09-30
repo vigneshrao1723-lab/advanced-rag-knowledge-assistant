@@ -4,6 +4,7 @@ import {
   AuthResponseSchema,
   ConversationListSchema,
   ConversationSchema,
+  DocumentChunkSchema,
   DocumentListSchema,
   DocumentSchema,
   ErrorBodySchema,
@@ -20,6 +21,7 @@ import {
   type AuthResponse,
   type Conversation,
   type Document,
+  type DocumentChunk,
   type Member,
   type Message,
   type MessageResponse,
@@ -277,6 +279,18 @@ export async function processDocument(workspaceId: string, documentId: string): 
     "POST"
   );
   return DocumentSchema.parse(await response.json());
+}
+
+export async function getDocumentChunk(
+  workspaceId: string,
+  documentId: string,
+  chunkId: string
+): Promise<DocumentChunk> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/documents/${documentId}/chunks/${chunkId}`,
+    "GET"
+  );
+  return DocumentChunkSchema.parse(await response.json());
 }
 
 // --- Conversations ---

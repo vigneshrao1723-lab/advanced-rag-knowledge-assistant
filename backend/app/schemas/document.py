@@ -19,3 +19,12 @@ class DocumentRead(BaseModel):
     failure_reason: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class DocumentChunkRead(BaseModel):
+    id: uuid.UUID
+    document_id: uuid.UUID
+    chunk_index: int
+    page: int | None
+    section: str | None
+    content: str

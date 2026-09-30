@@ -112,6 +112,7 @@ def _to_message_read(message: Message, citations: list[CitationRead]) -> Message
 def _to_citation_read(citation: Citation) -> CitationRead:
     return CitationRead(
         document_id=citation.document_id,
+        chunk_id=citation.chunk_id,
         page=citation.page,
         section=citation.section,
         rank=citation.rank,
@@ -292,7 +293,7 @@ def _unsupported_audio_format_error() -> HTTPException:
 
 def _transcription_failed_error() -> HTTPException:
     return HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         detail={
             "code": "transcription_failed",
             "message": "The uploaded audio could not be transcribed.",
@@ -302,7 +303,7 @@ def _transcription_failed_error() -> HTTPException:
 
 def _empty_transcript_error() -> HTTPException:
     return HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         detail={
             "code": "empty_transcript",
             "message": "No speech was detected in the uploaded audio.",

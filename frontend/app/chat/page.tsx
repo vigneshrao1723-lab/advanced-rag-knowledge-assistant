@@ -80,6 +80,65 @@ function citationLabel(citation: Citation, documentsById: Map<string, Document>)
   return parts.join(" · ");
 }
 
+function CitationSource({
+  workspaceId,
+  citation,
+  label,
+}: {
+  workspaceId: string;
+  citation: Citation;
+  label: string;
+}) {
+  const [content, setContent] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleToggle() {
+    if (isOpen) {
+      setIsOpen(false);
+      return;
+    }
+    if (content !== null) {
+      setIsOpen(true);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const chunk = await api.getDocumentChunk(
+        workspaceId,
+        citation.document_id,
+        citation.chunk_id
+      );
+      setContent(chunk.content);
+      setIsOpen(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load the cited source.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={handleToggle}
+        className="text-left underline decoration-dotted underline-offset-2 hover:text-foreground"
+      >
+        [{citation.rank}] {label} {isLoading ? "(loading…)" : isOpen ? "▲" : "▼"}
+      </button>
+      {error && <p className="text-destructive">{error}</p>}
+      {isOpen && content !== null && (
+        <blockquote className="border-border text-foreground mt-1 max-w-prose border-l-2 py-1 pl-2 whitespace-pre-wrap">
+          {content}
+        </blockquote>
+      )}
+    </li>
+  );
+}
+
 function AudioPlaybackButton({
   workspaceId,
   conversationId,
@@ -169,9 +228,12 @@ function MessageBubble({
       {message.citations.length > 0 && (
         <ul className="text-muted-foreground flex flex-col gap-0.5 text-xs">
           {message.citations.map((citation) => (
-            <li key={`${message.id}-${citation.rank}`}>
-              [{citation.rank}] {citationLabel(citation, documentsById)}
-            </li>
+            <CitationSource
+              key={`${message.id}-${citation.rank}`}
+              workspaceId={workspaceId}
+              citation={citation}
+              label={citationLabel(citation, documentsById)}
+            />
           ))}
         </ul>
       )}
