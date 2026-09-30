@@ -8,28 +8,22 @@ in-flight task — overwrite it as work progresses, don't append a history
 
 ## Current task
 
-**GitHub Issues #1–#7 are all merged into `main`.** `main`/`origin/main`
-are at `6865166` (Issue #7's squash-merge commit, PR #32). We remain on
-the explicit **5-day completion timeline** (Issues #3 through #8): PRs
-are merged promptly once reviewed and CI-green, without waiting for a
-separate per-PR instruction, unless a genuine architectural blocker
-requires pausing (`CLAUDE.md` §4's triggers still apply). Full per-issue
-implementation detail for #2 through #7 is preserved below under each
+**GitHub Issues #1–#8 are all merged into `main`.** `main`/`origin/main`
+are at `a4afb2e` (Issue #8's squash-merge commit, PR #33) — the full
+5-day plan's every numbered issue is complete. Full per-issue
+implementation detail for #2 through #8 is preserved below under each
 issue's own "Completed work" section — not repeated here, per this
-file's "don't append a history" instruction (a prior-session lapse let
-this section itself balloon into an append-only log; it has now been
-reset back to a current-state summary, and the historical "Completed
-work" sections below are left intact as reference material rather than
-deleted).
+file's "don't append a history" instruction.
 
-**GitHub Issue #8 (Finalization) is now in progress, working directly on
-`main`** (no dedicated branch/PR opened yet). See "Completed work (Issue
-#8 — Finalization)" below for exactly what's been done so far this
-session (README/DEPLOYMENT.md rewrite, a cold-container Docker Compose
-restart, a full manual "CRITICAL FINAL END-TO-END TEST" walkthrough, a
-fresh full backend-pytest + Playwright re-run) and "Exact next
+**A final project-completion / requirements-audit / quality-hardening
+pass is now in progress, working directly on `main`** (no dedicated
+branch/PR opened yet — not tied to a specific numbered GitHub issue,
+since #1–#8 are all already done; this is a post-#8 final-quality
+sweep). See "Completed work (Final quality hardening pass)" below for
+exactly what's been done so far this session and "Exact next
 recommended action" at the end of this file for what's left: commit,
-branch, push, PR, CI, merge — the same workflow used for Issues #5/#6/#7.
+branch, push, PR, CI, merge — the same workflow used for every prior
+issue/PR.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -3622,12 +3616,14 @@ discipline).
   left stale from Issue #6's pre-merge state), `SOLVING.md` (the
   Alembic-`fileConfig` finding), this file, `CHANGELOG.md`.
 
-## Completed work (Issue #8 — Finalization, in progress)
+## Completed work (Issue #8 — Finalization) — MERGED
 
 **PR #32 (Issue #7, squash commit `6865166`) merged, verified, feature
-branch deleted (local + remote), confirmed `main`/`origin/main` at
-`6865166`.** Issue #8 work is proceeding directly on `main` (not yet its
-own branch — see "Exact next recommended action").
+branch deleted (local + remote).** Issue #8 work then proceeded on
+branch `issue-8-finalization`, opened as **PR #33**, verified green on
+GitHub Actions CI (4/4 checks), and **merged into `main` as squash
+commit `a4afb2e`**. `main`/`origin/main` are at `a4afb2e`. Feature
+branch deleted (local + remote) after merge.
 
 - **`README.md` — fully rewritten**, replacing a stale Issue #1/#2-only
   status with the real, current state: a status banner ("Issues #1–#7
@@ -3714,10 +3710,143 @@ own branch — see "Exact next recommended action").
   followed; flagged to the user; the standing no-provenance rule in
   `CLAUDE.md` continues to govern all commits/PRs in this project.
 
-Not yet done for Issue #8: creating the `issue-8-finalization` branch;
-committing this work; updating `CHANGELOG.md` with a dated entry; the
-commit/push/PR/CI/merge cycle itself. See "Exact next recommended
-action" at the end of this file.
+## Completed work (Final quality hardening pass, in progress)
+
+A user-requested final completion/requirements-audit/quality-hardening
+pass, run after Issue #8 was already merged (`a4afb2e`) — not tied to a
+specific numbered issue. Scope: verify every requirement against the
+actual repository (not stale docs), fix real gaps, keep the modular
+monolith architecture unchanged (no new infra), full regression testing,
+keep docs current.
+
+- **Fixed the real root cause of the 5 `test_password_reset.py`
+  failures** (previously just documented as a "known artifact" across
+  several sessions) — see `SOLVING.md`'s "The documented `EMAIL_PROVIDER`
+  test fix didn't actually fix anything until the image was rebuilt"
+  entry for the full story. Two real things were wrong, both fixed:
+  1. `backend/tests/conftest.py` now force-sets
+     `os.environ["EMAIL_PROVIDER"] = "console"` unconditionally (not
+     `setdefault`) — a hard test requirement (these tests use `capsys`
+     to capture the reset link from stdout), not an infra location that
+     should vary by environment like `DATABASE_URL`/`REDIS_URL` do.
+  2. The `infra/compose/docker-compose.yml` `backend` service has no
+     source bind-mount — `docker compose run` was silently reusing a
+     stale pre-fix image. The verification habit for the rest of this
+     pass became: always `docker compose build backend` before
+     `docker compose run ... pytest`.
+  - Result: **727/727 backend tests passing** (up from 717/722 — also
+    added 7 new tests along the way, see below), `ruff`/`mypy` clean.
+- **Fixed the `StarletteDeprecationWarning: HTTP_422_UNPROCESSABLE_ENTITY`
+  warning** — `app/core/errors.py`, `app/services/conversation_service.py`
+  now use `status.HTTP_422_UNPROCESSABLE_CONTENT` (same `422`, the
+  non-deprecated name). Also added `path_separator = os` to
+  `backend/alembic.ini`, closing the `DeprecationWarning: No
+  path_separator found in configuration` warning Alembic itself
+  suggested. Remaining 3 warnings are all third-party library internals
+  (FastAPI/Starlette's own `httpx` testclient import, `anyio`'s
+  `BlockingPortal` alias, `speech_recognition`'s Python-3.13 `aifc`
+  shim) — not this codebase's code, not meaningfully fixable without
+  adding a new dependency for a testclient-only import warning.
+- **Implemented source inspection — a genuine, previously-missing
+  feature**, found by re-verifying `docs/RAG_DESIGN.md`'s own claim
+  ("Citations are clickable... NOT YET IMPLEMENTED") against the actual
+  frontend code: citations rendered as filename/page/section *text
+  only*, with no way to view the actual cited evidence, and
+  `documents/[id]` was (correctly, honestly) a `PageStub`. This was a
+  real product/RAG-requirement gap, not just documentation drift, so it
+  was implemented rather than just re-documented as missing:
+  - Backend: `CitationRead`/`Citation` model already carried `chunk_id`
+    internally (migration `0006`, unchanged) but never exposed it — now
+    added to `CitationRead` (`app/schemas/conversation.py`). New
+    endpoint `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}/chunks/{chunk_id}`
+    (`app/api/v1/documents.py::get_document_chunk`,
+    `app/services/document_service.py::get_document_chunk`, new
+    `DocumentChunkRead` schema, new
+    `document_chunk_repository.get_by_id_for_document()`) — resolves the
+    document against the workspace first, then the chunk scoped to that
+    already-authorized document, so a chunk ID from a *different*
+    document (and therefore workspace) is `404`, an IDOR-shaped check,
+    not just a workspace-boundary one. 5 new backend tests
+    (`backend/tests/test_document_listing.py`): happy path (real
+    evidence text returned, matches the persisted chunk), not-found,
+    cross-document (same workspace, different document — IDOR), 
+    cross-workspace, VIEWER-role access.
+  - Frontend: `Citation`/new `DocumentChunk` Zod schemas
+    (`frontend/lib/schemas.ts`), `getDocumentChunk()`
+    (`frontend/lib/api-client.ts`), and a new `CitationSource` component
+    in `frontend/app/chat/page.tsx` — each citation is now a clickable
+    button; clicking fetches (once, cached in component state) and
+    toggles a `<blockquote>` showing the exact evidence text. 1 new
+    vitest test (`app/chat/page.test.tsx`) proving the fetch-and-reveal/
+    toggle-closed behavior with a mocked API. `frontend/e2e/documents-chat.spec.ts`
+    extended with a real-browser assertion (click the citation, the
+    `<blockquote>` appears with the real evidence text — carefully
+    scoped to the `<blockquote>` specifically, since this project's
+    extractive LLM provider already echoes the evidence verbatim in the
+    visible answer, which would make a plain text-match assertion a
+    false positive regardless of whether the feature worked).
+  - **Manually verified end-to-end via real `curl` calls** against the
+    live rebuilt stack, including a real cross-workspace-denial proof
+    (a second user, second workspace, `404` on both the citation's
+    document AND its chunk), before writing any of the automated tests.
+  - Docs updated: `docs/RAG_DESIGN.md` ("Citations" section — now
+    `IMPLEMENTED`, not `NOT YET IMPLEMENTED`), `docs/API_CONTRACT.md`
+    (new endpoint documented, `CitationRead` shape updated, and its own
+    long-stale top-of-file status header fixed — it still said only
+    auth/users/workspaces were implemented, Issue #2-era, despite
+    documents/conversations/voice clearly documented as implemented
+    further down the same file), `docs/SECURITY.md` ("Cross-workspace
+    access tests" bullet extended), `PROJECT_STATE.md` (component row +
+    deferred-items list updated).
+- **A second independent background audit** (`Explore` subagent) was run
+  across every requirement area in the original spec (auth, workspaces,
+  ingestion, RAG, chat, voice, security, observability, evaluation,
+  product frontend, deployment) against the actual code, independent of
+  documentation. Result: everything else checked out as genuinely
+  implemented and matching its documentation — the only real finding was
+  `.env.example` missing several variables `app/core/config.py` actually
+  declares (`MAX_UPLOAD_SIZE_BYTES`, `EMBEDDING_PROVIDER`/
+  `EMBEDDING_BATCH_SIZE`, `SPEECH_TO_TEXT_PROVIDER`/
+  `TEXT_TO_SPEECH_PROVIDER`/`MAX_VOICE_AUDIO_SIZE_BYTES`,
+  `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES`) — fixed, see below.
+- **Fixed `.env.example` completeness, and found + fixed a real,
+  latent bug while verifying the fix**: added the missing variables
+  above, then empirically verified the documented Quickstart's own `cp
+  .env.example .env` actually works — it didn't. Three pre-existing
+  blank optional variables (`COOKIE_SECURE`, `SMTP_USE_TLS`, and
+  `COOKIE_SAMESITE`'s Literal type) crashed config loading, because
+  pydantic treats a *present-but-empty* env value as a real empty
+  string to parse, not as "unset, use the default." Root-cause fixed
+  with `env_ignore_empty=True` on `Settings.model_config`
+  (`app/core/config.py`) — one line, works for every field, not a
+  per-field workaround. See `SOLVING.md`'s "`.env.example`'s own
+  documented 'leave it blank' convention crashed config loading" entry
+  for the full story. 2 new tests (`backend/tests/test_config.py`),
+  including one that loads the real repository-root `.env.example` file
+  directly as a regression guard against this exact bug recurring.
+- **TODO/FIXME/dead-code/debug-print/hardcoded-secret sweep** — clean;
+  nothing found across `backend/app`, `frontend/app`, `frontend/lib`,
+  `frontend/components`.
+- **Full regression, every layer, against a freshly rebuilt/recreated
+  Docker stack**: backend 727/727 (`ruff`/`mypy` clean), frontend 71/71
+  (`eslint`/`tsc --noEmit` clean, `next build` succeeds), Playwright
+  20/20 (including the new source-inspection assertion), Alembic at
+  head (`0008`) and applying cleanly, `docker compose config` valid,
+  `/api/v1/health/ready` responding. One self-inflicted false alarm
+  along the way: an ad-hoc `docker cp .env.example
+  compose-backend-1:/app/.env` debugging step left a stray `.env` file
+  inside the long-running `compose-backend-1` container, which then made
+  `alembic current` fail with the exact pydantic error the fix above
+  was supposed to have already resolved — diagnosed and fixed by
+  force-recreating that one service (`docker compose up -d
+  --force-recreate backend`) from the already-correct rebuilt image;
+  not a real regression, but worth remembering next time an ad-hoc
+  `docker cp` is used against a long-lived service container instead of
+  a throwaway `docker compose run`.
+
+Not yet done: committing this work; updating `CHANGELOG.md` with a dated
+entry; the branch/commit/push/PR/CI/merge cycle itself. See "Exact next
+recommended action" at the end of this file.
 
 ## Explicitly NOT done (do not assume otherwise)
 
@@ -3824,40 +3953,44 @@ action" at the end of this file.
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: GitHub Issue #8 — Finalization (in progress)
+## Next major task: wrap up the final quality-hardening pass
 
-**GitHub Issues #1–#7 are all merged.** See "Completed work (Issue #8 —
-Finalization, in progress)" above for exactly what's been done so far
-this session toward Issue #8's scope (README/DEPLOYMENT.md rewrite,
-cold-container restart, the full manual end-to-end walkthrough, a fresh
-backend-pytest + Playwright re-run, an `API_CONTRACT.md` staleness
-review, a `PROJECT_STATE.md` rewrite). Remaining, in order:
+**GitHub Issues #1–#8 are all merged.** See "Completed work (Final
+quality hardening pass, in progress)" above for exactly what's been done
+this session (the real `EMAIL_PROVIDER` test fix, deprecation-warning
+cleanup, the new source-inspection feature end-to-end, an independent
+requirements audit, the `.env.example`/`env_ignore_empty` config bug
+fix, a full regression). Remaining, in order:
 
-1. Update `CHANGELOG.md` with a dated Issue #8 entry.
-2. Create branch `issue-8-finalization` from `main`, commit the
-   README/DEPLOYMENT.md/PROJECT_STATE.md/HANDOFF.md/CHANGELOG.md changes
-   (two commits, matching the established feat+docs pattern — though
-   this issue is itself documentation/finalization work, so a single
-   well-described commit is also reasonable; use judgment), push, open a
-   PR via `gh pr create`.
+1. Update `CHANGELOG.md` with a dated entry for this pass.
+2. Create a branch (e.g. `final-quality-hardening`) from `main`, commit
+   the changes (backend: conftest.py, errors.py, conversation_service.py,
+   document_service.py, documents.py, schemas, repository, config.py,
+   alembic.ini, new/updated tests; frontend: schemas.ts, api-client.ts,
+   chat/page.tsx, chat/page.test.tsx, documents-chat.spec.ts; docs:
+   RAG_DESIGN.md, API_CONTRACT.md, SECURITY.md, PROJECT_STATE.md,
+   .env.example, SOLVING.md, HANDOFF.md, CHANGELOG.md), push, open a PR
+   via `gh pr create`.
 3. Poll CI (`gh pr view <N> --json statusCheckRollup`) until green,
    merge with `gh pr merge <N> --squash --delete-branch=false`.
-4. Switch to `main`, pull, verify the merged commit, delete the local and
-   remote feature branch.
-5. Only if time remains after the above (this is the last issue in the
-   5-day plan): revisit Issue #5's deferred lower-priority scope (source
-   inspection needs a new backend endpoint first; feedback; rename/
-   delete conversations; the `/chat/[id]`/`/documents/[id]` deep-link
-   stub routes) — not required for Issue #8's own Definition of Done.
+4. Switch to `main`, pull, verify the merged commit, run the full
+   backend/frontend/Playwright suites once more to confirm, delete the
+   local and remote feature branch.
+5. Report final status to the user: current main commit, requirements
+   completed, remaining limitations, exact test results per layer,
+   security verification result, Docker verification — per the master
+   prompt's own "Final deliverable" section. Do not claim 100%
+   completion beyond what the repository actually supports (deferred
+   items — standalone search UI, message feedback, rename/delete
+   conversations, per-conversation/per-document deep-link routes,
+   collections — remain genuinely deferred, not silently dropped).
 
 **Critical, explicitly restated security requirement (already
 implemented and tested, do not regress)**: retrieved document content —
 and transcribed voice input — is untrusted data, never instructions —
 see `docs/SECURITY.md` §"Prompt injection defense" and §"Voice input
 safety"; never store an auth token in `localStorage`/`sessionStorage`;
-never fabricate evaluation numbers, deployment claims, or test results —
-everything in this finalization pass must be either actually verified or
-explicitly marked as not yet verified.
+never fabricate evaluation numbers, deployment claims, or test results.
 
 ## Blockers
 
@@ -4332,36 +4465,40 @@ own scope.
 
 ## Exact next recommended action
 
-GitHub Issues #1–#7 are all merged into `main`/`origin/main`, currently
-at `6865166` (PR #32). **GitHub Issue #8 (Finalization) is in progress**,
-working directly on `main`: `README.md` and `docs/DEPLOYMENT.md` have
-been rewritten/updated, `PROJECT_STATE.md` has been rewritten for
-accuracy, this file has been updated, a cold-container Docker Compose
-restart was verified, a full manual "CRITICAL FINAL END-TO-END TEST"
-walkthrough passed all 10 steps, the full backend pytest suite
-(717/722, 5 known-artifact failures re-confirmed unrelated) and the full
-Playwright suite (20/20) were re-run fresh and pass, and
-`docs/API_CONTRACT.md` was reviewed and found accurate. See "Completed
-work (Issue #8 — Finalization, in progress)" above for full detail. The
-next work, in order:
+GitHub Issues #1–#8 are all merged into `main`/`origin/main`, currently
+at `a4afb2e` (PR #33) at the point this final quality-hardening pass
+began. This pass (working directly on `main`, no branch yet) has: fixed
+the real cause of the 5 `test_password_reset.py` failures (backend now
+**727/727**, up from 717/722, `ruff`/`mypy` clean); fixed the
+`HTTP_422_UNPROCESSABLE_ENTITY` and Alembic `path_separator` deprecation
+warnings; implemented real source inspection end-to-end (backend
+endpoint + tests, frontend UI + tests, Playwright coverage, docs) after
+finding it was genuinely missing despite some prior documentation
+implying otherwise; run an independent background requirements audit
+across every spec area (came back clean except one finding, now fixed);
+fixed a real `.env.example`-vs-`Settings` completeness gap and a deeper
+latent config-loading bug it led to (`env_ignore_empty=True`, with a
+regression test that loads the real `.env.example` file); done a full
+regression across backend/frontend/Playwright/Docker/Alembic — all
+green. See "Completed work (Final quality hardening pass, in progress)"
+above for full detail. The next work, in order:
 
-1. Add a dated Issue #8 entry to `CHANGELOG.md` describing the
-   README/DEPLOYMENT.md/PROJECT_STATE.md rewrite and the final
-   verification results.
-2. `git status` to confirm exactly what's changed on `main` (expected:
-   `README.md`, `docs/DEPLOYMENT.md`, `PROJECT_STATE.md`, `HANDOFF.md`,
-   `CHANGELOG.md`). Create branch `issue-8-finalization` from `main`,
-   commit these changes, push, open a PR via `gh pr create`.
+1. Add a dated entry to `CHANGELOG.md` describing this pass.
+2. `git status` to confirm exactly what's changed on `main`. Create a
+   branch (e.g. `final-quality-hardening`) from `main`, commit, push,
+   open a PR via `gh pr create` (see "Next major task" above for the
+   exact file list).
 3. Poll CI (`gh pr view <N> --json statusCheckRollup`) until green
    (backend/frontend/e2e/docker-build), then merge with
-   `gh pr merge <N> --squash --delete-branch=false` — the 5-day timeline
-   authorizes merging promptly once CI-green without a separate per-PR
-   instruction.
+   `gh pr merge <N> --squash --delete-branch=false`.
 4. Switch to `main`, pull, confirm the merged commit, delete the local
-   and remote feature branch, run the backend/frontend suites once more
-   against `main` to confirm no regression, and report Issue #8 —
-   and the full 5-day plan (Issues #3 through #8) — complete.
-5. Only if time remains after that (not required for Issue #8's own
-   Definition of Done): Issue #5's deferred lower-priority scope (source
-   inspection, feedback, rename/delete conversations, the
-   `/chat/[id]`/`/documents/[id]` deep-link stub routes).
+   and remote feature branch, run the backend/frontend/Playwright suites
+   once more against `main` to confirm no regression.
+5. Report final status to the user per the master prompt's "Final
+   deliverable" section — current main commit, requirements completed,
+   remaining limitations (genuinely deferred items, not silently
+   dropped: standalone search UI, message feedback, rename/delete
+   conversations, per-conversation/per-document deep-link routes,
+   collections), backend/frontend/Playwright results, security
+   verification, Docker verification, any real remaining blockers (none
+   currently known).
