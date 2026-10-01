@@ -24,6 +24,7 @@ import {
   type DocumentChunk,
   type Member,
   type Message,
+  type MessageFeedback,
   type MessageResponse,
   type SessionInfo,
   type User,
@@ -305,6 +306,26 @@ export async function createConversation(workspaceId: string): Promise<Conversat
   return ConversationSchema.parse(await response.json());
 }
 
+export async function renameConversation(
+  workspaceId: string,
+  conversationId: string,
+  title: string | null
+): Promise<Conversation> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/conversations/${conversationId}`,
+    "PATCH",
+    { body: JSON.stringify({ title }) }
+  );
+  return ConversationSchema.parse(await response.json());
+}
+
+export async function deleteConversation(
+  workspaceId: string,
+  conversationId: string
+): Promise<void> {
+  await apiRequest(`/api/v1/workspaces/${workspaceId}/conversations/${conversationId}`, "DELETE");
+}
+
 export async function listMessages(workspaceId: string, conversationId: string): Promise<Message[]> {
   const response = await apiRequest(
     `/api/v1/workspaces/${workspaceId}/conversations/${conversationId}/messages`,
@@ -322,6 +343,20 @@ export async function postMessage(
     `/api/v1/workspaces/${workspaceId}/conversations/${conversationId}/messages`,
     "POST",
     { body: JSON.stringify({ content }) }
+  );
+  return MessageSchema.parse(await response.json());
+}
+
+export async function setMessageFeedback(
+  workspaceId: string,
+  conversationId: string,
+  messageId: string,
+  feedback: MessageFeedback | null
+): Promise<Message> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/conversations/${conversationId}/messages/${messageId}/feedback`,
+    "PUT",
+    { body: JSON.stringify({ feedback }) }
   );
   return MessageSchema.parse(await response.json());
 }

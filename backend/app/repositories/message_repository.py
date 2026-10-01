@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.message import Message, MessageRole
+from app.models.message import Message, MessageFeedback, MessageRole
 
 
 def create(
@@ -51,4 +51,20 @@ def get_by_id_for_conversation(
     ).scalar_one_or_none()
 
 
-__all__ = ["create", "get_by_id_for_conversation", "list_for_conversation"]
+def set_feedback(db: Session, *, message: Message, feedback: MessageFeedback | None) -> Message:
+    """Updates an already-persisted row in place -- never inserts.
+    Setting the same rating again, a different rating, or `None`
+    (clearing it) are all valid, idempotent transitions."""
+    message.feedback = feedback
+    db.add(message)
+    db.flush()
+    db.refresh(message)
+    return message
+
+
+__all__ = [
+    "create",
+    "get_by_id_for_conversation",
+    "list_for_conversation",
+    "set_feedback",
+]

@@ -12,21 +12,149 @@ import type { Citation, Conversation, Document, Message } from "@/lib/schemas";
 import { startVoiceRecording, type VoiceRecorder } from "@/lib/voice-recorder";
 import { useWorkspace } from "@/lib/workspace-context";
 
+function ConversationRow({
+  workspaceId,
+  conversation,
+  isSelected,
+  onSelect,
+  onRenamed,
+  onDeleted,
+}: {
+  workspaceId: string;
+  conversation: Conversation;
+  isSelected: boolean;
+  onSelect: (id: string) => void;
+  onRenamed: (conversation: Conversation) => void;
+  onDeleted: (id: string) => void;
+}) {
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(conversation.title ?? "");
+  const [isBusy, setIsBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleRenameSubmit(event: FormEvent) {
+    event.preventDefault();
+    setIsBusy(true);
+    setError(null);
+    try {
+      const updated = await api.renameConversation(
+        workspaceId,
+        conversation.id,
+        titleDraft.trim() || null
+      );
+      onRenamed(updated);
+      setIsRenaming(false);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not rename the conversation.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!window.confirm("Delete this conversation? This cannot be undone.")) return;
+    setIsBusy(true);
+    setError(null);
+    try {
+      await api.deleteConversation(workspaceId, conversation.id);
+      onDeleted(conversation.id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not delete the conversation.");
+      setIsBusy(false);
+    }
+  }
+
+  if (isRenaming) {
+    return (
+      <li>
+        <form onSubmit={handleRenameSubmit} className="flex flex-col gap-1 px-1 py-1">
+          <label htmlFor={`rename-${conversation.id}`} className="sr-only">
+            Conversation title
+          </label>
+          <input
+            id={`rename-${conversation.id}`}
+            autoFocus
+            value={titleDraft}
+            onChange={(event) => setTitleDraft(event.target.value)}
+            className="border-input bg-background rounded-md border px-2 py-1 text-sm"
+          />
+          <div className="flex gap-1">
+            <Button type="submit" size="sm" disabled={isBusy}>
+              Save
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={isBusy}
+              onClick={() => setIsRenaming(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+          {error && <p className="text-destructive text-xs">{error}</p>}
+        </form>
+      </li>
+    );
+  }
+
+  return (
+    <li className="group flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => onSelect(conversation.id)}
+        className={`min-w-0 flex-1 truncate rounded-md px-3 py-2 text-left text-sm transition-colors ${
+          isSelected ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+        }`}
+      >
+        {conversation.title ?? `Conversation ${conversation.id.slice(0, 8)}`}
+      </button>
+      <button
+        type="button"
+        aria-label="Rename conversation"
+        disabled={isBusy}
+        onClick={() => {
+          setTitleDraft(conversation.title ?? "");
+          setIsRenaming(true);
+        }}
+        className="text-muted-foreground hover:text-foreground shrink-0 px-1 text-xs opacity-0 group-hover:opacity-100"
+      >
+        Rename
+      </button>
+      <button
+        type="button"
+        aria-label="Delete conversation"
+        disabled={isBusy}
+        onClick={handleDelete}
+        className="text-muted-foreground hover:text-destructive shrink-0 px-1 text-xs opacity-0 group-hover:opacity-100"
+      >
+        Delete
+      </button>
+      {error && <p className="text-destructive text-xs">{error}</p>}
+    </li>
+  );
+}
+
 function ConversationList({
   workspaceId,
   conversations,
   selectedId,
   onSelect,
   onCreated,
+  onRenamed,
+  onDeleted,
 }: {
   workspaceId: string;
   conversations: Conversation[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCreated: (conversation: Conversation) => void;
+  onRenamed: (conversation: Conversation) => void;
+  onDeleted: (id: string) => void;
 }) {
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   async function handleCreate() {
     setIsCreating(true);
@@ -41,30 +169,47 @@ function ConversationList({
     }
   }
 
+  const filtered = query.trim()
+    ? conversations.filter((c) => (c.title ?? "").toLowerCase().includes(query.trim().toLowerCase()))
+    : conversations;
+
   return (
     <div className="flex w-64 shrink-0 flex-col gap-3">
       <Button size="sm" disabled={isCreating} onClick={handleCreate}>
         {isCreating ? "Starting…" : "New conversation"}
       </Button>
+      {conversations.length > 0 && (
+        <div>
+          <label htmlFor="conversation-search" className="sr-only">
+            Search conversations
+          </label>
+          <input
+            id="conversation-search"
+            type="search"
+            placeholder="Search conversations…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            className="border-input bg-background w-full rounded-md border px-2 py-1 text-sm"
+          />
+        </div>
+      )}
       {error && <p className="text-destructive text-sm">{error}</p>}
       {conversations.length === 0 ? (
         <p className="text-muted-foreground text-sm">No conversations yet.</p>
+      ) : filtered.length === 0 ? (
+        <p className="text-muted-foreground text-sm">No conversations match &quot;{query}&quot;.</p>
       ) : (
         <ul className="flex flex-col gap-1">
-          {conversations.map((conversation) => (
-            <li key={conversation.id}>
-              <button
-                type="button"
-                onClick={() => onSelect(conversation.id)}
-                className={`w-full truncate rounded-md px-3 py-2 text-left text-sm transition-colors ${
-                  selectedId === conversation.id
-                    ? "bg-accent text-accent-foreground"
-                    : "hover:bg-accent/50"
-                }`}
-              >
-                {conversation.title ?? `Conversation ${conversation.id.slice(0, 8)}`}
-              </button>
-            </li>
+          {filtered.map((conversation) => (
+            <ConversationRow
+              key={conversation.id}
+              workspaceId={workspaceId}
+              conversation={conversation}
+              isSelected={selectedId === conversation.id}
+              onSelect={onSelect}
+              onRenamed={onRenamed}
+              onDeleted={onDeleted}
+            />
           ))}
         </ul>
       )}
@@ -197,16 +342,71 @@ function AudioPlaybackButton({
   );
 }
 
+function FeedbackButtons({
+  workspaceId,
+  conversationId,
+  message,
+  onChanged,
+}: {
+  workspaceId: string;
+  conversationId: string;
+  message: Message;
+  onChanged: (message: Message) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleRate(rating: "UP" | "DOWN") {
+    setError(null);
+    try {
+      const next = await api.setMessageFeedback(
+        workspaceId,
+        conversationId,
+        message.id,
+        message.feedback === rating ? null : rating
+      );
+      onChanged(next);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not record feedback.");
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        aria-label="Good response"
+        aria-pressed={message.feedback === "UP"}
+        onClick={() => handleRate("UP")}
+        className={`rounded px-1 text-xs ${message.feedback === "UP" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+      >
+        👍
+      </button>
+      <button
+        type="button"
+        aria-label="Bad response"
+        aria-pressed={message.feedback === "DOWN"}
+        onClick={() => handleRate("DOWN")}
+        className={`rounded px-1 text-xs ${message.feedback === "DOWN" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+      >
+        👎
+      </button>
+      {error && <span className="text-destructive text-xs">{error}</span>}
+    </div>
+  );
+}
+
 function MessageBubble({
   workspaceId,
   conversationId,
   message,
   documentsById,
+  onFeedbackChanged,
 }: {
   workspaceId: string;
   conversationId: string;
   message: Message;
   documentsById: Map<string, Document>;
+  onFeedbackChanged: (message: Message) => void;
 }) {
   const isUser = message.role === "USER";
   return (
@@ -219,11 +419,19 @@ function MessageBubble({
         {message.content}
       </div>
       {!isUser && !message.id.startsWith("pending-") && (
-        <AudioPlaybackButton
-          workspaceId={workspaceId}
-          conversationId={conversationId}
-          messageId={message.id}
-        />
+        <div className="flex items-center gap-2">
+          <AudioPlaybackButton
+            workspaceId={workspaceId}
+            conversationId={conversationId}
+            messageId={message.id}
+          />
+          <FeedbackButtons
+            workspaceId={workspaceId}
+            conversationId={conversationId}
+            message={message}
+            onChanged={onFeedbackChanged}
+          />
+        </div>
       )}
       {message.citations.length > 0 && (
         <ul className="text-muted-foreground flex flex-col gap-0.5 text-xs">
@@ -297,6 +505,7 @@ function ConversationThread({
         content,
         created_at: new Date().toISOString(),
         citations: [],
+        feedback: null,
       },
     ]);
     try {
@@ -337,6 +546,7 @@ function ConversationThread({
             content: transcript,
             created_at: new Date().toISOString(),
             citations: [],
+            feedback: null,
           },
           assistantMessage,
         ]);
@@ -378,6 +588,9 @@ function ConversationThread({
                 conversationId={conversationId}
                 message={message}
                 documentsById={documentsById}
+                onFeedbackChanged={(updated) =>
+                  setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
+                }
               />
             ))
           )}
@@ -477,6 +690,13 @@ function ChatContent() {
         onCreated={(conversation) => {
           setConversations((prev) => [conversation, ...prev]);
           setSelectedId(conversation.id);
+        }}
+        onRenamed={(updated) => {
+          setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+        }}
+        onDeleted={(id) => {
+          setConversations((prev) => prev.filter((c) => c.id !== id));
+          setSelectedId((current) => (current === id ? null : current));
         }}
       />
       {selectedId ? (

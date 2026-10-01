@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.models.message import MessageRole
+from app.models.message import MessageFeedback, MessageRole
 
 
 class ConversationRead(BaseModel):
@@ -13,6 +13,14 @@ class ConversationRead(BaseModel):
     title: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class ConversationRename(BaseModel):
+    # Nullable -- an explicit `{"title": null}` clears a conversation
+    # back to untitled, a valid state (ConversationRead.title is itself
+    # nullable). Bounded the same way MessageCreate.content is -- a
+    # title is short, user-authored text, not stored document content.
+    title: str | None = Field(default=None, max_length=200)
 
 
 class CitationRead(BaseModel):
@@ -29,6 +37,7 @@ class MessageRead(BaseModel):
     content: str
     created_at: datetime
     citations: list[CitationRead]
+    feedback: MessageFeedback | None
 
 
 class MessageCreate(BaseModel):
@@ -36,6 +45,12 @@ class MessageCreate(BaseModel):
     # query text, not stored document content, so there is no ingestion-
     # style large-input case to support here.
     content: str = Field(min_length=1, max_length=4000)
+
+
+class MessageFeedbackUpdate(BaseModel):
+    # Nullable -- an explicit `{"feedback": null}` clears previously
+    # given feedback, a valid, idempotent transition.
+    feedback: MessageFeedback | None
 
 
 class VoiceMessageRead(BaseModel):

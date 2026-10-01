@@ -25,11 +25,14 @@ vi.mock("@/lib/api-client", async () => {
     ...actual,
     listConversations: vi.fn(),
     createConversation: vi.fn(),
+    renameConversation: vi.fn(),
+    deleteConversation: vi.fn(),
     listDocuments: vi.fn(),
     listMessages: vi.fn(),
     postMessage: vi.fn(),
     postVoiceMessage: vi.fn(),
     getDocumentChunk: vi.fn(),
+    setMessageFeedback: vi.fn(),
   };
 });
 
@@ -115,13 +118,14 @@ describe("ChatPage", () => {
       },
     ]);
     vi.mocked(api.listMessages).mockResolvedValue([
-      { id: "m1", role: "USER", content: "What is the refund policy?", created_at: "", citations: [] },
+      { id: "m1", role: "USER", content: "What is the refund policy?", created_at: "", citations: [], feedback: null },
       {
         id: "m2",
         role: "ASSISTANT",
         content: "Based on the available documents:\n\n[1] Refunds within 30 days.",
         created_at: "",
         citations: [{ document_id: "doc-1", chunk_id: "chunk-1", page: 1, section: null, rank: 1 }],
+        feedback: null,
       },
     ]);
 
@@ -158,6 +162,7 @@ describe("ChatPage", () => {
         content: "[1] Refunds within 30 days.",
         created_at: "",
         citations: [{ document_id: "doc-1", chunk_id: "chunk-1", page: 1, section: null, rank: 1 }],
+        feedback: null,
       },
     ]);
     vi.mocked(api.getDocumentChunk).mockResolvedValue({
@@ -195,6 +200,7 @@ describe("ChatPage", () => {
       content: "Based on the available documents:\n\n[1] Refunds within 30 days.",
       created_at: "",
       citations: [],
+      feedback: null,
     });
     const user = userEvent.setup();
 
@@ -236,6 +242,7 @@ describe("ChatPage", () => {
         content: "Refunds within 30 days.",
         created_at: "",
         citations: [],
+        feedback: null,
       },
     });
     const user = userEvent.setup();
@@ -285,6 +292,7 @@ describe("ChatPage", () => {
         content: "Refunds within 30 days.",
         created_at: "",
         citations: [],
+        feedback: null,
       },
     ]);
     const play = vi.fn().mockResolvedValue(undefined);
@@ -303,5 +311,129 @@ describe("ChatPage", () => {
 
     expect(pause).toHaveBeenCalled();
     expect(await screen.findByRole("button", { name: /play answer/i })).toBeInTheDocument();
+  });
+
+  it("renames a conversation", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([
+      { id: "c1", title: "Old title", created_at: "", updated_at: "" },
+    ]);
+    vi.mocked(api.listDocuments).mockResolvedValue([]);
+    vi.mocked(api.listMessages).mockResolvedValue([]);
+    vi.mocked(api.renameConversation).mockResolvedValue({
+      id: "c1",
+      title: "New title",
+      created_at: "",
+      updated_at: "",
+    });
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText("Old title");
+    await user.click(screen.getByRole("button", { name: /rename conversation/i }));
+    const input = screen.getByLabelText(/conversation title/i);
+    await user.clear(input);
+    await user.type(input, "New title");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(api.renameConversation).toHaveBeenCalledWith("w1", "c1", "New title");
+    expect(await screen.findByText("New title")).toBeInTheDocument();
+  });
+
+  it("deletes a conversation after confirming", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([
+      { id: "c1", title: "To delete", created_at: "", updated_at: "" },
+    ]);
+    vi.mocked(api.listDocuments).mockResolvedValue([]);
+    vi.mocked(api.listMessages).mockResolvedValue([]);
+    vi.mocked(api.deleteConversation).mockResolvedValue(undefined);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText("To delete");
+    await user.click(screen.getByRole("button", { name: /delete conversation/i }));
+
+    expect(api.deleteConversation).toHaveBeenCalledWith("w1", "c1");
+    expect(await screen.findByText(/no conversations yet/i)).toBeInTheDocument();
+  });
+
+  it("does not delete a conversation when the confirmation is declined", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([
+      { id: "c1", title: "Keep me", created_at: "", updated_at: "" },
+    ]);
+    vi.mocked(api.listDocuments).mockResolvedValue([]);
+    vi.mocked(api.listMessages).mockResolvedValue([]);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText("Keep me");
+    await user.click(screen.getByRole("button", { name: /delete conversation/i }));
+
+    expect(api.deleteConversation).not.toHaveBeenCalled();
+    expect(screen.getByText("Keep me")).toBeInTheDocument();
+  });
+
+  it("filters the conversation list by a search query", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([
+      { id: "c1", title: "Refund policy", created_at: "", updated_at: "" },
+      { id: "c2", title: "Shipping times", created_at: "", updated_at: "" },
+    ]);
+    vi.mocked(api.listDocuments).mockResolvedValue([]);
+    vi.mocked(api.listMessages).mockResolvedValue([]);
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText("Refund policy");
+    await user.type(screen.getByLabelText(/search conversations/i), "refund");
+
+    expect(screen.getByText("Refund policy")).toBeInTheDocument();
+    expect(screen.queryByText("Shipping times")).not.toBeInTheDocument();
+  });
+
+  it("gives feedback on an assistant message", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([
+      { id: "c1", title: null, created_at: "", updated_at: "" },
+    ]);
+    vi.mocked(api.listDocuments).mockResolvedValue([]);
+    vi.mocked(api.listMessages).mockResolvedValue([
+      {
+        id: "m1",
+        role: "ASSISTANT",
+        content: "Refunds within 30 days.",
+        created_at: "",
+        citations: [],
+        feedback: null,
+      },
+    ]);
+    vi.mocked(api.setMessageFeedback).mockResolvedValue({
+      id: "m1",
+      role: "ASSISTANT",
+      content: "Refunds within 30 days.",
+      created_at: "",
+      citations: [],
+      feedback: "UP",
+    });
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    const upButton = await screen.findByRole("button", { name: /good response/i });
+    await user.click(upButton);
+
+    expect(api.setMessageFeedback).toHaveBeenCalledWith("w1", "c1", "m1", "UP");
+    expect(await screen.findByRole("button", { name: /good response/i })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
   });
 });

@@ -32,6 +32,11 @@ class MessageRole(enum.StrEnum):
     ASSISTANT = "ASSISTANT"
 
 
+class MessageFeedback(enum.StrEnum):
+    UP = "UP"
+    DOWN = "DOWN"
+
+
 class Message(Base):
     __tablename__ = "messages"
 
@@ -54,6 +59,13 @@ class Message(Base):
         Enum(MessageRole, name="message_role", native_enum=True), nullable=False
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # Nullable: most messages have no feedback. Only ever meaningful on
+    # an ASSISTANT message -- enforced at the service layer, not here,
+    # matching this codebase's existing split between schema-level and
+    # business-rule-level constraints (see conversation_service.py).
+    feedback: Mapped[MessageFeedback | None] = mapped_column(
+        Enum(MessageFeedback, name="message_feedback", native_enum=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

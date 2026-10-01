@@ -179,12 +179,16 @@ export type DocumentChunk = z.infer<typeof DocumentChunkSchema>;
 export const MessageRoleSchema = z.enum(["USER", "ASSISTANT"]);
 export type MessageRole = z.infer<typeof MessageRoleSchema>;
 
+export const MessageFeedbackSchema = z.enum(["UP", "DOWN"]);
+export type MessageFeedback = z.infer<typeof MessageFeedbackSchema>;
+
 export const MessageSchema = z.object({
   id: z.string(),
   role: MessageRoleSchema,
   content: z.string(),
   created_at: z.string(),
   citations: z.array(CitationSchema),
+  feedback: MessageFeedbackSchema.nullable(),
 });
 export type Message = z.infer<typeof MessageSchema>;
 export const MessageListSchema = z.array(MessageSchema);

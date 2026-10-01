@@ -28,7 +28,7 @@ from app.generation.service import generate_answer
 from app.ingestion.embedding import EmbeddingProvider
 from app.models.citation import Citation
 from app.models.conversation import Conversation
-from app.models.message import Message, MessageRole
+from app.models.message import Message, MessageFeedback, MessageRole
 from app.repositories import citation_repository, conversation_repository, message_repository
 from app.retrieval.reranker import Reranker
 from app.retrieval.service import hybrid_search
@@ -106,6 +106,7 @@ def _to_message_read(message: Message, citations: list[CitationRead]) -> Message
         content=message.content,
         created_at=message.created_at,
         citations=citations,
+        feedback=message.feedback,
     )
 
 
@@ -492,11 +493,103 @@ async def synthesize_message_audio(
         raise _audio_synthesis_failed_error() from exc
 
 
+def rename_conversation(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    title: str | None,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
+) -> ConversationRead:
+    conversation = conversation_repository.get_by_id_for_workspace(
+        db, workspace_id=workspace_id, conversation_id=conversation_id
+    )
+    if conversation is None:
+        raise _conversation_not_found_error(
+            db,
+            workspace_id=workspace_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            ip_address=ip_address,
+        )
+
+    conversation = conversation_repository.rename(db, conversation=conversation, title=title)
+    db.commit()
+    return _to_conversation_read(conversation)
+
+
+def delete_conversation(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
+) -> None:
+    conversation = conversation_repository.get_by_id_for_workspace(
+        db, workspace_id=workspace_id, conversation_id=conversation_id
+    )
+    if conversation is None:
+        raise _conversation_not_found_error(
+            db,
+            workspace_id=workspace_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            ip_address=ip_address,
+        )
+
+    conversation_repository.delete(db, conversation=conversation)
+    db.commit()
+
+
+def set_message_feedback(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    feedback: MessageFeedback | None,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
+) -> MessageRead:
+    """Only an `ASSISTANT` message has anything to give feedback *on* --
+    a `USER` message or one from another conversation/workspace is
+    `404`, matching `synthesize_message_audio()`'s identical shape."""
+    conversation = conversation_repository.get_by_id_for_workspace(
+        db, workspace_id=workspace_id, conversation_id=conversation_id
+    )
+    if conversation is None:
+        raise _conversation_not_found_error(
+            db,
+            workspace_id=workspace_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            ip_address=ip_address,
+        )
+
+    message = message_repository.get_by_id_for_conversation(
+        db, conversation_id=conversation.id, message_id=message_id
+    )
+    if message is None or message.role != MessageRole.ASSISTANT:
+        raise _message_not_found_error()
+
+    message = message_repository.set_feedback(db, message=message, feedback=feedback)
+    citations = citation_repository.list_for_messages(db, message_ids=[message.id]).get(
+        message.id, []
+    )
+    db.commit()
+    return _to_message_read(message, [_to_citation_read(citation) for citation in citations])
+
+
 __all__ = [
     "create_conversation",
+    "delete_conversation",
     "list_conversations",
     "list_messages",
     "post_message",
+    "rename_conversation",
+    "set_message_feedback",
     "synthesize_message_audio",
     "transcribe_and_post_voice_message",
 ]
