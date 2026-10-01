@@ -45,4 +45,22 @@ def list_for_workspace(db: Session, *, workspace_id: uuid.UUID) -> list[Conversa
     )
 
 
-__all__ = ["create", "get_by_id_for_workspace", "list_for_workspace"]
+def rename(db: Session, *, conversation: Conversation, title: str | None) -> Conversation:
+    """Updates an already-persisted row in place. `title=None` clears a
+    conversation back to untitled -- a valid, deliberate state
+    (`Conversation.title` is nullable for exactly this reason)."""
+    conversation.title = title
+    db.add(conversation)
+    db.flush()
+    db.refresh(conversation)
+    return conversation
+
+
+def delete(db: Session, *, conversation: Conversation) -> None:
+    """`messages`/`citations` cascade-delete from `conversations`
+    (migration `0006`) -- nothing else to clean up here."""
+    db.delete(conversation)
+    db.flush()
+
+
+__all__ = ["create", "delete", "get_by_id_for_workspace", "list_for_workspace", "rename"]

@@ -377,31 +377,43 @@ the client, never a raw exception, filesystem path, or storage key.
 
 ## Implemented: `/api/v1/workspaces/{workspace_id}/conversations`
 
-**Minimal chat/ask flow + conversation listing + voice** (GitHub Issue
-#4, Slice 4.3; list added Issue #5, Slice 5.1; voice added Issue #6) —
-rename/delete/search conversations, regenerate/retry, and feedback
-(docs/REQUIREMENTS.md "Chat") are not implemented yet.
+**Chat/ask flow, conversation listing/rename/delete, message feedback,
+and voice** (GitHub Issue #4, Slice 4.3; list added Issue #5, Slice 5.1;
+voice added Issue #6; rename/delete/feedback added in the final
+quality-hardening pass, closing a real Issue #5 "Chat" requirement gap)
+— search conversations (client-side title filtering over the already-
+fetched list — see `frontend/app/chat/page.tsx`) and regenerate/retry a
+response remain not implemented, the latter deliberately deferred as a
+lower-value item relative to the effort of re-running generation for an
+already-answered turn.
 
 | Endpoint | Min. role | Body | Response |
 |---|---|---|---|
 | `GET /api/v1/workspaces/{workspace_id}/conversations` | VIEWER | none | `200` `list[ConversationRead]`, newest-updated first |
 | `POST /api/v1/workspaces/{workspace_id}/conversations` | MEMBER | none | `201` `ConversationRead` |
+| `PATCH /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}` | MEMBER | `{title}` | `200` `ConversationRead`, or `404` |
+| `DELETE /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}` | MEMBER | none | `204`, or `404` |
 | `POST /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages` | MEMBER | `{content}` | `201` `MessageRead`, or `404`/`422`/`429`/`500` (see below) |
 | `GET /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages` | VIEWER | none | `200` `list[MessageRead]`, or `404` |
+| `PUT /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages/{message_id}/feedback` | MEMBER | `{feedback}` (`"UP"`/`"DOWN"`/`null`) | `200` `MessageRead`, or `404` (including a `USER` message — only an `ASSISTANT` message has anything to give feedback *on*) |
 | `POST /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/voice-messages` | MEMBER | `multipart/form-data`, one field: `audio` (WAV) | `201` `VoiceMessageRead`, or `400`/`404`/`413`/`422`/`429`/`502` (see below) |
 | `GET /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages/{message_id}/audio` | VIEWER | none | `200` `audio/wav` bytes, or `404` |
 
-`ConversationRead`: `{id, title, created_at, updated_at}`.
+`ConversationRead`: `{id, title, created_at, updated_at}`. `PATCH`'s
+`{title}` is nullable — an explicit `null` clears a conversation back to
+untitled, a valid state.
 
-`MessageRead`: `{id, role, content, created_at, citations}`, where
-`citations` is `list[CitationRead]` — `{document_id, chunk_id, page,
-section, rank}` (never the chunk's raw content — `chunk_id` is exposed,
-as of Issue #8, only so a client can fetch that content explicitly
-through the workspace-and-document-scoped source-inspection endpoint
-above, never inline on the citation itself; `rank` is the citation's
-1-based position in the answer, matching its `[n]` marker in `content`).
+`MessageRead`: `{id, role, content, created_at, citations, feedback}`,
+where `citations` is `list[CitationRead]` — `{document_id, chunk_id,
+page, section, rank}` (never the chunk's raw content — `chunk_id` is
+exposed, as of Issue #8, only so a client can fetch that content
+explicitly through the workspace-and-document-scoped source-inspection
+endpoint above, never inline on the citation itself; `rank` is the
+citation's 1-based position in the answer, matching its `[n]` marker in
+`content`), and `feedback` is `"UP"` / `"DOWN"` / `null` (set via the
+`.../feedback` endpoint above; `null` until a user rates the answer).
 `GET .../messages` returns each historical message's real, persisted
-citations (not just the citations of the most-recently-posted answer).
+citations and feedback (not just the most-recently-posted answer's).
 
 `MessageCreate` (request body for posting a message):
 `{content}` — a non-empty string, capped at 4000 characters (this

@@ -1,13 +1,15 @@
 # PROJECT_STATE.md
 
-**Last updated:** 2026-09-29
+**Last updated:** 2026-10-01
 **Current phase:** GitHub Issues #1–#8 are all implemented, tested, and
-merged to `main` — the full original 5-day plan is complete. A final
-project-completion / requirements-audit / quality-hardening pass (not
-tied to a specific numbered issue) is now **in progress**, working
-directly on `main` — see "Immediate priorities". `main`/`origin/main`
-are at `a4afb2e` (Issue #8's merge commit, PR #33) as of the point this
-pass began.
+merged to `main` — the full original 5-day plan is complete. Two
+follow-on final-hardening passes have also merged (`32aa102` PR #34,
+`4bec3cd` PR #35: a real `EMAIL_PROVIDER` test-environment fix,
+source inspection, an `.env.example`/config-loading fix, deprecation
+cleanup). A further **final requirement-closure pass** (not tied to a
+specific numbered issue) is now **in progress**, working directly on
+`main` — see "Immediate priorities". `main`/`origin/main` were at
+`4bec3cd` as of the point this pass began.
 (repository: `vigneshrao1723-lab/advanced-rag-knowledge-assistant`)
 
 This is the authoritative, living snapshot of the project's real state. If
@@ -51,12 +53,12 @@ offline implementation — no paid API key required (see ADRs 0007, 0008).
 | Document upload & ingestion pipeline (`UPLOADED → ... → READY`) | IMPLEMENTED | #3 — upload (format/size/checksum validation, dedup, storage-then-DB ordering), synchronous extraction → cleaning → structure-aware chunking → embedding (`LocalHashingEmbeddingProvider`, 384-dim) → pgvector HNSW indexing, all crash-safe (each stage commits before the next begins), resumable from any non-terminal status. |
 | Retrieval (dense / lexical / fusion / reranking) | IMPLEMENTED | #4 — `dense_search()` (pgvector cosine), `lexical_search()` (Postgres FTS), `reciprocal_rank_fusion()` (RRF, k=60), `LexicalOverlapReranker`; `hybrid_search()` is the orchestrating entry point, workspace-scoped and READY-only at the SQL level, records a `RetrievalEvent` per call. |
 | Generation & citations | IMPLEMENTED | #4 — `build_context()` (budgeted, deduped, order-preserving), `LocalGroundedExtractiveProvider` (grounded by construction — quotes evidence, never paraphrases beyond it), `create_citations()`. No-evidence-found returns an honest fixed answer, zero citations, never fabricated content. |
-| Conversations / chat | IMPLEMENTED (ask flow + history; no rewrite/regenerate/feedback) | #4/#5 — create conversation, post message (full retrieval+generation pipeline synchronously), list messages with real persisted citations. Not implemented: rename/delete/search conversations, regenerate/retry, feedback, conversational context/query rewriting across turns. |
-| Product frontend (Documents, Chat) | IMPLEMENTED (primary flow) | #5/#8 — real `app/documents/page.tsx` (upload, live-polling status list, retry) and `app/chat/page.tsx` (conversation list, message thread, citations with click-to-inspect source text, voice controls), consuming the real backend APIs. `login/register/forgot-password/reset-password/dashboard/settings/workspace` also real. Deferred, documented, not forgotten: standalone document search UI, per-conversation/per-document deep-link routes, message feedback, rename/delete conversations. |
+| Conversations / chat | IMPLEMENTED (ask flow + history + rename/delete/feedback; no regenerate/retry) | #4/#5 — create conversation, post message (full retrieval+generation pipeline synchronously), list messages with real persisted citations. Rename (`PATCH`)/delete (`DELETE`) conversations and message feedback (`PUT .../feedback`, `UP`/`DOWN`, `messages.feedback` migration `0009`) added in the final quality-hardening pass, closing a real Issue #5 "Chat" requirement gap — all workspace/role/IDOR-tested (cross-workspace, cross-conversation, VIEWER-cannot-mutate). Search conversations is a client-side title filter over the already-fetched list (no backend endpoint needed). Not implemented: regenerate/retry a response, conversational context/query rewriting across turns — both deliberately deferred as lower-value relative to effort. |
+| Product frontend (Documents, Chat) | IMPLEMENTED (primary flow) | #5/#8 — real `app/documents/page.tsx` (upload, live-polling status list, retry) and `app/chat/page.tsx` (conversation list with search/rename/delete, message thread, citations with click-to-inspect source text, thumbs-up/down feedback, voice controls), consuming the real backend APIs. `login/register/forgot-password/reset-password/dashboard/settings/workspace` also real. Deferred, documented, not forgotten: standalone document search UI, collections, command palette, per-conversation/per-document deep-link routes, a full in-document citation viewer beyond source inspection. |
 | Voice (STT/TTS) as a mode within chat | IMPLEMENTED | #6 — `PocketSphinxSpeechToTextProvider` (offline, empirically weaker accuracy against synthetic audio — honestly documented, not hidden) + `EspeakTextToSpeechProvider` (subprocess-based, after `pyttsx3` was found to corrupt state across calls). `POST .../voice-messages` calls the *exact same* `post_message()` the text flow uses — no duplicated pipeline. `GET .../messages/{id}/audio` synthesizes on demand, nothing persisted. See [ADR 0008](docs/DECISIONS/0008-local-speech-to-text-and-text-to-speech-providers.md). |
 | Evaluation harness | IMPLEMENTED | #4/#7 — `evaluation_runs`/`evaluation_results` tables (migration `0008`); `eval/scripts/run_retrieval_evaluation.py` compares 4 retrieval methods × 2 chunking strategies against real Postgres. Real, non-fabricated results: dense/hybrid/hybrid+reranked reach Recall@3=1.0/MRR=1.0/nDCG@3=1.0/HitRate@3=1.0/Precision@3=0.33 on both chunking strategies; lexical-only is genuinely weaker (0.71 across those metrics). See `docs/EVALUATION.md`. |
 | Observability / audit logging | IMPLEMENTED | #1/#2/#3/#7 — structured JSON logging, request-ID propagation, persistent `audit_logs` (auth/password-reset/workspace/document-lifecycle/`CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` events), per-stage retrieval/generation latency + character-count token-usage-proxy structured logs (`caplog`-tested). |
-| Testing (unit/integration/security) | IMPLEMENTED | Backend: **727/727 passing** (`ruff`/`mypy` clean) — the prior 5 `test_password_reset.py` failures were a real test-environment bug (the Docker Compose backend service's own `EMAIL_PROVIDER=smtp` default leaked into `docker compose run` test invocations, defeating the capsys-based reset-link capture those tests need), fixed by force-setting `EMAIL_PROVIDER=console` unconditionally in `backend/tests/conftest.py` — a hard test requirement, not an infra location that should vary by environment. Frontend: 71/71 vitest, `eslint`/`tsc --noEmit` clean, `next build` succeeds. Playwright: 20/20. |
+| Testing (unit/integration/security) | IMPLEMENTED | Backend: **744 passing, 1 intentional skip** (`ruff`/`mypy` clean) — the prior 5 `test_password_reset.py` failures were a real test-environment bug (the Docker Compose backend service's own `EMAIL_PROVIDER=smtp` default leaked into `docker compose run` test invocations, defeating the capsys-based reset-link capture those tests need), fixed by force-setting `EMAIL_PROVIDER=console` unconditionally in `backend/tests/conftest.py`; the 1 skip is a regression test that only applies against a full repository checkout (CI/host), not inside the Docker image, which deliberately excludes everything outside `backend/`. Frontend: 76/76 vitest, `eslint`/`tsc --noEmit` clean, `next build` succeeds. Playwright: 20/20. |
 | Browser E2E (Playwright) | IMPLEMENTED | `frontend/e2e/` — 20/20 tests passing (app availability, auth/session/CSRF/password-recovery, and `documents-chat.spec.ts`'s full upload→process→READY→chat→cited-answer flow) against a freshly rebuilt real Docker stack. Voice has no Playwright E2E (judged disproportionately expensive vs. real-device audio automation) but is fully unit/HTTP-level tested and was manually verified end-to-end via `curl`. |
 | CI/CD (`.github/workflows/ci.yml`) | IMPLEMENTED | backend (lint/typecheck/pytest against real Postgres+Redis service containers, `espeak-ng` installed), frontend (lint/typecheck/vitest/build), e2e (Playwright against real services), docker-build (image builds + `docker compose config`) — all required, green on every merged PR #9–#32. |
 | Docker / deployment (`infra/`) | IMPLEMENTED for local development | `infra/docker/*.Dockerfile`, `infra/compose/docker-compose.yml` (db/redis/mailpit/backend/frontend). A real hosting/production target is a deliberate, undecided scope boundary — see `docs/DEPLOYMENT.md` "Target deployment environment" and CLAUDE.md §4 (this is exactly the kind of infrastructure decision this project stops and asks a human about). |
@@ -106,26 +108,43 @@ offline implementation — no paid API key required (see ADRs 0007, 0008).
 
 ## Immediate priorities
 
-Issues #1–#8 are done and merged to `main` (`a4afb2e`). A final
-project-completion / requirements-audit / quality-hardening pass is in
-progress:
+Issues #1–#8 are done and merged to `main` (`4bec3cd` as of the point
+this pass began). A final requirement-closure / GitHub-cleanup pass is
+in progress:
 
-1. Fixed the real cause of `test_password_reset.py`'s 5 failures
-   (backend now 727/727) and two deprecation warnings — see `SOLVING.md`.
-2. Implemented source inspection end-to-end (backend endpoint, frontend
-   UI, tests at every layer) after finding it was genuinely missing
-   despite prior documentation implying otherwise.
-3. Ran an independent background requirements audit across every spec
-   area — clean except one finding (`.env.example` completeness), fixed.
-4. Fixed `.env.example` completeness and a real, latent config-loading
-   bug (`env_ignore_empty=True`) found while verifying that fix — see
-   `SOLVING.md`.
-5. Full regression (backend 727/727, frontend 71/71, Playwright 20/20,
-   `ruff`/`mypy`/`eslint`/`tsc` clean, Docker/Alembic verified) — all
-   green, against a freshly rebuilt stack.
-6. Remaining: commit this work on a feature branch, push, open a PR,
-   confirm CI green, merge — following the same workflow used for every
-   prior issue.
+1. Verified real repository state (clean tree, `main` == `origin/main`)
+   rather than trusting a prior session's report blindly.
+2. Deleted 17 stale local/remote feature branches, each verified (via
+   its PR's real squash-merge commit being an ancestor of `main`, not
+   just a diff heuristic) to have no unique unmerged work — `main` is
+   now the only branch, locally and on `origin`.
+3. Re-examined the "deferred" items list against the original Issue #5
+   requirements rather than accepting it at face value — implemented
+   **message feedback** (thumbs up/down, `messages.feedback`, migration
+   `0009`) and **rename/delete conversations**, both genuinely-scoped,
+   currently-100%-missing requirements with low effort relative to
+   value. Left collections, standalone search UI (a client-side title
+   filter over the conversation list now covers "search conversations"
+   cheaply), command palette, a full in-document citation viewer, and
+   regenerate/retry still deliberately deferred — lower value relative
+   to effort under time constraints, consistent with the modular-
+   monolith "don't add scope beyond demonstrated need" principle.
+4. For Issue #8's remaining original scope (a *decided* production
+   hosting target + ADR, production Docker config) — deliberately NOT
+   invented unilaterally. Choosing a real cloud host is exactly the
+   kind of infrastructure decision `CLAUDE.md` §4 says to stop and ask
+   a human about, not decide alone. Closed on the strength of the
+   fully-verified local Docker Compose setup, with hosting explicitly
+   flagged as a pending human decision (unchanged from `docs/DEPLOYMENT.md`).
+5. Full regression after the new features (backend 744 passing + 1
+   intentional skip, frontend 76/76, Playwright 20/20, `ruff`/`mypy`/
+   `eslint`/`tsc` clean, Alembic migration `0009` verified reversible) —
+   all green, against a freshly rebuilt stack. Cross-workspace isolation
+   for all three new endpoints manually re-verified via real `curl`
+   calls with a second user before writing any automated test.
+6. Remaining: reconcile GitHub Issues #3–#8 (currently shown OPEN
+   despite being merged) with accurate closing comments; commit this
+   work, push, open a PR, confirm CI green, merge.
 
 ## How to keep this file honest
 

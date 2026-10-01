@@ -531,3 +531,302 @@ def test_empty_message_content_is_rejected(client: TestClient) -> None:
 
     response = _post_message(client, workspace["id"], conversation["id"], "")
     assert response.status_code == 422
+
+
+# --- rename conversation -------------------------------------------------------
+
+
+def _rename(client: TestClient, workspace_id: str, conversation_id: str, title: str | None) -> Any:
+    return client.patch(
+        f"/api/v1/workspaces/{workspace_id}/conversations/{conversation_id}",
+        json={"title": title},
+        headers=csrf_headers(client),
+    )
+
+
+def test_rename_conversation(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    conversation = _create_conversation(client, workspace["id"])
+
+    response = _rename(client, workspace["id"], conversation["id"], "Refund policy questions")
+    assert response.status_code == 200, response.text
+    assert response.json()["title"] == "Refund policy questions"
+
+    # A later GET reflects the persisted rename, not just the response.
+    list_response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/conversations", headers=csrf_headers(client)
+    )
+    assert list_response.json()[0]["title"] == "Refund policy questions"
+
+
+def test_rename_conversation_to_null_clears_the_title(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    conversation = _create_conversation(client, workspace["id"])
+    _rename(client, workspace["id"], conversation["id"], "Temporary title")
+
+    response = _rename(client, workspace["id"], conversation["id"], None)
+    assert response.status_code == 200, response.text
+    assert response.json()["title"] is None
+
+
+def test_rename_conversation_not_found_returns_404(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+
+    response = _rename(client, workspace["id"], str(uuid.uuid4()), "New title")
+    assert response.status_code == 404
+
+
+def test_cross_workspace_rename_is_not_reachable(client_factory: Callable[[], TestClient]) -> None:
+    owner_a = client_factory()
+    _register(owner_a)
+    workspace_a = _create_workspace(owner_a, name="A")
+    conversation = _create_conversation(owner_a, workspace_a["id"])
+
+    owner_b = client_factory()
+    _register(owner_b)
+    workspace_b = _create_workspace(owner_b, name="B")
+
+    response = _rename(owner_b, workspace_b["id"], conversation["id"], "Hijacked title")
+    assert response.status_code == 404
+
+
+def test_viewer_cannot_rename_a_conversation(client_factory: Callable[[], TestClient]) -> None:
+    owner = client_factory()
+    _register(owner)
+    workspace = _create_workspace(owner)
+    conversation = _create_conversation(owner, workspace["id"])
+
+    viewer_email = _unique_email()
+    _register(client_factory(), viewer_email)
+    _add_member(owner, workspace["id"], viewer_email, "VIEWER")
+    viewer = client_factory()
+    _login(viewer, viewer_email)
+
+    response = _rename(viewer, workspace["id"], conversation["id"], "Viewer's title")
+    assert response.status_code == 403
+
+
+# --- delete conversation -------------------------------------------------------
+
+
+def test_delete_conversation(client: TestClient, db_session: DbSession) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    conversation = _create_conversation(client, workspace["id"])
+
+    response = client.delete(
+        f"/api/v1/workspaces/{workspace['id']}/conversations/{conversation['id']}",
+        headers=csrf_headers(client),
+    )
+    assert response.status_code == 204
+
+    assert (
+        db_session.execute(
+            select(Conversation).where(Conversation.id == uuid.UUID(conversation["id"]))
+        ).scalar_one_or_none()
+        is None
+    )
+
+    get_response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/conversations/{conversation['id']}/messages",
+        headers=csrf_headers(client),
+    )
+    assert get_response.status_code == 404
+
+
+def test_delete_conversation_cascades_its_messages(
+    client: TestClient, db_session: DbSession
+) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    conversation = _create_conversation(client, workspace["id"])
+    _post_message(client, workspace["id"], conversation["id"], "anything")
+
+    client.delete(
+        f"/api/v1/workspaces/{workspace['id']}/conversations/{conversation['id']}",
+        headers=csrf_headers(client),
+    )
+
+    remaining = (
+        db_session.execute(
+            select(Message).where(Message.conversation_id == uuid.UUID(conversation["id"]))
+        )
+        .scalars()
+        .all()
+    )
+    assert remaining == []
+
+
+def test_delete_conversation_not_found_returns_404(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+
+    response = client.delete(
+        f"/api/v1/workspaces/{workspace['id']}/conversations/{uuid.uuid4()}",
+        headers=csrf_headers(client),
+    )
+    assert response.status_code == 404
+
+
+def test_cross_workspace_delete_is_not_reachable(client_factory: Callable[[], TestClient]) -> None:
+    owner_a = client_factory()
+    _register(owner_a)
+    workspace_a = _create_workspace(owner_a, name="A")
+    conversation = _create_conversation(owner_a, workspace_a["id"])
+
+    owner_b = client_factory()
+    _register(owner_b)
+    workspace_b = _create_workspace(owner_b, name="B")
+
+    response = owner_b.delete(
+        f"/api/v1/workspaces/{workspace_b['id']}/conversations/{conversation['id']}",
+        headers=csrf_headers(owner_b),
+    )
+    assert response.status_code == 404
+
+
+def test_viewer_cannot_delete_a_conversation(client_factory: Callable[[], TestClient]) -> None:
+    owner = client_factory()
+    _register(owner)
+    workspace = _create_workspace(owner)
+    conversation = _create_conversation(owner, workspace["id"])
+
+    viewer_email = _unique_email()
+    _register(client_factory(), viewer_email)
+    _add_member(owner, workspace["id"], viewer_email, "VIEWER")
+    viewer = client_factory()
+    _login(viewer, viewer_email)
+
+    response = viewer.delete(
+        f"/api/v1/workspaces/{workspace['id']}/conversations/{conversation['id']}",
+        headers=csrf_headers(viewer),
+    )
+    assert response.status_code == 403
+
+
+# --- message feedback -----------------------------------------------------------
+
+
+def _set_feedback(
+    client: TestClient,
+    workspace_id: str,
+    conversation_id: str,
+    message_id: str,
+    feedback: str | None,
+) -> Any:
+    return client.put(
+        f"/api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages/{message_id}/feedback",
+        json={"feedback": feedback},
+        headers=csrf_headers(client),
+    )
+
+
+def test_set_feedback_on_assistant_message(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    conversation = _create_conversation(client, workspace["id"])
+    post_response = _post_message(client, workspace["id"], conversation["id"], "anything")
+    assistant_message_id = post_response.json()["id"]
+
+    response = _set_feedback(
+        client, workspace["id"], conversation["id"], assistant_message_id, "UP"
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["feedback"] == "UP"
+
+    # Persisted -- a later list reflects it, not just the PUT response.
+    list_response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/conversations/{conversation['id']}/messages",
+        headers=csrf_headers(client),
+    )
+    messages = list_response.json()
+    assistant_message = next(m for m in messages if m["id"] == assistant_message_id)
+    assert assistant_message["feedback"] == "UP"
+
+
+def test_feedback_can_be_changed_and_cleared(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    conversation = _create_conversation(client, workspace["id"])
+    assistant_message_id = _post_message(
+        client, workspace["id"], conversation["id"], "anything"
+    ).json()["id"]
+
+    _set_feedback(client, workspace["id"], conversation["id"], assistant_message_id, "UP")
+    changed = _set_feedback(
+        client, workspace["id"], conversation["id"], assistant_message_id, "DOWN"
+    )
+    assert changed.json()["feedback"] == "DOWN"
+
+    cleared = _set_feedback(client, workspace["id"], conversation["id"], assistant_message_id, None)
+    assert cleared.json()["feedback"] is None
+
+
+def test_feedback_on_a_user_message_is_rejected(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    conversation = _create_conversation(client, workspace["id"])
+    _post_message(client, workspace["id"], conversation["id"], "anything")
+    user_message_id = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/conversations/{conversation['id']}/messages",
+        headers=csrf_headers(client),
+    ).json()[0]["id"]
+
+    response = _set_feedback(client, workspace["id"], conversation["id"], user_message_id, "UP")
+    assert response.status_code == 404
+
+
+def test_feedback_not_found_returns_404(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    conversation = _create_conversation(client, workspace["id"])
+
+    response = _set_feedback(
+        client, workspace["id"], conversation["id"], str(uuid.uuid4()), "UP"
+    )
+    assert response.status_code == 404
+
+
+def test_cross_workspace_feedback_is_not_reachable(
+    client_factory: Callable[[], TestClient],
+) -> None:
+    owner_a = client_factory()
+    _register(owner_a)
+    workspace_a = _create_workspace(owner_a, name="A")
+    conversation = _create_conversation(owner_a, workspace_a["id"])
+    assistant_message_id = _post_message(
+        owner_a, workspace_a["id"], conversation["id"], "anything"
+    ).json()["id"]
+
+    owner_b = client_factory()
+    _register(owner_b)
+    workspace_b = _create_workspace(owner_b, name="B")
+
+    response = _set_feedback(
+        owner_b, workspace_b["id"], conversation["id"], assistant_message_id, "UP"
+    )
+    assert response.status_code == 404
+
+
+def test_viewer_cannot_set_feedback(client_factory: Callable[[], TestClient]) -> None:
+    owner = client_factory()
+    _register(owner)
+    workspace = _create_workspace(owner)
+    conversation = _create_conversation(owner, workspace["id"])
+    assistant_message_id = _post_message(
+        owner, workspace["id"], conversation["id"], "anything"
+    ).json()["id"]
+
+    viewer_email = _unique_email()
+    _register(client_factory(), viewer_email)
+    _add_member(owner, workspace["id"], viewer_email, "VIEWER")
+    viewer = client_factory()
+    _login(viewer, viewer_email)
+
+    response = _set_feedback(
+        viewer, workspace["id"], conversation["id"], assistant_message_id, "UP"
+    )
+    assert response.status_code == 403

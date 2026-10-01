@@ -25,7 +25,14 @@ from app.generation.llm_provider import LLMProvider, get_llm_provider
 from app.ingestion.embedding import EmbeddingProvider, get_embedding_provider
 from app.models.workspace_member import WorkspaceRole
 from app.retrieval.reranker import Reranker, get_reranker
-from app.schemas.conversation import ConversationRead, MessageCreate, MessageRead, VoiceMessageRead
+from app.schemas.conversation import (
+    ConversationRead,
+    ConversationRename,
+    MessageCreate,
+    MessageFeedbackUpdate,
+    MessageRead,
+    VoiceMessageRead,
+)
 from app.services import conversation_service
 from app.voice.stt_provider import SpeechToTextProvider, get_speech_to_text_provider
 from app.voice.tts_provider import TextToSpeechProvider, get_text_to_speech_provider
@@ -55,6 +62,46 @@ async def create_conversation(
 ) -> ConversationRead:
     return conversation_service.create_conversation(
         db, workspace_id=ctx.workspace.id, created_by=ctx.user.id
+    )
+
+
+@router.patch(
+    "/{workspace_id}/conversations/{conversation_id}",
+    response_model=ConversationRead,
+)
+async def rename_conversation(
+    request: Request,
+    conversation_id: uuid.UUID,
+    body: ConversationRename,
+    ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.MEMBER)),
+    db: Session = Depends(get_db),
+) -> ConversationRead:
+    return conversation_service.rename_conversation(
+        db,
+        workspace_id=ctx.workspace.id,
+        conversation_id=conversation_id,
+        title=body.title,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
+    )
+
+
+@router.delete(
+    "/{workspace_id}/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_conversation(
+    request: Request,
+    conversation_id: uuid.UUID,
+    ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.MEMBER)),
+    db: Session = Depends(get_db),
+) -> None:
+    conversation_service.delete_conversation(
+        db,
+        workspace_id=ctx.workspace.id,
+        conversation_id=conversation_id,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
     )
 
 
@@ -171,3 +218,26 @@ async def get_message_audio(
         ip_address=client_ip(request),
     )
     return Response(content=audio_bytes, media_type="audio/wav")
+
+
+@router.put(
+    "/{workspace_id}/conversations/{conversation_id}/messages/{message_id}/feedback",
+    response_model=MessageRead,
+)
+async def set_message_feedback(
+    request: Request,
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    body: MessageFeedbackUpdate,
+    ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.MEMBER)),
+    db: Session = Depends(get_db),
+) -> MessageRead:
+    return conversation_service.set_message_feedback(
+        db,
+        workspace_id=ctx.workspace.id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+        feedback=body.feedback,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
+    )
