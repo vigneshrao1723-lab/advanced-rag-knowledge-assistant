@@ -35,7 +35,7 @@ status.
 | `collections` | Logical grouping of documents within a workspace | PROPOSED |
 | `collection_documents` | Many-to-many link between collections and documents | PROPOSED |
 | `conversations` | A chat session within a workspace | IMPLEMENTED (migration `0006`; populated by `POST /api/v1/workspaces/{workspace_id}/conversations`, Issue #4 Slice 4.3) |
-| `messages` | Individual messages within a conversation (user + assistant) | IMPLEMENTED (migration `0006`; native `message_role` enum, `USER`/`ASSISTANT`) |
+| `messages` | Individual messages within a conversation (user + assistant) | IMPLEMENTED (migration `0006`; native `message_role` enum, `USER`/`ASSISTANT`; `feedback` column added migration `0009`, native `message_feedback` enum, `UP`/`DOWN`, nullable, only ever set on an `ASSISTANT` row) |
 | `citations` | Links between a generated answer/message and the evidence (chunks) it cites | IMPLEMENTED (migration `0006`; denormalizes `document_id`/`page`/`section` from the cited chunk at write time) |
 | `retrieval_events` | Record of a retrieval operation (query, method, results, scores) for observability/evaluation | IMPLEMENTED (migration `0006`; `results` is `JSONB`, `rewritten_query_text` kept separate from `query_text` so the original query is always preserved) |
 | `evaluation_runs` | A configured evaluation experiment (embedding model, chunking strategy, retrieval method, etc.) | IMPLEMENTED (migration `0008`, GitHub Issue #7) |
@@ -67,8 +67,9 @@ before being added to the core list above:
   revisit this decision.
 - `voice_sessions` — if voice interactions need state beyond what
   `conversations`/`messages` already capture.
-- `feedback` — for user feedback on generated answers, if it needs to be
-  more structured than a field on `messages`.
+- ~~`feedback`~~ — **resolved: a field on `messages` (the simple option
+  this note named) was sufficient** — `messages.feedback` (migration
+  `0009`), never a separate table. See `messages`' row above.
 
 ## Relationships (indicative, not final)
 

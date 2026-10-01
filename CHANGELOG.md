@@ -10,11 +10,53 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-09-29 — Final project completion / requirements audit / quality hardening pass (in progress)
+### 2026-10-01 — Final requirement-closure pass: branch cleanup, message feedback, conversation rename/delete (in progress)
 
-*(Working directly on `main`, cut from the merged Issue #8 (`a4afb2e`,
-PR #33). Not yet committed as of this entry. Not tied to a specific
-numbered GitHub issue — #1–#8 are all already merged.)*
+*(Working directly on `main`, cut from the merged final quality-
+hardening pass (`4bec3cd`, PR #35). Not yet committed as of this entry.
+Not tied to a specific numbered GitHub issue.)*
+
+- Deleted 17 stale local/remote feature branches (verified via real PR
+  squash-merge-commit ancestry, not a diff heuristic) — `main` is now
+  the only branch, locally and on `origin`.
+- Re-examined Issue #5's "deferred" items against the original
+  requirements rather than accepting them at face value. Implemented:
+  - **Message feedback** — `messages.feedback` (migration `0009`,
+    `UP`/`DOWN`, nullable, only settable on an `ASSISTANT` message),
+    `PUT .../conversations/{id}/messages/{message_id}/feedback`.
+  - **Rename/delete conversations** — `PATCH`/`DELETE
+    .../conversations/{conversation_id}`.
+  - "Search conversations" covered by a client-side title filter — no
+    backend endpoint needed.
+  - Collections, a standalone search UI, a command palette, a full
+    in-document citation viewer, and regenerate/retry remain
+    deliberately deferred (lower value relative to effort).
+- 16 new backend tests, 5 new frontend tests, covering happy paths,
+  not-found, cross-workspace (IDOR-shaped), and VIEWER-cannot-mutate for
+  all three new endpoints. Migration `0009` verified reversible.
+  Manually verified end-to-end — including real cross-workspace denial
+  with a second user — via `curl` before writing any automated test.
+- Did **not** invent a production hosting target/ADR for Issue #8's
+  remaining original scope — per `CLAUDE.md` §4, that infrastructure
+  decision is for a human, not this agent, to make.
+- Full regression: backend 744 passing + 1 intentional skip, frontend
+  76/76, Playwright 20/20, all clean, against a freshly rebuilt stack.
+- Docs updated: `docs/API_CONTRACT.md`, `docs/DATA_MODEL.md`,
+  `docs/SECURITY.md`, `PROJECT_STATE.md`, `HANDOFF.md`.
+
+## [Unreleased — committed]
+
+### 2026-09-29 — `fix: final quality-hardening pass — source inspection, test/config bugs, deprecation cleanup` (#34), merged as `32aa102`; follow-up `fix: skip .env.example regression test when the file isn't in the build context` (#35), merged as `4bec3cd`
+
+*(Branch `final-quality-hardening`, cut from the merged Issue #8
+(`a4afb2e`, PR #33). Opened as **PR #34**, verified green on GitHub
+Actions CI, and **merged into `main` as squash commit `32aa102`**. A
+post-merge regression run then caught a real issue in this PR's own new
+`test_env_example_loads_cleanly_as_a_literal_env_file` test — it
+hard-failed inside the Docker image, whose build context deliberately
+excludes `.env.example` (one level above `backend/`). Fixed on branch
+`fix-env-example-test-docker-context`, opened as **PR #35**, verified
+green, and **merged into `main` as squash commit `4bec3cd`**.)*
 
 - **Fixes the real cause of the 5 `test_password_reset.py` failures**
   previously only documented as a "known artifact": `backend/tests/conftest.py`
@@ -65,8 +107,6 @@ numbered GitHub issue — #1–#8 are all already merged.)*
   Docker stack: backend 727/727, frontend 71/71, Playwright 20/20,
   `ruff`/`mypy`/`eslint`/`tsc --noEmit` clean, `next build` succeeds,
   Alembic at head and applying cleanly, `docker compose config` valid.
-
-## [Unreleased — committed]
 
 ### 2026-09-29 — `docs: finalize README, deployment docs, and project-state tracking (Issue #8)` (#33), merged as `a4afb2e`
 

@@ -539,8 +539,18 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
   `test_get_document_chunk_from_another_document_is_not_reachable`) prove
   a chunk ID can be fetched neither across workspaces nor through a
   different document's URL within the same workspace (an IDOR-shaped
-  check, not just a workspace-boundary one). Collections don't
-  exist yet (not implemented by any issue so far). **Now also audited,
+  check, not just a workspace-boundary one). **Extended to conversation
+  rename/delete and message feedback (final requirement-closure pass)**
+  — `backend/tests/test_conversations.py`
+  (`test_cross_workspace_rename_is_not_reachable`,
+  `test_cross_workspace_delete_is_not_reachable`,
+  `test_cross_workspace_feedback_is_not_reachable`) prove the same
+  non-leaking `404` for all three new mutating endpoints, and
+  `test_viewer_cannot_rename_a_conversation`/
+  `test_viewer_cannot_delete_a_conversation`/
+  `test_viewer_cannot_set_feedback` prove the VIEWER role is correctly
+  read-only there too. Collections don't exist yet (not implemented by
+  any issue so far). **Now also audited,
   not just rejected (Issue #7)** — see "Audit logging" below's
   `CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` entry.
 - **Malicious upload tests** — oversized files, mismatched

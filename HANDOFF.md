@@ -8,22 +8,22 @@ in-flight task — overwrite it as work progresses, don't append a history
 
 ## Current task
 
-**GitHub Issues #1–#8 are all merged into `main`.** `main`/`origin/main`
-are at `a4afb2e` (Issue #8's squash-merge commit, PR #33) — the full
-5-day plan's every numbered issue is complete. Full per-issue
-implementation detail for #2 through #8 is preserved below under each
-issue's own "Completed work" section — not repeated here, per this
-file's "don't append a history" instruction.
+**GitHub Issues #1–#8 are all merged into `main`.** Two follow-on
+final-hardening PRs have also merged: PR #34 (`32aa102` — real
+`EMAIL_PROVIDER` test fix, source inspection, `.env.example`/config
+fixes, deprecation cleanup) and PR #35 (`4bec3cd` — a small fix-up for
+one of PR #34's own new tests). `main`/`origin/main` were at `4bec3cd`
+as of the point this pass began. Full per-issue implementation detail
+for #2 through #8 is preserved below under each issue's own "Completed
+work" section — not repeated here, per this file's "don't append a
+history" instruction.
 
-**A final project-completion / requirements-audit / quality-hardening
-pass is now in progress, working directly on `main`** (no dedicated
-branch/PR opened yet — not tied to a specific numbered GitHub issue,
-since #1–#8 are all already done; this is a post-#8 final-quality
-sweep). See "Completed work (Final quality hardening pass)" below for
-exactly what's been done so far this session and "Exact next
-recommended action" at the end of this file for what's left: commit,
-branch, push, PR, CI, merge — the same workflow used for every prior
-issue/PR.
+**A final requirement-closure / GitHub-cleanup pass is now in progress,
+working directly on `main`** (no dedicated branch/PR opened yet). See
+"Completed work (Final requirement-closure pass)" below for exactly
+what's been done this session (branch cleanup, message feedback,
+conversation rename/delete, GitHub issue reconciliation) and "Exact next
+recommended action" at the end of this file for what's left.
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
@@ -3710,14 +3710,22 @@ branch deleted (local + remote) after merge.
   followed; flagged to the user; the standing no-provenance rule in
   `CLAUDE.md` continues to govern all commits/PRs in this project.
 
-## Completed work (Final quality hardening pass, in progress)
+## Completed work (Final quality hardening pass) — MERGED
 
 A user-requested final completion/requirements-audit/quality-hardening
 pass, run after Issue #8 was already merged (`a4afb2e`) — not tied to a
 specific numbered issue. Scope: verify every requirement against the
 actual repository (not stale docs), fix real gaps, keep the modular
 monolith architecture unchanged (no new infra), full regression testing,
-keep docs current.
+keep docs current. **Merged as PR #34, squash commit `32aa102`.** A
+post-merge regression run then caught a real issue in this PR's own new
+`test_env_example_loads_cleanly_as_a_literal_env_file` test — it
+hard-failed inside the Docker image (whose build context deliberately
+excludes `.env.example`, one level above `backend/`). Root-caused and
+fixed (skip gracefully when the file isn't reachable, still assert for
+real in CI/host runs) — merged as a small follow-up, **PR #35, squash
+commit `4bec3cd`**. `main`/`origin/main` were at `4bec3cd` as of the
+point the next pass (below) began.
 
 - **Fixed the real root cause of the 5 `test_password_reset.py`
   failures** (previously just documented as a "known artifact" across
@@ -3848,6 +3856,93 @@ Not yet done: committing this work; updating `CHANGELOG.md` with a dated
 entry; the branch/commit/push/PR/CI/merge cycle itself. See "Exact next
 recommended action" at the end of this file.
 
+## Completed work (Final requirement-closure pass, in progress)
+
+A user-requested pass: verify real repo state (don't trust a prior
+report blindly), reconcile GitHub Issues #3–#8 (shown OPEN despite being
+merged), clean up stale branches, re-examine the "deferred" items list
+against original requirements rather than accepting it, run a final
+product/RAG/security verification, full test matrix, real E2E demo,
+keep docs current. `main`/`origin/main` were at `4bec3cd` as of the
+point this pass began.
+
+- **Verified real state first**: `git status` clean, `main` ==
+  `origin/main` at `4bec3cd`, confirmed via `gh pr list --state all` that
+  every one of PRs #9–#35 is genuinely `MERGED` (not just assumed from
+  documentation).
+- **Branch cleanup**: 14 stale local branches and 3 stale remote
+  branches (`issue-1-application-foundation` through
+  `issue-redis-rate-limiting-slice-3c`, `playwright-e2e-auth-validation`,
+  plus a few still-present remotes) deleted — each verified first via
+  `git merge-base --is-ancestor <PR's real squash-merge commit SHA> main`
+  (not a diff-line heuristic, which is meaningless once `main` has
+  advanced past an old branch's cut point) to confirm its content
+  genuinely landed, with zero unique unmerged work. `main` is now the
+  only branch, locally and on `origin`.
+- **Re-examined deferred Issue #5 items against the original issue text**
+  rather than accepting "deferred" at face value (user explicitly asked
+  for this). Implemented the two highest-value, lowest-effort,
+  currently-100%-missing ones:
+  - **Message feedback** (`messages.feedback`, migration `0009`, native
+    `message_feedback` enum `UP`/`DOWN`, nullable, only settable on an
+    `ASSISTANT` message) — `PUT .../messages/{message_id}/feedback`
+    (`app/api/v1/conversations.py::set_message_feedback`,
+    `app/services/conversation_service.py::set_message_feedback`).
+    Matches `docs/DATA_MODEL.md`'s own prior note that a field on
+    `messages` would suffice — no new table.
+  - **Rename/delete conversations** — `PATCH .../conversations/{id}`
+    (nullable `title`, clearing back to untitled is a valid state) and
+    `DELETE .../conversations/{id}` (cascades to `messages`/`citations`,
+    already in place since migration `0006`).
+  - "Search conversations" is covered by a client-side title filter over
+    the already-fetched list (`frontend/app/chat/page.tsx`) — no backend
+    endpoint needed, essentially free.
+  - Left **collections**, a standalone **search UI**, a **command
+    palette**, a full **in-document citation viewer** beyond the
+    already-implemented source inspection, and **regenerate/retry**
+    deliberately deferred — lower value relative to effort under time
+    constraints, consistent with the modular-monolith "don't add scope
+    beyond demonstrated need" principle (confirmed with the user before
+    proceeding, since this judgment call could reasonably go either way).
+  - 16 new backend tests (`backend/tests/test_conversations.py`) covering
+    happy paths, not-found, cross-workspace (IDOR-shaped — same pattern
+    as the source-inspection endpoint's own tests), and VIEWER-cannot-
+    mutate for all three new endpoints. 5 new frontend tests
+    (`app/chat/page.test.tsx`). Migration `0009` verified reversible
+    (`alembic downgrade -1` / `upgrade head` round-tripped cleanly).
+  - **Manually verified end-to-end via real `curl` calls** against a
+    freshly rebuilt live stack — rename persists, feedback sets/changes/
+    clears and is reflected on a later `GET`, delete genuinely removes
+    the conversation (confirmed via a subsequent `404`) — and separately
+    verified cross-workspace denial (a second real user, second real
+    workspace, `404` on all three endpoints, first conversation
+    untouched afterward) **before** writing any automated test for it.
+- **For Issue #8's remaining original scope** (a *decided* production
+  hosting target + ADR, production Docker config) — deliberately did
+  **not** invent a choice. Per `CLAUDE.md` §4, choosing a real cloud host
+  is exactly the kind of infrastructure decision this project stops and
+  asks a human about rather than deciding unilaterally. Will close Issue
+  #8 on the strength of the fully-verified local Docker Compose setup,
+  with hosting explicitly flagged as a pending human decision (already
+  the honest state of `docs/DEPLOYMENT.md`, unchanged).
+- **Full regression after the new features, against a freshly rebuilt
+  stack**: backend 744 passing + 1 intentional skip (`ruff`/`mypy`
+  clean), frontend 76/76 (`eslint`/`tsc --noEmit` clean, `next build`
+  succeeds), Playwright 20/20, Alembic migration `0009` at head and
+  reversible, `docker compose config` valid.
+- Docs updated: `docs/API_CONTRACT.md` (3 new endpoints documented,
+  `MessageRead`/`ConversationRead` shapes updated), `docs/DATA_MODEL.md`
+  (`messages.feedback` row, the `feedback` "potential entity" marked
+  resolved), `docs/SECURITY.md` (new cross-workspace/VIEWER tests
+  referenced), `PROJECT_STATE.md` (component rows, deferred-items list,
+  test counts, header, "Immediate priorities" all updated), this file.
+
+Not yet done: GitHub Issue #3–#8 reconciliation (closing comments);
+product/RAG/full-security verification pass (mostly re-confirmation,
+since the architecture didn't change); committing this work; the
+branch/commit/push/PR/CI/merge cycle; the final report to the user. See
+"Exact next recommended action" at the end of this file.
+
 ## Explicitly NOT done (do not assume otherwise)
 
 - **Slice 3c is merged** (`75dd466`, PR #15) — `AuditEvent.RATE_LIMITED`
@@ -3953,37 +4048,45 @@ recommended action" at the end of this file.
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
 
-## Next major task: wrap up the final quality-hardening pass
+## Next major task: wrap up the final requirement-closure pass
 
-**GitHub Issues #1–#8 are all merged.** See "Completed work (Final
-quality hardening pass, in progress)" above for exactly what's been done
-this session (the real `EMAIL_PROVIDER` test fix, deprecation-warning
-cleanup, the new source-inspection feature end-to-end, an independent
-requirements audit, the `.env.example`/`env_ignore_empty` config bug
-fix, a full regression). Remaining, in order:
+**GitHub Issues #1–#8 are all merged**, plus PRs #34/#35 from the prior
+pass. See "Completed work (Final requirement-closure pass, in progress)"
+above for exactly what's been done this session (branch cleanup, PR
+history verified, message feedback + rename/delete conversations
+implemented and tested, a full regression). Remaining, in order:
 
-1. Update `CHANGELOG.md` with a dated entry for this pass.
-2. Create a branch (e.g. `final-quality-hardening`) from `main`, commit
-   the changes (backend: conftest.py, errors.py, conversation_service.py,
-   document_service.py, documents.py, schemas, repository, config.py,
-   alembic.ini, new/updated tests; frontend: schemas.ts, api-client.ts,
-   chat/page.tsx, chat/page.test.tsx, documents-chat.spec.ts; docs:
-   RAG_DESIGN.md, API_CONTRACT.md, SECURITY.md, PROJECT_STATE.md,
-   .env.example, SOLVING.md, HANDOFF.md, CHANGELOG.md), push, open a PR
-   via `gh pr create`.
-3. Poll CI (`gh pr view <N> --json statusCheckRollup`) until green,
-   merge with `gh pr merge <N> --squash --delete-branch=false`.
-4. Switch to `main`, pull, verify the merged commit, run the full
-   backend/frontend/Playwright suites once more to confirm, delete the
-   local and remote feature branch.
-5. Report final status to the user: current main commit, requirements
-   completed, remaining limitations, exact test results per layer,
-   security verification result, Docker verification — per the master
-   prompt's own "Final deliverable" section. Do not claim 100%
-   completion beyond what the repository actually supports (deferred
-   items — standalone search UI, message feedback, rename/delete
-   conversations, per-conversation/per-document deep-link routes,
-   collections — remain genuinely deferred, not silently dropped).
+1. Reconcile GitHub Issues #3–#8 (currently OPEN despite being merged):
+   for each, post a concise completion comment referencing the real
+   merged PR(s), honestly noting any genuinely-deferred original-scope
+   items (do not claim more than the repository supports), then close
+   it. For #5 specifically, note message feedback + rename/delete were
+   just added; search UI/collections/command palette/full viewer/
+   regenerate remain deferred. For #8, note local Docker Compose is the
+   fully-verified deployment target; a production hosting decision
+   remains pending (a human/architectural decision, not something to
+   invent).
+2. Do a final product-quality/RAG-pipeline/security spot-check pass
+   (mostly re-confirmation — the underlying architecture hasn't
+   changed since the prior pass's thorough audit) and a real fresh-stack
+   E2E demo (register → workspace → upload → process → READY → ask →
+   retrieval stages → citations → source inspection → rename/delete a
+   conversation → give feedback → second workspace → cross-workspace
+   isolation → prompt-injection document → malformed document → logout/
+   login persistence).
+3. Update `CHANGELOG.md` with a dated entry for this pass.
+4. Create a branch from `main`, commit (backend: migration `0009`,
+   models/repositories/services/schemas/API/tests for feedback+rename+
+   delete; docs: API_CONTRACT.md, DATA_MODEL.md, SECURITY.md,
+   PROJECT_STATE.md, HANDOFF.md, CHANGELOG.md; frontend: schemas.ts,
+   api-client.ts, chat/page.tsx, chat/page.test.tsx), push, open a PR.
+5. Poll CI until green, merge, switch to `main`, pull, verify, run the
+   full suites once more, delete the feature branch.
+6. Report final status to the user per the master prompt's "Final
+   report" format: current main commit, issue-by-issue status, branch
+   state, requirements completed/remaining, exact test results per
+   layer, security status, E2E status, genuine remaining limitations.
+   Do not claim 100% completion beyond what the repository supports.
 
 **Critical, explicitly restated security requirement (already
 implemented and tested, do not regress)**: retrieved document content —
@@ -4465,40 +4568,45 @@ own scope.
 
 ## Exact next recommended action
 
-GitHub Issues #1–#8 are all merged into `main`/`origin/main`, currently
-at `a4afb2e` (PR #33) at the point this final quality-hardening pass
-began. This pass (working directly on `main`, no branch yet) has: fixed
-the real cause of the 5 `test_password_reset.py` failures (backend now
-**727/727**, up from 717/722, `ruff`/`mypy` clean); fixed the
-`HTTP_422_UNPROCESSABLE_ENTITY` and Alembic `path_separator` deprecation
-warnings; implemented real source inspection end-to-end (backend
-endpoint + tests, frontend UI + tests, Playwright coverage, docs) after
-finding it was genuinely missing despite some prior documentation
-implying otherwise; run an independent background requirements audit
-across every spec area (came back clean except one finding, now fixed);
-fixed a real `.env.example`-vs-`Settings` completeness gap and a deeper
-latent config-loading bug it led to (`env_ignore_empty=True`, with a
-regression test that loads the real `.env.example` file); done a full
-regression across backend/frontend/Playwright/Docker/Alembic — all
-green. See "Completed work (Final quality hardening pass, in progress)"
-above for full detail. The next work, in order:
+GitHub Issues #1–#8 are all merged into `main`/`origin/main`, plus PRs
+#34 (`32aa102`) and #35 (`4bec3cd`) from the prior final-hardening pass.
+This pass (working directly on `main`, no branch yet, starting from
+`4bec3cd`) has: verified real repo state rather than trusting a prior
+report; deleted 17 stale branches (14 local, 3 remote) after verifying
+each via real PR squash-merge-commit ancestry, not a diff heuristic —
+`main` is now the only branch anywhere; re-examined the "deferred" Issue
+#5 items against the original requirements and implemented message
+feedback (`messages.feedback`, migration `0009`) and rename/delete
+conversations, each with real cross-workspace/VIEWER-role tests and a
+manual `curl`-based end-to-end + cross-workspace-denial verification
+done *before* writing the automated tests; run a full regression
+(backend 744 passing + 1 intentional skip, frontend 76/76, Playwright
+20/20, all clean) against a freshly rebuilt stack. See "Completed work
+(Final requirement-closure pass, in progress)" above for full detail.
+The next work, in order:
 
-1. Add a dated entry to `CHANGELOG.md` describing this pass.
-2. `git status` to confirm exactly what's changed on `main`. Create a
-   branch (e.g. `final-quality-hardening`) from `main`, commit, push,
-   open a PR via `gh pr create` (see "Next major task" above for the
-   exact file list).
-3. Poll CI (`gh pr view <N> --json statusCheckRollup`) until green
-   (backend/frontend/e2e/docker-build), then merge with
+1. Reconcile GitHub Issues #3–#8 (`gh issue list --state all` currently
+   shows them OPEN despite being merged) — post an honest completion
+   comment on each (referencing real merged PR numbers, noting any
+   genuinely-deferred original-scope items by name) via `gh issue
+   comment <N> --body "..."`, then `gh issue close <N>`.
+2. A final product-quality/RAG/security spot-check pass (mostly
+   re-confirmation) and one real fresh-stack E2E demo via `curl` and/or
+   the browser, covering the full flow including the new rename/delete/
+   feedback features.
+3. Add a dated `CHANGELOG.md` entry for this pass.
+4. `git status` to confirm exactly what's changed on `main`. Create a
+   branch, commit, push, open a PR via `gh pr create`.
+5. Poll CI until green (backend/frontend/e2e/docker-build), merge with
    `gh pr merge <N> --squash --delete-branch=false`.
-4. Switch to `main`, pull, confirm the merged commit, delete the local
-   and remote feature branch, run the backend/frontend/Playwright suites
-   once more against `main` to confirm no regression.
-5. Report final status to the user per the master prompt's "Final
-   deliverable" section — current main commit, requirements completed,
-   remaining limitations (genuinely deferred items, not silently
-   dropped: standalone search UI, message feedback, rename/delete
-   conversations, per-conversation/per-document deep-link routes,
-   collections), backend/frontend/Playwright results, security
-   verification, Docker verification, any real remaining blockers (none
-   currently known).
+6. Switch to `main`, pull, confirm the merged commit, delete the local
+   and remote feature branch, run the full suites once more to confirm.
+7. Report final status to the user per the master prompt's "Final
+   report" format (section 16): current main commit, per-issue status,
+   branch state, requirements completed/remaining, exact test results
+   per layer, security status, E2E status, and genuine remaining
+   limitations (standalone search UI, collections, command palette, a
+   full in-document citation viewer beyond source inspection, regenerate/
+   retry, and a decided production hosting target all remain
+   deliberately deferred, not silently dropped) — never claim 100%
+   completion beyond what the repository actually supports.
