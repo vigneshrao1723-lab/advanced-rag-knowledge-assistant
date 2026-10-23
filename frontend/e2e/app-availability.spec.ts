@@ -25,7 +25,7 @@ test.describe("Application availability", () => {
     await expect(page.getByRole("link", { name: "Advanced RAG Knowledge Assistant" })).toBeVisible();
     await expect(page.getByRole("heading", { name: /Your documents\. Answers you can trust\./ })).toBeVisible();
     await expect(page.getByRole("link", { name: "Create your workspace" })).toHaveAttribute("href", "/register");
-    await expect(page.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
+    await expect(page.getByRole("link", { name: "Log in" })).toHaveAttribute("href", "/login");
 
     expect(consoleErrors, `Unexpected browser console errors:\n${consoleErrors.join("\n")}`).toEqual(
       []
