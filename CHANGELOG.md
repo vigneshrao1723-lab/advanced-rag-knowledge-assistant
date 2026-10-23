@@ -10,10 +10,52 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-10-23 — Settings device-label fix + documentation refresh (in progress)
+### 2026-10-23 — Local-dev document persistence fix + production readiness assessment (in progress)
 
-*(Working directly on `main`, cut from the merged design sprint
-(`bb9ba11`, PR #38). Not yet committed as of this entry.)*
+*(Working directly on `main`, cut from the merged device-label fix
+(`585722f`, PR #39). Not yet committed as of this entry.)*
+
+- Added `docs/PRODUCTION_READINESS.md`: what's verified locally, what
+  genuinely isn't (backup/restore, object storage, multi-instance Redis
+  coordination under real load, image registry, metrics/monitoring,
+  CORS/cookie settings against a real cross-site target), security/
+  operational risks, three hosting approaches with trade-offs (not a
+  recommendation — no provider is chosen, per `CLAUDE.md` §4), the
+  exact human decisions/credentials a real deployment needs, and a
+  provider-neutral checklist.
+- **Fixes a real local-dev defect found while verifying a claim in that
+  document**: uploaded documents had no volume mount in
+  `infra/compose/docker-compose.yml` and did not survive a backend
+  container recreation, unlike Postgres (`db_data`). Added a
+  `backend_documents` volume. This surfaced a second real bug — a fresh
+  named volume defaults to root ownership, which the non-root `appuser`
+  backend container couldn't write into — fixed in
+  `infra/docker/backend.Dockerfile` by pre-creating the storage
+  directory with correct ownership before `USER appuser`. Both verified
+  against the real failure scenario: a `curl` upload, then
+  `docker compose up -d --force-recreate backend`, then confirming the
+  file and its exact content survived. See `SOLVING.md`'s 2026-10-23
+  entry for the full root-cause writeup. Still local-dev only — a real
+  object-storage `StorageProvider` implementation remains unbuilt for
+  production.
+- Re-ran the full regression suite after the infra change: backend 744
+  passed + 1 skip (`ruff`/`mypy` clean), frontend 82/82 (`eslint`/`tsc`
+  clean, `next build` succeeds), Playwright 21/21.
+- Updated `PROJECT_STATE.md` and compacted `HANDOFF.md` back down to
+  current-state-only (it had drifted to ~4,700 lines of append-only
+  history, contradicting its own stated "overwrite, don't append"
+  convention — the detail it held is already in this file and Git
+  history, so nothing was lost).
+
+## [Unreleased — committed]
+
+### 2026-10-23 — `fix: show a human-readable device label in Active Sessions` (#39), merged as `585722f`
+
+*(Branch cut from the merged final 72-hour sprint report pass, opened
+as **PR #39**, verified green on GitHub Actions CI, and **merged into
+`main` as squash commit `585722f`** — a small, well-tested, non-visual
+fix, consistent with this project's autonomous-merge pattern for that
+class of change.)*
 
 - **Fixes a real UX bug found via live visual QA**: Settings' "Active
   sessions" list rendered the raw `User-Agent` header string verbatim
@@ -29,8 +71,6 @@ with invented history of either kind.
   entire Issues #3–#8 build-out and this sprint's design pass).
 - Updated `PROJECT_STATE.md`/`HANDOFF.md` to reflect PRs #37/#38 merged
   and a completed Issues #1–#8 requirements audit.
-
-## [Unreleased — committed]
 
 ### 2026-10-23 — `feat: finish frontend design pass across auth, dashboard, documents, and chat` (#38), merged as `bb9ba11`
 
