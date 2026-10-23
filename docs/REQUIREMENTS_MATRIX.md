@@ -113,36 +113,51 @@ exists but the user-facing workflow is not complete end-to-end.
 
 ## 3. Full document viewer with contextual citation highlighting
 
-**Status: PARTIAL** (source inspection exists; a document-wide viewer
-does not).
+**Status: COMPLETE.**
 
-- **Evidence:** `GET /workspaces/{id}/documents/{id}/chunks/{chunk_id}`
-  (`backend/app/api/v1/documents.py:65-86`) and the frontend
-  `CitationSource` component already let a user view **one cited
-  chunk's** text in a `<blockquote>` from the chat page. There is no
-  endpoint or page that renders a **whole document** with its chunks in
-  order and highlights the cited one in context —
-  `frontend/app/documents/[id]/page.tsx` is a `PageStub`.
-- **Acceptance criteria:** Navigating to `/documents/[id]` (e.g. from a
-  citation) renders the document's extracted content as ordered
-  sections/chunks, scrolls to and visually highlights the chunk a
-  citation pointed at, and works for every supported format's extracted
-  text (PDF/DOCX/TXT/MD/CSV all go through the same `document_chunks`
-  table, so one viewer design covers all of them — no per-format
-  rendering needed, since this project never renders the original
-  PDF/DOCX binary, only its extracted text, consistent with
-  `docs/RAG_DESIGN.md`).
-- **Dependencies/risks:** Needs a new endpoint returning a document's
-  chunks in order (`GET /workspaces/{id}/documents/{id}/chunks`, plural
-  — the existing singular one stays for the exact-chunk case). Low
-  risk — read-only, additive.
-- **Effort/priority:** Medium (new endpoint + a real page with
-  highlight-and-scroll-to behavior + deep-linking from chat citations).
-  **Priority 3.**
-- **Next slice:** `GET .../documents/{id}/chunks` (ordered, VIEWER+) →
-  `/documents/[id]` page (renders chunks, accepts a `?chunk=` query
-  param to highlight/scroll) → wire the chat citation chip's "view in
-  document" link → tests.
+- **Evidence:** `GET /workspaces/{id}/documents/{id}/chunks` (plural,
+  VIEWER+, `backend/app/api/v1/documents.py`,
+  `document_service.list_document_chunks()`) returns every chunk of a
+  document in `chunk_index` order — additive to, never replacing, the
+  existing singular per-chunk source-inspection endpoint. Real
+  `frontend/app/documents/[id]/page.tsx` renders a document's full
+  extracted content block-by-block (page/section labels + text),
+  replacing the `PageStub`; accepts a `?chunk=` query param to highlight
+  and scroll to a specific chunk. The Documents list page
+  (`app/documents/page.tsx`) now links each filename to its viewer —
+  this link didn't exist before this slice and was found missing only
+  by actually clicking through the feature in a real browser, not by
+  code review alone. The chat citation chip (`CitationSource` in
+  `app/chat/page.tsx`) now has a "View in document" link to
+  `/documents/{document_id}?chunk={chunk_id}`, built from
+  `CitationRead.document_id`/`chunk_id`. 5 new backend tests
+  (`tests/test_document_listing.py`: ordered chunks, empty list for an
+  unprocessed document, not-found, cross-workspace isolation,
+  VIEWER-can-list), 4 new frontend tests in a new
+  `app/documents/[id]/page.test.tsx` (renders chunks in order,
+  processing message when empty, 404 for a missing document,
+  highlights the `?chunk=` target); the chat-page and documents-list
+  test files got new assertions added to existing tests (the "View in
+  document" link's `href`, the filename link's `href`) rather than new
+  test cases. **Verified
+  end-to-end in a real browser**, not just unit tests: upload a
+  document → open it from the Documents list and see its real extracted
+  content → ask a question in chat → open the citation → click "View in
+  document" → land on the viewer with the cited chunk visibly
+  highlighted.
+- **Acceptance criteria:** met — see evidence above. Works identically
+  for every supported format since all go through the same
+  `document_chunks` table (no per-format rendering needed — this
+  project never renders the original PDF/DOCX binary, only its
+  extracted text, consistent with `docs/RAG_DESIGN.md`).
+- **Dependencies/risks:** None encountered, beyond the Documents-list
+  linking gap caught during live verification (fixed in this same
+  slice, not deferred).
+- **Effort/priority:** Delivered. Was **Priority 3**.
+- **Next slice:** none. A natural follow-up once item 2 (search, done)
+  and this item are both complete: link each search result to its
+  source chunk the same way citations do — noted in item 2's own entry,
+  not required by `docs/REQUIREMENTS.md` as written.
 
 ## 4. Answer regeneration/retry
 

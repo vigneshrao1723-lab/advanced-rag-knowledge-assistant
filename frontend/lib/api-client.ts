@@ -7,6 +7,7 @@ import {
   CollectionWithDocumentsSchema,
   ConversationListSchema,
   ConversationSchema,
+  DocumentChunkListSchema,
   DocumentChunkSchema,
   DocumentListSchema,
   DocumentSchema,
@@ -370,6 +371,17 @@ export async function getDocumentChunk(
     "GET"
   );
   return DocumentChunkSchema.parse(await response.json());
+}
+
+export async function listDocumentChunks(
+  workspaceId: string,
+  documentId: string
+): Promise<DocumentChunk[]> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/documents/${documentId}/chunks`,
+    "GET"
+  );
+  return DocumentChunkListSchema.parse(await response.json());
 }
 
 // --- Search ---

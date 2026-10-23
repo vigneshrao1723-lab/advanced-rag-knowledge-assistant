@@ -152,9 +152,10 @@ from Issue #1: `{"error": {"code", "message", "request_id"}}` — see
 
 ## Implemented: `/api/v1/workspaces/{workspace_id}/documents`
 
-**Upload, listing, full processing pipeline, and source inspection**
-(GitHub Issue #3, Slices 3.3–3.7; list/get added Issue #5, Slice 5.1;
-chunk/source inspection added Issue #8) —
+**Upload, listing, full processing pipeline, source inspection, and
+the full document viewer** (GitHub Issue #3, Slices 3.3–3.7; list/get
+added Issue #5, Slice 5.1; chunk/source inspection added Issue #8;
+ordered chunk listing for the full document viewer added Issue #41) —
 search/filter/sort/rename/delete/re-index/download are not implemented
 yet. Documents reach `UPLOADED` (upload), then progress through
 `PROCESSING → PARSED → CLEANED → CHUNKED → EMBEDDED → INDEXED → READY`
@@ -168,6 +169,7 @@ chunk's embedding vector once `EMBEDDED` is reached.
 | `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}` | VIEWER | none | `200` `DocumentRead`, or `404` |
 | `POST /api/v1/workspaces/{workspace_id}/documents` | MEMBER | `multipart/form-data`, one field: `file` | `201` `DocumentRead`, or `400`/`409`/`413`/`429`/`500` (see below) |
 | `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` | MEMBER | none | `200` `DocumentRead`, or `404`/`409`/`429`/`500` (see below) |
+| `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}/chunks` | VIEWER | none | `200` `list[DocumentChunkRead]`, ordered by `chunk_index`, or `404` |
 | `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}/chunks/{chunk_id}` | VIEWER | none | `200` `DocumentChunkRead`, or `404` |
 
 `DocumentRead`: `{id, filename, mime_type, size_bytes, checksum_sha256, status, page_count, failure_reason, created_at, updated_at}` — never `storage_key` (internal only). Both `GET` endpoints follow the same non-leaking `404` pattern as every other workspace-scoped lookup (a missing document or one belonging to another workspace is indistinguishable).
@@ -181,6 +183,17 @@ workspace first, then `chunk_id` scoped to that already-authorized
 document — a `chunk_id` genuinely belonging to a different document (and
 therefore a different workspace) is `404`, never reachable by guessing
 or reusing it against a document the caller does have access to.
+
+**Full document viewer** (Issue #41): `GET .../chunks` (plural, no
+`chunk_id`) returns every chunk of a document, in `chunk_index` order —
+additive to, never a replacement for, the single-chunk endpoint above.
+A document still mid-ingestion (no chunks persisted yet) returns an
+empty list, not an error. The frontend's `/documents/[id]` page renders
+this as the document's full extracted content, and accepts a `?chunk=`
+query parameter (matching a chunk's `id`) to highlight and scroll to
+that specific chunk — used by the chat citation chip's "View in
+document" link (`/documents/{document_id}?chunk={chunk_id}`, built from
+`CitationRead.document_id`/`chunk_id`).
 
 Resolves `workspace_id` through the same `require_workspace_role`
 dependency every other workspace-scoped route uses — a non-member or

@@ -74,6 +74,10 @@ describe("DocumentsPage", () => {
 
     expect(await screen.findByText("report.pdf")).toBeInTheDocument();
     expect(screen.getByText("READY")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /report\.pdf/i })).toHaveAttribute(
+      "href",
+      "/documents/d1"
+    );
   });
 
   it("shows an empty state when no documents exist", async () => {

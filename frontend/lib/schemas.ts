@@ -216,6 +216,7 @@ export const DocumentChunkSchema = z.object({
   content: z.string(),
 });
 export type DocumentChunk = z.infer<typeof DocumentChunkSchema>;
+export const DocumentChunkListSchema = z.array(DocumentChunkSchema);
 
 export const MessageRoleSchema = z.enum(["USER", "ASSISTANT"]);
 export type MessageRole = z.infer<typeof MessageRoleSchema>;

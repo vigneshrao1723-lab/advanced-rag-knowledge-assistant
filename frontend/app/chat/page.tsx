@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import Link from "next/link";
 import {
   ChevronDown,
   ChevronUp,
+  ExternalLink,
   FileText,
   Loader2,
   Mic,
@@ -315,9 +317,18 @@ function CitationSource({
       </button>
       {error && <p className="text-destructive px-1.5">{error}</p>}
       {isOpen && content !== null && (
-        <blockquote className="border-indigo-200 bg-indigo-50/40 text-foreground mt-1 max-w-prose rounded-r-md border-l-2 py-2 pr-2 pl-3 text-sm whitespace-pre-wrap">
-          {content}
-        </blockquote>
+        <>
+          <blockquote className="border-indigo-200 bg-indigo-50/40 text-foreground mt-1 max-w-prose rounded-r-md border-l-2 py-2 pr-2 pl-3 text-sm whitespace-pre-wrap">
+            {content}
+          </blockquote>
+          <Link
+            href={`/documents/${citation.document_id}?chunk=${citation.chunk_id}`}
+            className="mt-1 inline-flex items-center gap-1 px-1.5 text-xs font-medium text-indigo-700 hover:underline"
+          >
+            <ExternalLink className="size-3" aria-hidden="true" />
+            View in document
+          </Link>
+        </>
       )}
     </li>
   );

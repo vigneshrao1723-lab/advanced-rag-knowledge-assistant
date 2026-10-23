@@ -514,6 +514,41 @@ def get_document_chunk(
     return _to_document_chunk_read(chunk)
 
 
+def list_document_chunks(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    document_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
+) -> list[DocumentChunkRead]:
+    """The full document viewer (GitHub Issue #41): every chunk belonging
+    to a document, in `chunk_index` order, so a client can render the
+    whole document's extracted content rather than one cited chunk at a
+    time (`get_document_chunk()` above stays the per-chunk source-
+    inspection endpoint — this is additive, not a replacement). Same
+    workspace-scoped resolve-then-404 shape as every other lookup here;
+    a document still mid-ingestion (no chunks persisted yet) returns an
+    empty list, not an error -- that's a legitimate, if uninteresting,
+    state for a viewer to render."""
+    document = document_repository.get_by_id_for_workspace(
+        db, workspace_id=workspace_id, document_id=document_id
+    )
+    if document is None:
+        record_audit_event(
+            db,
+            event_type=AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+            metadata={"resource_type": "document", "attempted_document_id": str(document_id)},
+        )
+        raise _document_not_found_error()
+
+    chunks = document_chunk_repository.get_by_document(db, document_id=document.id)
+    return [_to_document_chunk_read(chunk) for chunk in chunks]
+
+
 def _document_already_processed_error() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,

@@ -63,6 +63,28 @@ async def get_document(
 
 
 @router.get(
+    "/{workspace_id}/documents/{document_id}/chunks",
+    response_model=list[DocumentChunkRead],
+)
+async def list_document_chunks(
+    request: Request,
+    document_id: uuid.UUID,
+    ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.VIEWER)),
+    db: Session = Depends(get_db),
+) -> list[DocumentChunkRead]:
+    """The full document viewer (Issue #41): every chunk of a document,
+    in order, distinct from the single-chunk source-inspection endpoint
+    below."""
+    return document_service.list_document_chunks(
+        db,
+        workspace_id=ctx.workspace.id,
+        document_id=document_id,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
+    )
+
+
+@router.get(
     "/{workspace_id}/documents/{document_id}/chunks/{chunk_id}",
     response_model=DocumentChunkRead,
 )

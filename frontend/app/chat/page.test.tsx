@@ -182,6 +182,9 @@ describe("ChatPage", () => {
     expect(await screen.findByText(/returns within thirty days/i)).toBeInTheDocument();
     expect(api.getDocumentChunk).toHaveBeenCalledWith("w1", "doc-1", "chunk-1");
 
+    const viewInDocumentLink = await screen.findByRole("link", { name: /view in document/i });
+    expect(viewInDocumentLink).toHaveAttribute("href", "/documents/doc-1?chunk=chunk-1");
+
     await user.click(citationButton);
     expect(screen.queryByText(/returns within thirty days/i)).not.toBeInTheDocument();
   });
