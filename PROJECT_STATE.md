@@ -134,6 +134,14 @@ criteria (see `docs/PROJECT_BRIEF.md` "Success criteria" — all 5 are
 genuinely true and re-verified this sprint). Do not describe any item
 in the list above as done.
 
+**Feature completion sprint (started 2026-10-23, tracked as
+[Issue #41](https://github.com/vigneshrao1723-lab/advanced-rag-knowledge-assistant/issues/41)):**
+every item in the list above now has a full, evidence-based entry
+(status, acceptance criteria, dependencies/risks, effort/priority, next
+slice) in [`docs/REQUIREMENTS_MATRIX.md`](docs/REQUIREMENTS_MATRIX.md).
+Update that file, not this list, as each item actually ships — this
+section stays a condensed pointer.
+
 ## How to keep this file honest
 
 Any PR that changes what's implemented must update the relevant row(s) in
