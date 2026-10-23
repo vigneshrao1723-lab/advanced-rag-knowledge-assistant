@@ -34,7 +34,7 @@ export function Nav() {
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-xl">
       <div className="mx-auto flex min-h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
-        <Link href="/" className="group flex shrink-0 items-center gap-3" onClick={() => setMobileOpen(false)}>
+        <Link href="/" aria-label="Advanced RAG Knowledge Assistant" className="group flex shrink-0 items-center gap-3" onClick={() => setMobileOpen(false)}>
           <span className="flex size-9 items-center justify-center rounded-xl bg-slate-950 text-white shadow-sm transition group-hover:bg-indigo-700">
             <ArrowRight className="size-5 -rotate-45" aria-hidden="true" />
           </span>
@@ -71,8 +71,8 @@ export function Nav() {
           </>
         ) : (
           <div className="hidden items-center gap-3 sm:flex">
-            <Link href="/login" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition hover:text-slate-950">Sign in</Link>
-            <Link href="/register" className="inline-flex items-center rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2">Get started</Link>
+            <Link href="/login" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition hover:text-slate-950">Log in</Link>
+            <Link href="/register" className="inline-flex items-center rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2">Register</Link>
           </div>
         )}
 
@@ -111,8 +111,8 @@ export function Nav() {
             </div>
           ) : (
             <div className="flex flex-col gap-2">
-              <Link href="/login" className={navLinkClass} onClick={() => setMobileOpen(false)}>Sign in</Link>
-              <Link href="/register" className="rounded-xl bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white" onClick={() => setMobileOpen(false)}>Get started</Link>
+              <Link href="/login" className={navLinkClass} onClick={() => setMobileOpen(false)}>Log in</Link>
+              <Link href="/register" className="rounded-xl bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white" onClick={() => setMobileOpen(false)}>Register</Link>
             </div>
           )}
         </div>
