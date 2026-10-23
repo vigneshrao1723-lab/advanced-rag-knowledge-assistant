@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import type { FormEvent } from "react";
 
+import { AuthShell } from "@/components/layout/auth-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import * as api from "@/lib/api-client";
@@ -119,7 +120,7 @@ function ResetPasswordForm() {
 
 export default function ResetPasswordPage() {
   return (
-    <div className="mx-auto max-w-sm">
+    <AuthShell>
       <Card>
         <CardHeader>
           <CardTitle>Reset password</CardTitle>
@@ -131,6 +132,6 @@ export default function ResetPasswordPage() {
           </Suspense>
         </CardContent>
       </Card>
-    </div>
+    </AuthShell>
   );
 }

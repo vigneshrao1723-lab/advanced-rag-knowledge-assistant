@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, DragEvent } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  FileText,
+  Loader2,
+  UploadCloud,
+} from "lucide-react";
 
 import { ProtectedRoute } from "@/components/protected-route";
 import { Button } from "@/components/ui/button";
@@ -13,6 +20,12 @@ import type { Document, WorkspaceRole } from "@/lib/schemas";
 import { useWorkspace } from "@/lib/workspace-context";
 
 const POLL_INTERVAL_MS = 3000;
+// Matches backend/app/core/config.py's max_upload_size_bytes default and
+// the five formats backend/app/services/document_service.py validates
+// against (docs/API_CONTRACT.md) -- informational copy only, not an
+// independent client-side limit the backend doesn't already enforce.
+const SUPPORTED_FORMATS_LABEL = "PDF, DOCX, TXT, Markdown or CSV";
+const MAX_UPLOAD_SIZE_LABEL = "up to 50 MB";
 
 function canUpload(role: WorkspaceRole | undefined): boolean {
   return role === "OWNER" || role === "ADMIN" || role === "MEMBER";
@@ -24,49 +37,102 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function statusClasses(status: Document["status"]): string {
-  if (status === "READY") return "bg-emerald-100 text-emerald-800";
-  if (status === "FAILED") return "bg-destructive/10 text-destructive";
-  return "bg-accent text-accent-foreground";
+function statusBadge(status: Document["status"]): { classes: string; icon: typeof CheckCircle2 } {
+  if (status === "READY") {
+    return { classes: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20", icon: CheckCircle2 };
+  }
+  if (status === "FAILED") {
+    return { classes: "bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20", icon: AlertCircle };
+  }
+  return { classes: "bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-600/20", icon: Loader2 };
 }
 
 function UploadForm({ workspaceId, onUploaded }: { workspaceId: string; onUploaded: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = useCallback(
+    async (file: File) => {
+      setIsUploading(true);
+      setError(null);
+      try {
+        const document = await api.uploadDocument(workspaceId, file);
+        await api.processDocument(workspaceId, document.id);
+        onUploaded();
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Could not upload document.");
+      } finally {
+        setIsUploading(false);
+        if (inputRef.current) inputRef.current.value = "";
+      }
+    },
+    [workspaceId, onUploaded]
+  );
 
   async function handleChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (!file) return;
-    setIsUploading(true);
-    setError(null);
-    try {
-      const document = await api.uploadDocument(workspaceId, file);
-      await api.processDocument(workspaceId, document.id);
-      onUploaded();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not upload document.");
-    } finally {
-      setIsUploading(false);
-      if (inputRef.current) inputRef.current.value = "";
-    }
+    if (file) await handleFile(file);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    if (!isUploading) setIsDragOver(true);
+  }
+
+  function handleDragLeave() {
+    setIsDragOver(false);
+  }
+
+  async function handleDrop(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setIsDragOver(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file && !isUploading) await handleFile(file);
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor="document-upload" className="text-sm font-medium">
-        Upload a document
+    <div className="flex flex-col gap-2">
+      <label
+        htmlFor="document-upload"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={`flex cursor-pointer flex-col items-center gap-2 rounded-2xl border-2 border-dashed px-6 py-10 text-center transition ${
+          isDragOver
+            ? "border-indigo-400 bg-indigo-50"
+            : "border-slate-200 bg-slate-50/60 hover:border-indigo-300 hover:bg-indigo-50/40"
+        } ${isUploading ? "pointer-events-none opacity-70" : ""}`}
+      >
+        {isUploading ? (
+          <Loader2 className="size-7 animate-spin text-indigo-600" aria-hidden="true" />
+        ) : (
+          <UploadCloud className="size-7 text-indigo-600" aria-hidden="true" />
+        )}
+        <span className="text-sm font-medium text-slate-900">
+          {isUploading ? "Uploading and processing…" : "Upload a document"}
+        </span>
+        {!isUploading && (
+          <span className="text-xs text-slate-500">
+            Drag and drop, or click to browse · {SUPPORTED_FORMATS_LABEL} · {MAX_UPLOAD_SIZE_LABEL}
+          </span>
+        )}
+        <input
+          id="document-upload"
+          ref={inputRef}
+          type="file"
+          onChange={handleChange}
+          disabled={isUploading}
+          className="sr-only"
+        />
       </label>
-      <input
-        id="document-upload"
-        ref={inputRef}
-        type="file"
-        onChange={handleChange}
-        disabled={isUploading}
-        className="border-input bg-background rounded-md border px-3 py-2 text-sm"
-      />
-      {isUploading && <p className="text-muted-foreground text-sm">Uploading and processing…</p>}
-      {error && <p className="text-destructive text-sm">{error}</p>}
+      {error && (
+        <p className="text-destructive flex items-center gap-1.5 text-sm">
+          <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -98,23 +164,32 @@ function DocumentRow({
     }
   }
 
+  const { classes, icon: StatusIcon } = statusBadge(document.status);
+  const isInProgress = IN_PROGRESS_DOCUMENT_STATUSES.includes(document.status);
+
   return (
-    <li className="flex flex-col gap-1 border-b pb-3 last:border-b-0 last:pb-0">
-      <div className="flex items-center justify-between gap-4">
-        <div className="text-sm">
-          <p className="font-medium">{document.filename}</p>
-          <p className="text-muted-foreground text-xs">
-            {formatSize(document.size_bytes)}
-            {document.page_count !== null ? ` · ${document.page_count} pages` : ""}
-          </p>
-          {document.status === "FAILED" && document.failure_reason && (
-            <p className="text-destructive text-xs">{document.failure_reason}</p>
-          )}
+    <li className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-slate-300">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+            <FileText className="size-4" aria-hidden="true" />
+          </div>
+          <div className="min-w-0 text-sm">
+            <p className="truncate font-medium text-slate-900">{document.filename}</p>
+            <p className="text-muted-foreground text-xs">
+              {formatSize(document.size_bytes)}
+              {document.page_count !== null ? ` · ${document.page_count} pages` : ""}
+            </p>
+            {document.status === "FAILED" && document.failure_reason && (
+              <p className="text-destructive mt-1 text-xs">{document.failure_reason}</p>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <span
-            className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClasses(document.status)}`}
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${classes}`}
           >
+            <StatusIcon className={`size-3.5 ${isInProgress ? "animate-spin" : ""}`} aria-hidden="true" />
             {document.status}
           </span>
           {canManage && document.status === "FAILED" && (
@@ -198,9 +273,20 @@ function DocumentsContent() {
         {isLoading ? (
           <p className="text-muted-foreground text-sm">Loading documents…</p>
         ) : error ? (
-          <p className="text-destructive text-sm">{error}</p>
+          <p className="text-destructive flex items-center gap-1.5 text-sm">
+            <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+            {error}
+          </p>
         ) : documents.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No documents uploaded yet.</p>
+          <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-slate-200 py-10 text-center">
+            <FileText className="size-6 text-slate-400" aria-hidden="true" />
+            <p className="text-muted-foreground text-sm">No documents uploaded yet.</p>
+            {canManage && (
+              <p className="text-muted-foreground text-xs">
+                Upload a file above to start building this workspace&apos;s knowledge base.
+              </p>
+            )}
+          </div>
         ) : (
           <ul className="flex flex-col gap-3">
             {documents.map((document) => (

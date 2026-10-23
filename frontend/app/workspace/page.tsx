@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { Building2, Users } from "lucide-react";
 
 import { ProtectedRoute } from "@/components/protected-route";
 import { Button } from "@/components/ui/button";
@@ -362,7 +363,10 @@ function WorkspaceContent() {
     <div className="flex flex-col gap-6">
       <Card>
         <CardHeader>
-          <CardTitle>Your workspaces</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Building2 className="size-4 text-indigo-600" aria-hidden="true" />
+            Your workspaces
+          </CardTitle>
           <CardDescription>Create a workspace or switch between the ones you belong to.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -374,7 +378,10 @@ function WorkspaceContent() {
       {isLoading ? null : currentWorkspace ? (
         <Card>
           <CardHeader>
-            <CardTitle>{currentWorkspace.name}</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="size-4 text-indigo-600" aria-hidden="true" />
+              {currentWorkspace.name}
+            </CardTitle>
             <CardDescription>Your role: {currentWorkspace.my_role}</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-6">

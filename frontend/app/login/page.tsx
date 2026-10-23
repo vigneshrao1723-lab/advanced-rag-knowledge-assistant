@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { FormEvent } from "react";
 
+import { AuthShell } from "@/components/layout/auth-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ApiError } from "@/lib/api-client";
@@ -43,7 +44,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="mx-auto max-w-sm">
+    <AuthShell>
       <Card>
         <CardHeader>
           <CardTitle>Log in</CardTitle>
@@ -101,6 +102,6 @@ export default function LoginPage() {
           </p>
         </CardContent>
       </Card>
-    </div>
+    </AuthShell>
   );
 }
