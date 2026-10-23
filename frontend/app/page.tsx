@@ -75,7 +75,7 @@ export default function Home() {
             </h1>
             <p className="mt-6 max-w-xl text-base leading-7 text-slate-300 sm:text-lg">
               Turn scattered files into a searchable knowledge workspace. Ask questions, trace every
-              answer to its source, and keep your team's information in its own workspace.
+              answer to its source, and keep your team&apos;s information in its own workspace.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link
@@ -205,7 +205,7 @@ export default function Home() {
           </div>
           <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">Keep the source one click away.</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-            Answers include citations, and source inspection lets you check the retrieved text. Workspace-scoped access controls help keep each team's documents separate.
+            Answers include citations, and source inspection lets you check the retrieved text. Workspace-scoped access controls help keep each team&apos;s documents separate.
           </p>
         </div>
         <Link href="/register" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2">
