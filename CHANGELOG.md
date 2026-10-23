@@ -10,6 +10,16 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
+### 2026-10-23 — 72-hour release sprint and initial UI/UX pass (in progress)
+
+*(Branch `ui/72-hour-product-polish`; initial design and delivery-plan commits are pushed to this branch, not yet merged.)*
+
+- Added `docs/72_HOUR_DELIVERY_PLAN.md` with a time-boxed plan, release gates, UI design direction and explicit known limitations.
+- Replaced the foundation-placeholder home page with a responsive product landing page describing the actual document → retrieval → cited-answer workflow. The chat illustration is explicitly labelled as illustrative, not a live backend result.
+- Polished the responsive navigation, added an accessible mobile menu, and removed navigation links to standalone Collections/Search routes that are not implemented. Preserved existing login/register accessible labels for E2E compatibility.
+- Updated site metadata and added Playwright assertions for the landing page and mobile navigation.
+- **Not yet verified locally or by CI in this branch.** Run frontend lint/typecheck/tests/build and Playwright against a freshly rebuilt Docker Compose stack before merge. Do not claim these checks pass until the results are observed.
+
 ### 2026-10-01 — Final requirement-closure pass: branch cleanup, message feedback, conversation rename/delete (in progress)
 
 *(Working directly on `main`, cut from the merged final quality-
