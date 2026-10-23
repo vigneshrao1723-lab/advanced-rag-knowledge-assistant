@@ -78,7 +78,7 @@ def _ingest_ready_document(
         headers=csrf_headers(client),
     )
     assert upload_response.status_code == 201, upload_response.text
-    document = upload_response.json()
+    document: dict[str, Any] = upload_response.json()
     process_response = client.post(
         f"/api/v1/workspaces/{workspace_id}/documents/{document['id']}/process",
         headers=csrf_headers(client),

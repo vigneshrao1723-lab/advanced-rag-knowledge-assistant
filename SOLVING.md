@@ -833,3 +833,49 @@ convenience, not a production storage solution — the `storage_bucket`
 setting remains reserved for a real object-storage `StorageProvider`
 implementation that a production deployment would actually need (see
 `docs/PRODUCTION_READINESS.md`).
+
+## 2026-10-23 — Local `mypy app` run passed while CI's `mypy .` failed on a test file
+
+**Symptom:** PR #44's backend CI job failed on `Mypy` with
+`tests/test_search.py:88: error: Returning Any from function declared
+to return "dict[str, Any]"  [no-any-return]`, even though the exact
+same command had been run locally (inside the same Docker image, after
+rebuilding) moments before opening the PR and reported "Success: no
+issues found."
+
+**Root cause:** The local verification ran `uv run mypy app` — scoped
+to the `app/` package only. CI's actual step (`.github/workflows/ci.yml`)
+runs `uv run mypy .` from the `backend/` root, which also type-checks
+`tests/`. `tests/test_search.py`'s `_ingest_ready_document()` helper
+assigned `document = upload_response.json()` (typed `Any` by
+`httpx`/`starlette`'s `Response.json()`) and returned it from a
+function declared `-> dict[str, Any]` — a real, if minor, type-safety
+gap mypy's `no-any-return` check is designed to catch, invisible to a
+check that never looked at the file.
+
+**Failed attempts:** None — the mismatch between the local command and
+CI's actual command was the entire problem; once identified, the fix
+was immediate.
+
+**Fix:** Added an explicit `document: dict[str, Any] = upload_response.json()`
+annotation, matching every sibling test file's own established
+convention for this exact pattern (`test_workspaces.py`,
+`test_document_listing.py`, `test_collections.py` all already annotate
+their `response.json()` assignments this way) — this file was simply
+the one place that convention slipped.
+
+**Verification:** `uv run mypy .` (the literal CI command, not a
+scoped approximation) now passes clean inside the same Docker image;
+re-ran the full `pytest -q` suite afterward too (767 passed, 1 skipped,
+unaffected by a type-annotation-only change).
+
+**Prevention/lesson:** when verifying a fix will pass CI, run the
+*exact* command CI runs, copied from `.github/workflows/ci.yml` itself,
+not a remembered or assumed approximation of it — `mypy app` and
+`mypy .` differ only in scope, but that scope difference is exactly
+where this bug was hiding. This applies generally: `ruff check .`,
+`mypy .`, `pytest -v` (not `-q`, though output verbosity doesn't affect
+pass/fail) — matching CI's working directory and arguments precisely
+is cheap and this is the second time in this project's history a
+"local checks passed" claim turned out to be checking something
+narrower than what CI actually runs.
