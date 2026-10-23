@@ -10,10 +10,56 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-10-23 — Full document viewer + citation highlighting (feature-completion sprint, Issue #41, priority 3 of 7) (in progress)
+### 2026-10-23 — Answer regeneration (feature-completion sprint, Issue #41, priority 4 of 7) (in progress)
 
-*(Branch `feat/document-viewer`, cut from `main` at `45e5c85`. Not yet
-committed as of this entry.)*
+*(Branch `feat/regenerate-response`, cut from `main` at `4cfc546`. Not
+yet committed as of this entry.)*
+
+- Implements answer regeneration end-to-end: `POST
+  /workspaces/{id}/conversations/{id}/messages/{id}/regenerate`
+  (`conversation_service.regenerate_message()`) — finds the preceding
+  `USER` message, re-runs the exact same retrieval/generation helper
+  `post_message()` uses, replaces the assistant message's content and
+  citations in place (same message id, no new row, prior feedback
+  cleared), same rate limit as posting a message. A failure during
+  generation leaves the prior answer and its citations completely
+  untouched. New repository methods:
+  `message_repository.get_preceding_user_message()`/`update_content()`,
+  `citation_repository.delete_for_message()`.
+- A "Regenerate" button (`RotateCcw` icon) on each assistant message in
+  `frontend/app/chat/page.tsx`.
+- 8 new backend tests, 1 new frontend test.
+- **Hit and fixed a real test-environment gotcha**: within a single
+  test's shared Postgres transaction, `created_at`'s `now()` default is
+  frozen for the whole transaction, so the user/assistant messages tied
+  on `created_at`, breaking the new "find the preceding question"
+  query in tests (and separately exposing that an older sibling test's
+  reliance on list *position* rather than *role* to pick "the user
+  message" is fragile under the same tie). Fixed by forcing a distinct
+  timestamp in the affected tests, matching
+  `test_document_listing.py`'s established precedent — real HTTP
+  requests in production get genuinely distinct transaction
+  timestamps; only this shared-transaction test fixture ties them.
+- Full regression re-run clean: backend 780 passed + 1 skip, frontend
+  99/99, Playwright 21/21 (no regression), `ruff`/`mypy .`/`eslint`/
+  `tsc`/`next build` all clean (`mypy .`, the literal CI command, per
+  the lesson in `SOLVING.md`'s prior entry).
+- Real-browser verification beyond the automated suites: ask a
+  question → rate the answer → click Regenerate → confirm the answer
+  is still grounded in the real document and the prior rating was
+  cleared.
+- Updates `docs/API_CONTRACT.md`, `docs/SECURITY.md`,
+  `docs/REQUIREMENTS_MATRIX.md` §4, and `PROJECT_STATE.md` to record
+  answer regeneration as `COMPLETE` with evidence.
+
+## [Unreleased — committed]
+
+### 2026-10-23 — `feat: add full document viewer + citation highlighting (Issue #41, priority 3 of 7)` (#45), merged as `4cfc546`
+
+*(Branch `feat/document-viewer`, cut from the merged standalone-search
+PR (`45e5c85`, PR #44). Verified green on GitHub Actions CI (this
+time with the correct `mypy .` command checked locally first) and
+**merged into `main` as squash commit `4cfc546`**.)*
 
 - Implements the full document viewer end-to-end: `GET
   /workspaces/{id}/documents/{id}/chunks` (plural, ordered by
@@ -48,8 +94,6 @@ committed as of this entry.)*
 - Updates `docs/API_CONTRACT.md` and `docs/REQUIREMENTS_MATRIX.md` §3
   and `PROJECT_STATE.md` to record the document viewer as `COMPLETE`
   with evidence.
-
-## [Unreleased — committed]
 
 ### 2026-10-23 — `feat: add standalone search (Issue #41, priority 2 of 7)` (#44), merged as `45e5c85`
 

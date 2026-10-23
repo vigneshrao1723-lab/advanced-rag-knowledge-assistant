@@ -14,6 +14,7 @@ import {
   Pencil,
   Play,
   Plus,
+  RotateCcw,
   Search,
   Send,
   Square,
@@ -460,18 +461,62 @@ function FeedbackButtons({
   );
 }
 
+function RegenerateButton({
+  workspaceId,
+  conversationId,
+  messageId,
+  onRegenerated,
+}: {
+  workspaceId: string;
+  conversationId: string;
+  messageId: string;
+  onRegenerated: (message: Message) => void;
+}) {
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleRegenerate() {
+    setIsRegenerating(true);
+    setError(null);
+    try {
+      const updated = await api.regenerateMessage(workspaceId, conversationId, messageId);
+      onRegenerated(updated);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not regenerate this answer.");
+    } finally {
+      setIsRegenerating(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        title="Regenerate response"
+        aria-label="Regenerate response"
+        disabled={isRegenerating}
+        onClick={handleRegenerate}
+        className="text-muted-foreground hover:bg-slate-100 hover:text-foreground rounded-md p-1.5 transition disabled:opacity-50"
+      >
+        <RotateCcw className={`size-3.5 ${isRegenerating ? "animate-spin" : ""}`} aria-hidden="true" />
+      </button>
+      {error && <span className="text-destructive text-xs">{error}</span>}
+    </div>
+  );
+}
+
 function MessageBubble({
   workspaceId,
   conversationId,
   message,
   documentsById,
-  onFeedbackChanged,
+  onMessageUpdated,
 }: {
   workspaceId: string;
   conversationId: string;
   message: Message;
   documentsById: Map<string, Document>;
-  onFeedbackChanged: (message: Message) => void;
+  onMessageUpdated: (message: Message) => void;
 }) {
   const isUser = message.role === "USER";
   return (
@@ -497,7 +542,14 @@ function MessageBubble({
             workspaceId={workspaceId}
             conversationId={conversationId}
             message={message}
-            onChanged={onFeedbackChanged}
+            onChanged={onMessageUpdated}
+          />
+          <div className="h-4 w-px bg-slate-200" aria-hidden="true" />
+          <RegenerateButton
+            workspaceId={workspaceId}
+            conversationId={conversationId}
+            messageId={message.id}
+            onRegenerated={onMessageUpdated}
           />
         </div>
       )}
@@ -659,7 +711,7 @@ function ConversationThread({
                 conversationId={conversationId}
                 message={message}
                 documentsById={documentsById}
-                onFeedbackChanged={(updated) =>
+                onMessageUpdated={(updated) =>
                   setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
                 }
               />

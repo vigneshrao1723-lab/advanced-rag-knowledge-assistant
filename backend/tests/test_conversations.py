@@ -830,3 +830,188 @@ def test_viewer_cannot_set_feedback(client_factory: Callable[[], TestClient]) ->
         viewer, workspace["id"], conversation["id"], assistant_message_id, "UP"
     )
     assert response.status_code == 403
+
+
+# --- regenerate a response (GitHub Issue #41) -------------------------------
+
+
+def _regenerate(
+    client: TestClient, workspace_id: str, conversation_id: str, message_id: str
+) -> Any:
+    return client.post(
+        f"/api/v1/workspaces/{workspace_id}/conversations/{conversation_id}"
+        f"/messages/{message_id}/regenerate",
+        headers=csrf_headers(client),
+    )
+
+
+def _push_user_message_earlier(db_session: DbSession, *, conversation_id: str) -> None:
+    """A single test runs inside one Postgres transaction (see
+    `conftest.db_session`), where `now()` -- `created_at`'s own
+    `server_default` -- is constant for the whole transaction, so the
+    user and assistant messages `_post_message()` creates moments apart
+    would otherwise tie on `created_at`, making `get_preceding_user_message()`'s
+    strict `<` comparison find nothing. Force a distinct, earlier
+    timestamp on the user message directly, matching
+    `test_document_listing.py`'s identical pattern -- real, separate
+    HTTP requests in production always get genuinely distinct
+    transaction timestamps; only this shared-transaction test fixture
+    ties them."""
+    db_session.execute(
+        update(Message)
+        .where(
+            Message.conversation_id == uuid.UUID(conversation_id),
+            Message.role == MessageRole.USER,
+        )
+        .values(created_at=datetime.now(UTC) - timedelta(seconds=1))
+    )
+    db_session.commit()
+
+
+def test_regenerate_returns_a_grounded_answer_with_fresh_citations(
+    client: TestClient, db_session: DbSession
+) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    _ingest_ready_document(client, workspace["id"], content=_TXT_BYTES)
+    conversation = _create_conversation(client, workspace["id"])
+    post_response = _post_message(
+        client, workspace["id"], conversation["id"], "What is the refund policy?"
+    )
+    assistant_message_id = post_response.json()["id"]
+    original_citation_ids = {c["chunk_id"] for c in post_response.json()["citations"]}
+    assert len(original_citation_ids) >= 1
+    _push_user_message_earlier(db_session, conversation_id=conversation["id"])
+
+    response = _regenerate(client, workspace["id"], conversation["id"], assistant_message_id)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["id"] == assistant_message_id
+    assert body["role"] == "ASSISTANT"
+    assert "refund policy" in body["content"]
+    assert len(body["citations"]) >= 1
+
+    # The message row itself was updated in place -- no new message was
+    # created, and the conversation's total message count is unchanged
+    # (one USER question, one ASSISTANT answer).
+    messages = db_session.execute(
+        select(Message).where(Message.conversation_id == uuid.UUID(conversation["id"]))
+    ).scalars().all()
+    assert len(messages) == 2
+    assert {m.role for m in messages} == {MessageRole.USER, MessageRole.ASSISTANT}
+    assert any(m.id == uuid.UUID(assistant_message_id) for m in messages)
+
+
+def test_regenerate_clears_previous_feedback(
+    client: TestClient, db_session: DbSession
+) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    conversation = _create_conversation(client, workspace["id"])
+    assistant_message_id = _post_message(
+        client, workspace["id"], conversation["id"], "anything"
+    ).json()["id"]
+    _set_feedback(client, workspace["id"], conversation["id"], assistant_message_id, "UP")
+    _push_user_message_earlier(db_session, conversation_id=conversation["id"])
+
+    response = _regenerate(client, workspace["id"], conversation["id"], assistant_message_id)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["feedback"] is None
+
+
+def test_regenerate_a_user_message_returns_404(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    conversation = _create_conversation(client, workspace["id"])
+    _post_message(client, workspace["id"], conversation["id"], "anything")
+    messages = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/conversations/{conversation['id']}/messages",
+        headers=csrf_headers(client),
+    ).json()
+    # Found by role, not list position -- within a single test's shared
+    # transaction, `created_at` ties between the user/assistant message
+    # (see `_push_user_message_earlier()`'s docstring above), so the
+    # list's own order is not a reliable way to pick "the" user message.
+    user_message_id = next(m["id"] for m in messages if m["role"] == "USER")
+
+    response = _regenerate(client, workspace["id"], conversation["id"], user_message_id)
+    assert response.status_code == 404
+
+
+def test_regenerate_nonexistent_message_returns_404(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    conversation = _create_conversation(client, workspace["id"])
+
+    response = _regenerate(client, workspace["id"], conversation["id"], str(uuid.uuid4()))
+    assert response.status_code == 404
+
+
+def test_cross_workspace_regenerate_is_not_reachable(
+    client_factory: Callable[[], TestClient],
+) -> None:
+    owner_a = client_factory()
+    _register(owner_a)
+    workspace_a = _create_workspace(owner_a, name="A")
+    conversation = _create_conversation(owner_a, workspace_a["id"])
+    assistant_message_id = _post_message(
+        owner_a, workspace_a["id"], conversation["id"], "anything"
+    ).json()["id"]
+
+    owner_b = client_factory()
+    _register(owner_b)
+    workspace_b = _create_workspace(owner_b, name="B")
+
+    response = _regenerate(owner_b, workspace_b["id"], conversation["id"], assistant_message_id)
+    assert response.status_code == 404
+
+
+def test_viewer_cannot_regenerate(client_factory: Callable[[], TestClient]) -> None:
+    owner = client_factory()
+    _register(owner)
+    workspace = _create_workspace(owner)
+    conversation = _create_conversation(owner, workspace["id"])
+    assistant_message_id = _post_message(
+        owner, workspace["id"], conversation["id"], "anything"
+    ).json()["id"]
+
+    viewer_email = _unique_email()
+    _register(client_factory(), viewer_email)
+    _add_member(owner, workspace["id"], viewer_email, "VIEWER")
+    viewer = client_factory()
+    _login(viewer, viewer_email)
+
+    response = _regenerate(viewer, workspace["id"], conversation["id"], assistant_message_id)
+    assert response.status_code == 403
+
+
+def test_regenerate_requires_authentication(client_factory: Callable[[], TestClient]) -> None:
+    owner = client_factory()
+    _register(owner)
+    workspace = _create_workspace(owner)
+    conversation = _create_conversation(owner, workspace["id"])
+    assistant_message_id = _post_message(
+        owner, workspace["id"], conversation["id"], "anything"
+    ).json()["id"]
+    anonymous = client_factory()
+
+    response = _regenerate(anonymous, workspace["id"], conversation["id"], assistant_message_id)
+    assert response.status_code == 401
+
+
+def test_regenerate_rate_limit_enforced_at_threshold(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    conversation = _create_conversation(client, workspace["id"])
+    assistant_message_id = _post_message(
+        client, workspace["id"], conversation["id"], "anything"
+    ).json()["id"]
+
+    last_status = None
+    for _ in range(21):
+        last_status = _regenerate(
+            client, workspace["id"], conversation["id"], assistant_message_id
+        ).status_code
+    assert last_status == 429

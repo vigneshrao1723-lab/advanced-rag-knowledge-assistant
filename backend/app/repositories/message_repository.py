@@ -62,9 +62,48 @@ def set_feedback(db: Session, *, message: Message, feedback: MessageFeedback | N
     return message
 
 
+def get_preceding_user_message(
+    db: Session, *, conversation_id: uuid.UUID, message: Message
+) -> Message | None:
+    """The `USER` message this `message` (expected to be an `ASSISTANT`
+    row) answered -- the most recent `USER` message strictly before it
+    in the same conversation, by `created_at`. Used by regenerate
+    (GitHub Issue #41): re-running generation needs the original
+    question, not the answer being replaced."""
+    return db.execute(
+        select(Message)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.role == MessageRole.USER,
+            Message.created_at < message.created_at,
+        )
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def update_content(
+    db: Session, *, message: Message, content: str, feedback: MessageFeedback | None
+) -> Message:
+    """Replaces an already-persisted message's content in place --
+    regenerate (Issue #41) overwriting a superseded answer, never a new
+    row. `feedback` is set explicitly (not left untouched) because a
+    rating on the old content doesn't describe the new content --
+    callers pass `None` to clear it, matching `set_feedback()`'s own
+    semantics for "no feedback"."""
+    message.content = content
+    message.feedback = feedback
+    db.add(message)
+    db.flush()
+    db.refresh(message)
+    return message
+
+
 __all__ = [
     "create",
     "get_by_id_for_conversation",
+    "get_preceding_user_message",
     "list_for_conversation",
     "set_feedback",
+    "update_content",
 ]

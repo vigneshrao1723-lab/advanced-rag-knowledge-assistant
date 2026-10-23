@@ -447,6 +447,18 @@ export async function postMessage(
   return MessageSchema.parse(await response.json());
 }
 
+export async function regenerateMessage(
+  workspaceId: string,
+  conversationId: string,
+  messageId: string
+): Promise<Message> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/conversations/${conversationId}/messages/${messageId}/regenerate`,
+    "POST"
+  );
+  return MessageSchema.parse(await response.json());
+}
+
 export async function setMessageFeedback(
   workspaceId: string,
   conversationId: string,
