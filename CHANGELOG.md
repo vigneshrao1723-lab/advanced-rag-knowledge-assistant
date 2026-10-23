@@ -10,10 +10,54 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-10-23 — Local-dev document persistence fix + production readiness assessment (in progress)
+### 2026-10-23 — Collections (feature-completion sprint, Issue #41, priority 1 of 7) (in progress)
 
-*(Working directly on `main`, cut from the merged device-label fix
-(`585722f`, PR #39). Not yet committed as of this entry.)*
+*(Branch `feat/collections`, cut from `main` at `faef86b`. Not yet
+committed as of this entry.)*
+
+- Implements collections end-to-end: `collections`/`collection_documents`
+  schema (migration `0010`), workspace-role-gated CRUD + document
+  association API (`backend/app/api/v1/collections.py`,
+  `app/services/collection_service.py`), and real
+  `frontend/app/collections/page.tsx`/`[id]/page.tsx` pages (create/
+  list/rename/delete a collection; add/remove documents), replacing
+  both `PageStub`s and adding a nav entry.
+- 15 new backend tests, 9 new frontend tests, plus an 11-step real
+  browser verification (register → workspace → upload → create
+  collection → open detail → add document → reload and confirm the
+  association persisted → remove → rename → delete).
+- Full regression re-run clean: backend 759 passed + 1 skip, frontend
+  91/91, Playwright 21/21, `ruff`/`mypy`/`eslint`/`tsc`/`next build`
+  all clean.
+- Updates `docs/REQUIREMENTS_MATRIX.md` §1 and `PROJECT_STATE.md` to
+  record Collections as `COMPLETE` with evidence.
+
+## [Unreleased — committed]
+
+### 2026-10-23 — `docs: requirements matrix for feature-completion sprint` (#42), merged as `faef86b`
+
+*(Branch `docs/feature-completion-requirements-matrix`, cut from the
+merged document-persistence fix (`e5994d6`, PR #40). Verified green on
+GitHub Actions CI and **merged into `main` as squash commit
+`faef86b`**.)*
+
+- Adds `docs/REQUIREMENTS_MATRIX.md`: an evidence-based audit of the
+  seven product items deferred after Issues #1–#8 (collections,
+  standalone search, full document viewer, answer regeneration/retry,
+  document management beyond list/get/upload/process, command palette,
+  recursive chunking), each read directly from the current code, with
+  status, evidence, acceptance criteria, dependencies/risks, effort/
+  priority, and the exact next slice.
+- Opens tracking **Issue #41** with the same scope (Issues #1–#8 are
+  already closed) and links the matrix from `PROJECT_STATE.md`.
+
+### 2026-10-23 — `fix: persist uploaded documents across container recreation + production readiness assessment` (#40), merged as `e5994d6`
+
+*(Branch `infra/document-persistence-and-production-readiness`, cut
+from the merged device-label fix (`585722f`, PR #39). Verified green on
+GitHub Actions CI (including the `docker-build` job, since this
+touches the backend Dockerfile/compose file) and **merged into `main`
+as squash commit `e5994d6`**.)*
 
 - Added `docs/PRODUCTION_READINESS.md`: what's verified locally, what
   genuinely isn't (backup/restore, object storage, multi-instance Redis
@@ -46,8 +90,6 @@ with invented history of either kind.
   history, contradicting its own stated "overwrite, don't append"
   convention — the detail it held is already in this file and Git
   history, so nothing was lost).
-
-## [Unreleased — committed]
 
 ### 2026-10-23 — `fix: show a human-readable device label in Active Sessions` (#39), merged as `585722f`
 

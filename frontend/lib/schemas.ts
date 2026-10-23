@@ -142,6 +142,25 @@ export const IN_PROGRESS_DOCUMENT_STATUSES: DocumentStatus[] = [
   "INDEXED",
 ];
 
+// --- Collections (Issue #41) ---
+// Mirrors backend/app/schemas/collection.py exactly.
+
+export const CollectionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  document_count: z.number(),
+});
+export type Collection = z.infer<typeof CollectionSchema>;
+export const CollectionListSchema = z.array(CollectionSchema);
+
+export const CollectionWithDocumentsSchema = CollectionSchema.extend({
+  documents: z.array(DocumentSchema),
+});
+export type CollectionWithDocuments = z.infer<typeof CollectionWithDocumentsSchema>;
+
 // --- Conversations (Issue #4/#5) ---
 // Mirrors backend/app/schemas/conversation.py exactly.
 
