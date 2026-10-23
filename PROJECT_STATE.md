@@ -1,23 +1,11 @@
 # PROJECT_STATE.md
 
-**Last updated:** 2026-10-01
-**Current phase:** GitHub Issues #1–#8 are all implemented, tested, and
-merged to `main` — the full original 5-day plan is complete. Two
-follow-on final-hardening passes have also merged (`32aa102` PR #34,
-`4bec3cd` PR #35: a real `EMAIL_PROVIDER` test-environment fix,
-source inspection, an `.env.example`/config-loading fix, deprecation
-cleanup). A further **final requirement-closure pass** (not tied to a
-specific numbered issue) is now **in progress**, working directly on
-`main` — see "Immediate priorities". `main`/`origin/main` were at
-`4bec3cd` as of the point this pass began.
-(repository: `vigneshrao1723-lab/advanced-rag-knowledge-assistant`)
+**Last updated:** 2026-10-23  
+**Current phase:** 72-hour release sprint — core RAG product and final requirement-closure pass are merged to main at 1797b7f. Initial frontend design polish is in progress on branch ui/72-hour-product-polish and is not yet merged or CI-verified. See HANDOFF.md and docs/72_HOUR_DELIVERY_PLAN.md for the active work and deadline plan.
 
-This is the authoritative, living snapshot of the project's real state. If
-this file ever disagrees with the actual repository contents, the
-repository wins — fix this file. For the exact commit-by-commit,
-PR-by-PR history behind every item below, see `CHANGELOG.md`; this file
-intentionally stays a condensed *current-state* snapshot rather than a
-running narrative, to keep it honest and readable as the project grows.
+This is the authoritative living snapshot. The current repository contents and latest test runs take precedence over old counts in this file. The current main baseline reported after PR #36 was backend 744 passed + 1 intentional skip, frontend 76/76, Playwright 20/20, with ruff/mypy/eslint/TypeScript/build checks clean. Those are baseline results, not proof that the current UI branch passes.
+
+Repository: vigneshrao1723-lab/advanced-rag-knowledge-assistant.
 
 ## Status legend
 
@@ -108,43 +96,31 @@ offline implementation — no paid API key required (see ADRs 0007, 0008).
 
 ## Immediate priorities
 
-Issues #1–#8 are done and merged to `main` (`4bec3cd` as of the point
-this pass began). A final requirement-closure / GitHub-cleanup pass is
-in progress:
+A 72-hour release sprint began 2026-10-23. The core app is already substantially
+implemented; the priority is product-quality frontend work, accessibility,
+regression safety, documentation accuracy and release preparation.
 
-1. Verified real repository state (clean tree, `main` == `origin/main`)
-   rather than trusting a prior session's report blindly.
-2. Deleted 17 stale local/remote feature branches, each verified (via
-   its PR's real squash-merge commit being an ancestor of `main`, not
-   just a diff heuristic) to have no unique unmerged work — `main` is
-   now the only branch, locally and on `origin`.
-3. Re-examined the "deferred" items list against the original Issue #5
-   requirements rather than accepting it at face value — implemented
-   **message feedback** (thumbs up/down, `messages.feedback`, migration
-   `0009`) and **rename/delete conversations**, both genuinely-scoped,
-   currently-100%-missing requirements with low effort relative to
-   value. Left collections, standalone search UI (a client-side title
-   filter over the conversation list now covers "search conversations"
-   cheaply), command palette, a full in-document citation viewer, and
-   regenerate/retry still deliberately deferred — lower value relative
-   to effort under time constraints, consistent with the modular-
-   monolith "don't add scope beyond demonstrated need" principle.
-4. For Issue #8's remaining original scope (a *decided* production
-   hosting target + ADR, production Docker config) — deliberately NOT
-   invented unilaterally. Choosing a real cloud host is exactly the
-   kind of infrastructure decision `CLAUDE.md` §4 says to stop and ask
-   a human about, not decide alone. Closed on the strength of the
-   fully-verified local Docker Compose setup, with hosting explicitly
-   flagged as a pending human decision (unchanged from `docs/DEPLOYMENT.md`).
-5. Full regression after the new features (backend 744 passing + 1
-   intentional skip, frontend 76/76, Playwright 20/20, `ruff`/`mypy`/
-   `eslint`/`tsc` clean, Alembic migration `0009` verified reversible) —
-   all green, against a freshly rebuilt stack. Cross-workspace isolation
-   for all three new endpoints manually re-verified via real `curl`
-   calls with a second user before writing any automated test.
-6. Remaining: reconcile GitHub Issues #3–#8 (currently shown OPEN
-   despite being merged) with accurate closing comments; commit this
-   work, push, open a PR, confirm CI green, merge.
+1. Current branch: ui/72-hour-product-polish (not merged at last update).
+2. Initial changes: product landing page replacing the stale scaffold home,
+   responsive navigation/mobile menu, removal of links to unavailable
+   standalone Search/Collections routes, updated metadata, and Playwright
+   checks for the landing page/mobile menu.
+3. A complete time-boxed plan is in docs/72_HOUR_DELIVERY_PLAN.md.
+4. Next: verify frontend lint/typecheck/Vitest/build and Playwright on a freshly
+   rebuilt Docker Compose stack. Fix real failures without weakening tests.
+5. Continue UI/UX refinement across Dashboard, Documents, Chat, Workspace,
+   Settings and auth screens. Keep real API integration, workspace isolation,
+   source citations, feedback, voice and auth/session behavior intact.
+6. Re-run backend tests, ruff/mypy, frontend tests/lint/typecheck/build, browser
+   E2E, migration and Docker checks before release. Previous results are only a
+   baseline until rerun on the final code.
+7. Update HANDOFF.md, CHANGELOG.md, SOLVING.md and relevant docs for meaningful
+   changes. Open a PR and merge only after all required CI checks pass.
+
+Explicitly deferred/remaining: collections, standalone retrieval search,
+command palette, full document viewer with contextual highlighting,
+regenerate/retry, document CRUD beyond existing endpoints, recursive chunking,
+and a human-selected production hosting target. Do not describe these as done.
 
 ## How to keep this file honest
 
