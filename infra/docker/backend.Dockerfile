@@ -23,7 +23,15 @@ COPY . .
 RUN uv sync
 RUN chmod +x docker-entrypoint.sh
 
+# Pre-create the local document-storage root (app/core/config.py's
+# storage_local_root, app/services/storage_provider.py) so it exists,
+# owned by appuser, before infra/compose/docker-compose.yml mounts a
+# named volume over it -- Docker initializes a fresh named volume from
+# whatever already exists at that path in the image, ownership
+# included; without this, a brand-new volume is created owned by root,
+# which the non-root appuser below can't write into.
 RUN useradd --create-home --uid 1000 appuser \
+    && mkdir -p /app/data/documents \
     && chown -R appuser:appuser /app
 USER appuser
 

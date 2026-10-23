@@ -75,6 +75,20 @@ services:
       # (ADR 0006 §13) — this dependency is a container-startup-ordering
       # convenience for local dev only, not a runtime requirement.
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      # Local-dev persistence for uploaded documents (StorageProvider's
+      # "local" implementation, app/core/config.py's storage_local_root,
+      # default ./data/documents -- WORKDIR /app -- resolves to
+      # /app/data/documents). Without this, uploads live only in the
+      # container's own writable layer and are silently lost on every
+      # `docker compose up --build`/recreate, unlike Postgres (which
+      # already has its own db_data volume below) -- not a production
+      # storage solution (see docs/PRODUCTION_READINESS.md "What
+      # remains unverified" for why a real object-storage
+      # StorageProvider implementation is still needed for an actual
+      # deployment), just parity with how the database is already
+      # treated for local dev.
+      - backend_documents:/app/data/documents
     ports:
       - "8000:8000"
     depends_on:
@@ -105,3 +119,4 @@ services:
 
 volumes:
   db_data:
+  backend_documents:

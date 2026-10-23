@@ -766,3 +766,70 @@ this specific claim self-verifying: if a future field addition breaks
 the "blank means default" contract again (e.g. a custom validator that
 rejects `env_ignore_empty`'s fallback), this test fails immediately
 instead of silently shipping a broken Quickstart.
+
+## 2026-10-23 — Uploaded documents lost on every backend container recreate; fix caused a new permission error
+
+**Symptom:** While writing `docs/PRODUCTION_READINESS.md`, inspecting
+`infra/compose/docker-compose.yml` showed `db` had a named volume
+(`db_data`) but `backend` had none — anything `StorageProvider`'s
+`LocalStorage` implementation wrote to `storage_local_root`
+(`./data/documents`, resolving to `/app/data/documents` under
+`WORKDIR /app`) lived only in the container's writable layer and was
+silently lost on every `docker compose up --build`/recreate. After
+adding a `backend_documents:/app/data/documents` volume mount to match
+`db_data`'s pattern, a real document upload then failed with HTTP 500:
+`PermissionError: [Errno 13] Permission denied:
+'/app/data/documents/<workspace>/<doc>.txt'` inside
+`storage_provider.py`'s `save()` (`path.parent.mkdir(...)` call).
+
+**Root cause:** Two separate issues stacked. First, the persistence gap
+itself — no volume, no durability, exactly as suspected. Second, fixing
+it naively introduced a permission error: Docker initializes a brand
+new named volume by copying the ownership/contents of whatever already
+exists at the mount-target path *inside the image* at first mount. The
+target directory didn't exist in the image at all — it was created
+lazily at runtime by application code — so Docker fell back to creating
+an empty directory owned by `root`. The backend container runs as
+non-root `appuser` (`backend.Dockerfile`'s `USER appuser`), which then
+had no write access to its own storage root.
+
+**Failed attempts:** Rebuilding the image after fixing the Dockerfile
+(`mkdir -p /app/data/documents` before `chown -R appuser:appuser /app`)
+did *not* fix it on its own — a volume that already exists (created
+root-owned on the first `up` after the compose-file change) is not
+re-initialized from the image on a later rebuild; only a genuinely new
+volume gets the image's ownership. Had to also
+`docker volume rm compose_backend_documents` to force Docker to
+re-create it fresh from the corrected image.
+
+**Fix:** (1) Added `backend_documents:/app/data/documents` to the
+`backend` service in `infra/compose/docker-compose.yml`, matching
+`db_data`'s existing pattern. (2) In `infra/docker/backend.Dockerfile`,
+pre-created the storage directory with correct ownership before the
+`USER appuser` switch: `mkdir -p /app/data/documents` added to the same
+`RUN` as the existing `useradd`/`chown -R appuser:appuser /app` step,
+so any fresh volume mounted over that path inherits `appuser`
+ownership from the image. (3) Removed the stale root-owned volume so
+the next `up` created it correctly.
+
+**Verification:** `docker compose exec backend sh -c "ls -la /app/data
+&& whoami"` confirmed `appuser:appuser` ownership and the running user;
+a real `curl` upload (register → create workspace → upload) returned
+`201`, with the file readable at the expected
+`/app/data/documents/<workspace_id>/<document_id>.txt` path; then
+`docker compose up -d --force-recreate backend` and re-reading that
+same path afterward confirmed the file and its exact content survived
+the recreate — the actual scenario the volume was added to fix, not
+just "the container starts."
+
+**Prevention/lesson:** when adding a named volume over a path a
+non-root container writes to, the target directory must already exist
+with correct ownership *in the image*, not just get created at
+runtime — otherwise Docker's volume-first-mount-initializes-from-image
+behavior hands it to `root` instead. And once a volume has been created
+wrong, rebuilding the image alone won't fix it; the volume itself has
+to be removed and re-created. This is still only a local-dev
+convenience, not a production storage solution — the `storage_bucket`
+setting remains reserved for a real object-storage `StorageProvider`
+implementation that a production deployment would actually need (see
+`docs/PRODUCTION_READINESS.md`).
