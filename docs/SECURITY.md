@@ -402,6 +402,20 @@ future API endpoint calling this module is still responsible for its
 own authorization/ownership checks before invoking it, same as every
 other workspace-scoped endpoint in this codebase).
 
+Two real callers now exercise this exact guarantee independently:
+chat's ask flow (`conversation_service.post_message()`) and standalone
+search (`search_service.search()`, GitHub Issue #41 —
+`backend/app/api/v1/search.py`). Search's own cross-workspace isolation
+is directly tested (`tests/test_search.py::test_search_is_workspace_isolated`
+— a document in workspace A returns zero results when searched for
+from workspace B, not an error that might leak whether the document
+exists). Search is also rate-limited (`search` operation, IP +
+authenticated user ID, same Tier A policy/numbers as
+`conversation_message` — `enforce_search_rate_limit()`,
+`tests/test_search.py::test_search_rate_limit_enforced_at_threshold`),
+since it's the same CPU-bound embedding/rerank cost as a chat message,
+minus generation.
+
 ## Prompt injection defense
 
 Because retrieved chunks are untrusted, the generation layer's design must
@@ -549,10 +563,21 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
   `test_viewer_cannot_rename_a_conversation`/
   `test_viewer_cannot_delete_a_conversation`/
   `test_viewer_cannot_set_feedback` prove the VIEWER role is correctly
-  read-only there too. Collections don't exist yet (not implemented by
-  any issue so far). **Now also audited,
+  read-only there too. **Now also audited,
   not just rejected (Issue #7)** — see "Audit logging" below's
-  `CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` entry.
+  `CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` entry. **Extended to
+  collections and standalone search (Issue #41)** —
+  `backend/tests/test_collections.py`
+  (`test_get_collection_cross_workspace_returns_404`,
+  `test_add_document_from_another_workspace_returns_404`) prove a
+  collection ID and a document ID are each unreachable across
+  workspaces, and that a document from workspace B cannot be added to
+  workspace A's collection even by a legitimate member of A;
+  `backend/tests/test_search.py::test_search_is_workspace_isolated`
+  proves a search from workspace B returns zero results for a document
+  that only exists in workspace A (not an error — search's correct
+  cross-workspace behavior is silence, since there is no single
+  resource ID being looked up to 404 on).
 - **Malicious upload tests** — oversized files, mismatched
   extension/content, malformed PDFs/DOCX, zip-bomb-style payloads; must be
   rejected or safely contained. **Implemented (Issue #3, Slices 3.3–3.4)**
