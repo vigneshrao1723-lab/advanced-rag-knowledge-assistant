@@ -8,25 +8,30 @@ in-flight task — overwrite it as work progresses, don't append a history
 
 ## Current task
 
-**72-hour completion sprint started on 2026-10-23.** Current UI/UX work is on
-branch ui/72-hour-product-polish, based on main after the final
-requirement-closure merge (1797b7f, PR #36). Do not assume this branch is
-merged. The original core app is already substantially implemented; this
-sprint should focus on high-impact frontend polish, UX/accessibility, regression
-verification, documentation accuracy and release preparation—not an
-architecture rewrite.
+**72-hour completion sprint (started 2026-10-23) is complete.** PR #37
+(landing page, nav, Playwright mobile-nav coverage, two real CI fixes)
+and PR #38 (the full design pass) are both merged into `main` — see
+"Completed work (72-hour design sprint)" below for exact detail.
 
-Completed in this sprint so far:
-- Added docs/72_HOUR_DELIVERY_PLAN.md with the 72-hour work breakdown and
-  release gates.
-- Replaced the stale foundation-placeholder homepage with a product landing
-  page that explains document ingestion, hybrid retrieval, cited answers and
-  voice. The sample chat UI is clearly marked illustrative.
-- Updated metadata and polished the shared responsive navigation, including a
-  mobile menu and removing nav links to unavailable standalone Search/Collections
-  routes.
-- Added Playwright coverage for landing-page content and mobile navigation.
-- Updated CHANGELOG.md to record the current unverified work honestly.
+A follow-on fix was then found and applied via live visual QA (not a
+pre-planned item): Settings' Active Sessions list was rendering the raw
+`User-Agent` string verbatim instead of a human-readable device label
+(`backend/app/api/v1/auth.py::_device_label()` just truncates and
+stores the header as-is — correct backend behavior, a display-only
+frontend problem). Fixed with a small, dependency-free
+`frontend/lib/user-agent.ts::describeDevice()` parser (no backend/model
+change), with 6 new tests.
+
+A full requirements audit against Issues #1–#8 is also complete — every
+issue's core scope is implemented/tested/working; see PROJECT_STATE.md
+"Immediate priorities" for the exact, honestly-deferred remaining list
+(collections, standalone search, command palette, full document
+viewer, regenerate/retry, document CRUD beyond list/get/upload/process,
+recursive chunking, a decided hosting target).
+
+Remaining for this session: commit the device-label fix + doc updates,
+push, open a PR, confirm CI green, merge, do final GitHub/branch
+cleanup, and give the final report.
 
 Immediate next actions:
 1. Inspect this branch's diff and verify route links, TypeScript, responsive
@@ -3884,7 +3889,7 @@ Not yet done: committing this work; updating `CHANGELOG.md` with a dated
 entry; the branch/commit/push/PR/CI/merge cycle itself. See "Exact next
 recommended action" at the end of this file.
 
-## Completed work (Final requirement-closure pass, in progress)
+## Completed work (Final requirement-closure pass) — MERGED
 
 A user-requested pass: verify real repo state (don't trust a prior
 report blindly), reconcile GitHub Issues #3–#8 (shown OPEN despite being
@@ -3965,11 +3970,88 @@ point this pass began.
   referenced), `PROJECT_STATE.md` (component rows, deferred-items list,
   test counts, header, "Immediate priorities" all updated), this file.
 
-Not yet done: GitHub Issue #3–#8 reconciliation (closing comments);
-product/RAG/full-security verification pass (mostly re-confirmation,
-since the architecture didn't change); committing this work; the
-branch/commit/push/PR/CI/merge cycle; the final report to the user. See
-"Exact next recommended action" at the end of this file.
+**Merged as PR #36, squash commit `1797b7f`.** GitHub Issues #3–#8 were
+then all reconciled (honest, PR-referenced completion comments, closed)
+in the same session, before the 72-hour design sprint began.
+
+## Completed work (72-hour design sprint — PRs #37/#38) — MERGED
+
+A user-driven sprint: fix two real CI failures (an unescaped-apostrophe
+ESLint error, a double-escaped regex in a Playwright spec), then "finish
+the frontend design" across every real route using the existing
+Next.js/Tailwind/shadcn/Radix/Lucide stack — no new dependencies, no
+backend/API changes, every existing accessible-name/label/test-visible
+text contract preserved exactly.
+
+- **PR #37** (`02ace771`): a real product landing page (replacing the
+  stale Issue #1/#2-era scaffold homepage, explicitly marking its
+  sample chat UI as illustrative, not a live response), a redesigned
+  responsive nav (mobile menu, dropped links to the honest `PageStub`
+  Search/Collections routes rather than linking to pages that don't do
+  anything real yet), updated metadata, a new Playwright spec for the
+  landing page/mobile nav, and the two CI fixes above. Merged directly
+  by the user while a follow-up commit (the fuller design pass) was
+  still being pushed to the same branch — see the git-archaeology note
+  in "Explicitly NOT done" below for exactly what happened and how it
+  was resolved (opened as a clean follow-up PR rather than assuming).
+- **PR #38** (`bb9ba11`): the design pass itself —
+  - One shared design-token update (`frontend/app/globals.css`): the
+    stock shadcn grayscale theme replaced with the indigo/slate/teal
+    palette already proven on the landing page/nav, referencing
+    Tailwind v4's own built-in palette variables
+    (`var(--color-indigo-700)` etc.) rather than hand-picked OKLCH
+    values — every page using the shared `Button`/`Card` primitives
+    inherited the new look with zero per-page rewrite.
+  - New `frontend/components/layout/auth-shell.tsx`: fixes a real
+    layout bug (login/register/forgot-password/reset-password were
+    pinned to the top of the viewport with a large empty area below)
+    by vertically centering the auth card with a consistent brand mark.
+  - `app/documents/page.tsx`: a real drag-and-drop dropzone (reusing
+    the exact existing upload handler via a shared `handleFile()`,
+    not a new code path), format/size guidance text, icon-based status
+    badges, a proper empty state.
+  - `app/chat/page.tsx`: the largest single change — a card-framed
+    sidebar with icon-based rename/delete (Lucide `Pencil`/`Trash2`,
+    replacing tiny text links), refined message bubbles, icon-based
+    feedback (`ThumbsUp`/`ThumbsDown`, replacing emoji) and playback
+    controls, an icon-based citation chip with a styled
+    source-inspection `<blockquote>` panel, and a composer that wraps
+    correctly on narrow viewports.
+  - **A genuine bug introduced mid-pass and caught before shipping**:
+    adding `overflow-hidden` to the chat `Card` plus a non-wrapping
+    composer `flex` row clipped the "Ask by voice" button off-screen
+    on a 390px-wide viewport — found via a real mobile screenshot
+    check (not assumed), fixed by removing `overflow-hidden` and
+    making the composer `flex-wrap` with the two buttons grouped so
+    they wrap together as a unit.
+  - `app/dashboard/page.tsx`: quick-action cards to
+    Documents/Chat/Workspace/Settings, plus real (never fabricated)
+    document/conversation counts pulled from the already-implemented
+    list endpoints.
+  - `app/settings/page.tsx`/`app/workspace/page.tsx`: icon and spacing
+    polish on top of the shared token update.
+  - Verified after *every* page change, not just at the end: full
+    Vitest suite, `eslint`, `tsc --noEmit`, `next build`, and the full
+    Playwright suite against a freshly rebuilt Docker stack — plus
+    real-browser screenshots (desktop 1280px and mobile 390px) for
+    every touched page, which is how the composer-clipping bug above
+    was actually found.
+- **Post-merge follow-up, found via the same live visual QA habit**:
+  Settings' "Active sessions" list was rendering the raw `User-Agent`
+  header string verbatim (e.g. `Mozilla/5.0 (X11; Linux x86_64)
+  AppleWebKit/537.36 ... HeadlessChrome/153.0.8010.12 Safari/537.36`)
+  instead of a human-readable device label. Root cause:
+  `backend/app/api/v1/auth.py::_device_label()` correctly stores the
+  header truncated-but-unparsed (no backend bug) — the frontend never
+  parsed it for display. Fixed as a small, dependency-free,
+  presentation-only transform: `frontend/lib/user-agent.ts`'s
+  `describeDevice()` (regex pattern match for common
+  browser/OS combinations, falls back to "Unknown device" rather than
+  showing anything raw/debug-looking), wired into
+  `app/settings/page.tsx`. 6 new tests
+  (`frontend/lib/user-agent.test.ts`) covering Chrome/Linux,
+  Safari/macOS (explicitly not misdetected as Chrome), Firefox/Windows,
+  Safari/iOS, `null`, and an unparseable string.
 
 ## Explicitly NOT done (do not assume otherwise)
 
@@ -4075,45 +4157,36 @@ branch/commit/push/PR/CI/merge cycle; the final report to the user. See
 - **Both Slice 1 (`46ef03b`, PR #11) and Slice 2 (`5391a78`, PR #12) are
   merged into `main`.** Both feature branches were deleted on `origin`
   after their respective merges.
+- **PR #37/#38 merge timing**: PR #37 was merged directly by the user
+  while a further design-pass commit was still being pushed to the same
+  `ui/72-hour-product-polish` branch — verified via `git log`/`gh pr
+  view` timestamps and `gh api .../actions/runs`, not assumed. The
+  later commit landed on the branch *after* the merge, so it wasn't
+  included in PR #37; it was opened as a clean follow-up, **PR #38**,
+  rather than silently force-pushed or assumed to already be in `main`.
+  `git diff origin/main ui/72-hour-product-polish --stat` was checked
+  before opening PR #38 to confirm its diff contained only the new
+  work with nothing already-merged duplicated. Both PRs are now merged;
+  the branch is deleted (local + remote).
 
-## Next major task: wrap up the final requirement-closure pass
+## Next major task: close out the device-label fix and give the final report
 
-**GitHub Issues #1–#8 are all merged**, plus PRs #34/#35 from the prior
-pass. See "Completed work (Final requirement-closure pass, in progress)"
-above for exactly what's been done this session (branch cleanup, PR
-history verified, message feedback + rename/delete conversations
-implemented and tested, a full regression). Remaining, in order:
+**GitHub Issues #1–#8 are all merged and closed. The 72-hour design
+sprint (PRs #37/#38) is merged.** A full requirements audit is done —
+see PROJECT_STATE.md "Immediate priorities" for the exact, honestly
+deferred remaining list. Remaining, in order:
 
-1. Reconcile GitHub Issues #3–#8 (currently OPEN despite being merged):
-   for each, post a concise completion comment referencing the real
-   merged PR(s), honestly noting any genuinely-deferred original-scope
-   items (do not claim more than the repository supports), then close
-   it. For #5 specifically, note message feedback + rename/delete were
-   just added; search UI/collections/command palette/full viewer/
-   regenerate remain deferred. For #8, note local Docker Compose is the
-   fully-verified deployment target; a production hosting decision
-   remains pending (a human/architectural decision, not something to
-   invent).
-2. Do a final product-quality/RAG-pipeline/security spot-check pass
-   (mostly re-confirmation — the underlying architecture hasn't
-   changed since the prior pass's thorough audit) and a real fresh-stack
-   E2E demo (register → workspace → upload → process → READY → ask →
-   retrieval stages → citations → source inspection → rename/delete a
-   conversation → give feedback → second workspace → cross-workspace
-   isolation → prompt-injection document → malformed document → logout/
-   login persistence).
-3. Update `CHANGELOG.md` with a dated entry for this pass.
-4. Create a branch from `main`, commit (backend: migration `0009`,
-   models/repositories/services/schemas/API/tests for feedback+rename+
-   delete; docs: API_CONTRACT.md, DATA_MODEL.md, SECURITY.md,
-   PROJECT_STATE.md, HANDOFF.md, CHANGELOG.md; frontend: schemas.ts,
-   api-client.ts, chat/page.tsx, chat/page.test.tsx), push, open a PR.
-5. Poll CI until green, merge, switch to `main`, pull, verify, run the
+1. Create a branch from `main`, commit the device-label fix
+   (`frontend/lib/user-agent.ts`/`.test.ts`,
+   `frontend/app/settings/page.tsx`) and the doc updates (README.md,
+   PROJECT_STATE.md, HANDOFF.md, CHANGELOG.md), push, open a PR.
+2. Poll CI until green, merge, switch to `main`, pull, verify, run the
    full suites once more, delete the feature branch.
-6. Report final status to the user per the master prompt's "Final
-   report" format: current main commit, issue-by-issue status, branch
-   state, requirements completed/remaining, exact test results per
-   layer, security status, E2E status, genuine remaining limitations.
+3. Report final status to the user per the master prompt's "Final
+   report" format: current main commit, PR #38 status/merge commit,
+   exact test counts and CI results, completed requirements with
+   evidence, remaining/deferred requirements, deployment status and
+   known limitations, the single next action if anything remains.
    Do not claim 100% completion beyond what the repository supports.
 
 **Critical, explicitly restated security requirement (already
@@ -4596,45 +4669,47 @@ own scope.
 
 ## Exact next recommended action
 
-GitHub Issues #1–#8 are all merged into `main`/`origin/main`, plus PRs
-#34 (`32aa102`) and #35 (`4bec3cd`) from the prior final-hardening pass.
-This pass (working directly on `main`, no branch yet, starting from
-`4bec3cd`) has: verified real repo state rather than trusting a prior
-report; deleted 17 stale branches (14 local, 3 remote) after verifying
-each via real PR squash-merge-commit ancestry, not a diff heuristic —
-`main` is now the only branch anywhere; re-examined the "deferred" Issue
-#5 items against the original requirements and implemented message
-feedback (`messages.feedback`, migration `0009`) and rename/delete
-conversations, each with real cross-workspace/VIEWER-role tests and a
-manual `curl`-based end-to-end + cross-workspace-denial verification
-done *before* writing the automated tests; run a full regression
-(backend 744 passing + 1 intentional skip, frontend 76/76, Playwright
-20/20, all clean) against a freshly rebuilt stack. See "Completed work
-(Final requirement-closure pass, in progress)" above for full detail.
+GitHub Issues #1–#8 are all merged and closed. The 72-hour design
+sprint is merged: PR #37 (`02ace771`) and PR #38 (`bb9ba11`) are both
+in `main`. `ui/72-hour-product-polish` is deleted (local + remote) —
+`main` is the only branch anywhere. A full requirements audit against
+Issues #1–#8 is done (see PROJECT_STATE.md "Immediate priorities" for
+the exact deferred-items list). A full regression against the merged
+`main` passed fresh: backend 744 + 1 intentional skip, frontend 82/82
+(76 baseline + 6 new for the device-label fix below), Playwright 21/21,
+all clean, against a freshly rebuilt Docker stack. The documented
+release-gate flow (register → workspace → upload → process → READY →
+ask → citation → source inspection → second workspace → cross-workspace
+isolation (404 both directions) → logout → post-logout 401) was
+re-verified via real `curl` calls. `.env.example` re-confirmed to load
+cleanly as a literal `.env` (host-run, not skipped). No secrets
+committed; `.env` not tracked.
+
+One real bug was found via live visual QA (not pre-planned) and fixed:
+Settings' Active Sessions list showed the raw `User-Agent` string
+instead of a human-readable device label — fixed with
+`frontend/lib/user-agent.ts::describeDevice()`, 6 new tests, no
+backend/model change. README.md was also updated (stale Issue
+#1/#2-era status banner, Development status table, Roadmap) to reflect
+the real, current, fully-merged state. See "Completed work (72-hour
+design sprint — PRs #37/#38)" above for full detail on the sprint
+itself.
+
 The next work, in order:
 
-1. Reconcile GitHub Issues #3–#8 (`gh issue list --state all` currently
-   shows them OPEN despite being merged) — post an honest completion
-   comment on each (referencing real merged PR numbers, noting any
-   genuinely-deferred original-scope items by name) via `gh issue
-   comment <N> --body "..."`, then `gh issue close <N>`.
-2. A final product-quality/RAG/security spot-check pass (mostly
-   re-confirmation) and one real fresh-stack E2E demo via `curl` and/or
-   the browser, covering the full flow including the new rename/delete/
-   feedback features.
-3. Add a dated `CHANGELOG.md` entry for this pass.
-4. `git status` to confirm exactly what's changed on `main`. Create a
-   branch, commit, push, open a PR via `gh pr create`.
-5. Poll CI until green (backend/frontend/e2e/docker-build), merge with
+1. `git status` to confirm exactly what's changed on `main` (expected:
+   `frontend/lib/user-agent.ts`, `frontend/lib/user-agent.test.ts`,
+   `frontend/app/settings/page.tsx`, `README.md`, `PROJECT_STATE.md`,
+   `HANDOFF.md`, `CHANGELOG.md`). Create a branch, commit, push, open a
+   PR via `gh pr create`.
+2. Poll CI until green (backend/frontend/e2e/docker-build), merge with
    `gh pr merge <N> --squash --delete-branch=false`.
-6. Switch to `main`, pull, confirm the merged commit, delete the local
+3. Switch to `main`, pull, confirm the merged commit, delete the local
    and remote feature branch, run the full suites once more to confirm.
-7. Report final status to the user per the master prompt's "Final
-   report" format (section 16): current main commit, per-issue status,
-   branch state, requirements completed/remaining, exact test results
-   per layer, security status, E2E status, and genuine remaining
-   limitations (standalone search UI, collections, command palette, a
-   full in-document citation viewer beyond source inspection, regenerate/
-   retry, and a decided production hosting target all remain
-   deliberately deferred, not silently dropped) — never claim 100%
-   completion beyond what the repository actually supports.
+4. Report final status to the user per the master prompt's "Final
+   response required" format: current branch/main commit, PR #38
+   status and merge commit, exact test counts and CI results, completed
+   requirements with evidence, remaining/deferred requirements,
+   deployment status and known limitations, the single next action if
+   anything remains. Never claim 100% completion beyond what the
+   repository actually supports.

@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import * as api from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import type { SessionInfo } from "@/lib/schemas";
+import { describeDevice } from "@/lib/user-agent";
 
 function SettingsContent() {
   const { user } = useAuth();
@@ -94,7 +95,7 @@ function SettingsContent() {
                     </div>
                     <div>
                       <p className="font-medium">
-                        {session.device_label ?? "Unknown device"}
+                        {describeDevice(session.device_label)}
                         {session.is_current && (
                           <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
                             this device

@@ -10,25 +10,102 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-10-23 — 72-hour release sprint and initial UI/UX pass (in progress)
+### 2026-10-23 — Settings device-label fix + documentation refresh (in progress)
 
-*(Branch `ui/72-hour-product-polish`; initial design and delivery-plan commits are pushed to this branch, not yet merged.)*
+*(Working directly on `main`, cut from the merged design sprint
+(`bb9ba11`, PR #38). Not yet committed as of this entry.)*
 
-- Added `docs/72_HOUR_DELIVERY_PLAN.md` with a time-boxed plan, release gates, UI design direction and explicit known limitations.
-- Replaced the foundation-placeholder home page with a responsive product landing page describing the actual document → retrieval → cited-answer workflow. The chat illustration is explicitly labelled as illustrative, not a live backend result.
-- Polished the responsive navigation, added an accessible mobile menu, and removed navigation links to standalone Collections/Search routes that are not implemented. Preserved existing login/register accessible labels for E2E compatibility.
-- Updated site metadata and added Playwright assertions for the landing page and mobile navigation.
-- **Not yet verified locally or by CI in this branch.** Run frontend lint/typecheck/tests/build and Playwright against a freshly rebuilt Docker Compose stack before merge. Do not claim these checks pass until the results are observed.
+- **Fixes a real UX bug found via live visual QA**: Settings' "Active
+  sessions" list rendered the raw `User-Agent` header string verbatim
+  instead of a human-readable device label. Root cause:
+  `backend/app/api/v1/auth.py::_device_label()` correctly stores the
+  header truncated-but-unparsed — not a backend bug, a missing frontend
+  display transform. Fixed with a small, dependency-free
+  `frontend/lib/user-agent.ts::describeDevice()` parser (Chrome/Firefox/
+  Safari/Edge/Opera × Windows/macOS/Linux/Android/iOS, falls back to
+  "Unknown device" rather than showing anything raw), 6 new tests.
+- Updated `README.md`'s status banner, "Development status" table, and
+  "Roadmap" (previously stale at the Issue #1/#2 era, predating the
+  entire Issues #3–#8 build-out and this sprint's design pass).
+- Updated `PROJECT_STATE.md`/`HANDOFF.md` to reflect PRs #37/#38 merged
+  and a completed Issues #1–#8 requirements audit.
 
-### 2026-10-01 — Final requirement-closure pass: branch cleanup, message feedback, conversation rename/delete (in progress)
+## [Unreleased — committed]
 
-*(Working directly on `main`, cut from the merged final quality-
-hardening pass (`4bec3cd`, PR #35). Not yet committed as of this entry.
-Not tied to a specific numbered GitHub issue.)*
+### 2026-10-23 — `feat: finish frontend design pass across auth, dashboard, documents, and chat` (#38), merged as `bb9ba11`
+
+*(Branch `ui/72-hour-product-polish`, cut from the merged PR #37
+(`02ace771`). Opened as **PR #38** after PR #37 was merged directly by
+the user while this design-pass commit was still being pushed to the
+same branch — verified via `gh api .../actions/runs` timestamps and
+`git diff origin/main ui/72-hour-product-polish --stat` (confirmed the
+diff contained only new work, nothing already-merged duplicated) before
+opening a clean follow-up PR rather than assuming. Verified green on
+GitHub Actions CI (4/4 checks) and **merged into `main` as squash commit
+`bb9ba11`**.)*
+
+- Establishes one design system: updates the global shadcn theme tokens
+  (`frontend/app/globals.css`) to the indigo/slate/teal palette already
+  proven on the landing page/nav, via Tailwind v4's own built-in
+  palette variables — every page using the shared `Button`/`Card`
+  primitives inherits it with no per-page rewrite.
+- New `frontend/components/layout/auth-shell.tsx`: fixes a real layout
+  bug (login/register/forgot-password/reset-password were pinned to the
+  top of the viewport with a large empty area below) by vertically
+  centering the auth card with a consistent brand mark.
+- `app/documents/page.tsx`: a real drag-and-drop dropzone (reuses the
+  exact existing upload handler), format/size guidance text, icon-based
+  status badges, a proper empty state.
+- `app/chat/page.tsx`: card-framed sidebar with icon-based rename/
+  delete, refined message bubbles, icon-based feedback/playback
+  controls, an icon-based citation chip with a styled source-inspection
+  panel, and a composer that wraps correctly on narrow viewports —
+  **fixes a real bug introduced mid-pass and caught via a mobile
+  screenshot check before it shipped** (the voice button was being
+  clipped off-screen at 390px width).
+- `app/dashboard/page.tsx`: quick-action cards to Documents/Chat/
+  Workspace/Settings, plus real (never fabricated) document/
+  conversation counts pulled from the existing list endpoints.
+- `app/settings/page.tsx`/`app/workspace/page.tsx`: icon and spacing
+  polish on top of the shared token update.
+- No functional/API changes. Every existing accessible-name, label, and
+  test-visible text contract preserved exactly. Verified after every
+  page change: full Vitest suite, `eslint`, `tsc --noEmit`, `next
+  build`, and the full Playwright suite against a freshly rebuilt
+  Docker stack, plus real-browser desktop/mobile screenshots.
+
+### 2026-10-23 — `feat: begin 72-hour UI/UX polish and release sprint` (#37), merged as `02ace771`
+
+*(Branch `ui/72-hour-product-polish`, cut from the merged final
+requirement-closure pass (`1797b7f`, PR #36). Opened as **PR #37**,
+fixed a real ESLint failure (two unescaped apostrophes in the landing
+page) and a real Playwright regex bug (a double-escaped `\\/register`
+pattern that could never match), verified green on GitHub Actions CI,
+and **merged into `main` as squash commit `02ace771`** directly by the
+user.)*
+
+- Added `docs/72_HOUR_DELIVERY_PLAN.md` with a time-boxed plan, release
+  gates, UI design direction and explicit known limitations.
+- Replaced the Issue #1/#2-era foundation-placeholder home page with a
+  responsive product landing page describing the actual document →
+  retrieval → cited-answer workflow. The chat illustration is
+  explicitly labelled as illustrative, not a live backend result.
+- Polished the responsive navigation, added an accessible mobile menu,
+  and removed navigation links to the honest `PageStub`
+  Collections/Search routes rather than linking to pages that don't do
+  anything real yet.
+- Updated site metadata and added Playwright assertions for the landing
+  page and mobile navigation.
+
+### 2026-10-01 — `feat: message feedback, conversation rename/delete, GitHub/branch cleanup` (#36), merged as `1797b7f`
+
+*(Branch `final-requirement-closure`, cut from the merged fix-up pass
+(`4bec3cd`, PR #35). Opened as **PR #36**, verified green on GitHub
+Actions CI, and **merged into `main` as squash commit `1797b7f`**.)*
 
 - Deleted 17 stale local/remote feature branches (verified via real PR
-  squash-merge-commit ancestry, not a diff heuristic) — `main` is now
-  the only branch, locally and on `origin`.
+  squash-merge-commit ancestry, not a diff heuristic) — `main` was left
+  as the only branch, locally and on `origin`.
 - Re-examined Issue #5's "deferred" items against the original
   requirements rather than accepting them at face value. Implemented:
   - **Message feedback** — `messages.feedback` (migration `0009`,
@@ -53,8 +130,8 @@ Not tied to a specific numbered GitHub issue.)*
   76/76, Playwright 20/20, all clean, against a freshly rebuilt stack.
 - Docs updated: `docs/API_CONTRACT.md`, `docs/DATA_MODEL.md`,
   `docs/SECURITY.md`, `PROJECT_STATE.md`, `HANDOFF.md`.
-
-## [Unreleased — committed]
+- GitHub Issues #3–#8 (previously shown OPEN despite being merged)
+  reconciled with honest, PR-referenced completion comments and closed.
 
 ### 2026-09-29 — `fix: final quality-hardening pass — source inspection, test/config bugs, deprecation cleanup` (#34), merged as `32aa102`; follow-up `fix: skip .env.example regression test when the file isn't in the build context` (#35), merged as `4bec3cd`
 

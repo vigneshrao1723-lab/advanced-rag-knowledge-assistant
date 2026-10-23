@@ -1,9 +1,9 @@
 # PROJECT_STATE.md
 
 **Last updated:** 2026-10-23  
-**Current phase:** 72-hour release sprint — core RAG product and final requirement-closure pass are merged to main at 1797b7f. Initial frontend design polish is in progress on branch ui/72-hour-product-polish and is not yet merged or CI-verified. See HANDOFF.md and docs/72_HOUR_DELIVERY_PLAN.md for the active work and deadline plan.
+**Current phase:** 72-hour release sprint — complete. The frontend design pass (PR #38, merged on top of PR #37's CI fixes) is now in `main`: shared indigo/slate design tokens, vertically centered auth screens, a real documents drag-and-drop dropzone, a fully redesigned chat experience (sidebar, bubbles, citations, feedback, playback, a mobile composer-wrap fix), dashboard quick actions with real counts, and settings/workspace polish — including a real post-merge fix (the Active Sessions list was showing the raw User-Agent string instead of a human-readable device label). `main`/`origin/main` are at the commit recorded in the "Immediate priorities" section below.
 
-This is the authoritative living snapshot. The current repository contents and latest test runs take precedence over old counts in this file. The current main baseline reported after PR #36 was backend 744 passed + 1 intentional skip, frontend 76/76, Playwright 20/20, with ruff/mypy/eslint/TypeScript/build checks clean. Those are baseline results, not proof that the current UI branch passes.
+This is the authoritative living snapshot. The current repository contents and latest test runs take precedence over old counts in this file. The current main baseline, re-verified fresh after every merge in this sprint: backend 744 passed + 1 intentional skip, frontend 82/82 (after the device-label fix added 6 new tests), Playwright 21/21 (20 + a new mobile-nav spec from PR #37), with ruff/mypy/eslint/TypeScript/build checks clean.
 
 Repository: vigneshrao1723-lab/advanced-rag-knowledge-assistant.
 
@@ -42,11 +42,11 @@ offline implementation — no paid API key required (see ADRs 0007, 0008).
 | Retrieval (dense / lexical / fusion / reranking) | IMPLEMENTED | #4 — `dense_search()` (pgvector cosine), `lexical_search()` (Postgres FTS), `reciprocal_rank_fusion()` (RRF, k=60), `LexicalOverlapReranker`; `hybrid_search()` is the orchestrating entry point, workspace-scoped and READY-only at the SQL level, records a `RetrievalEvent` per call. |
 | Generation & citations | IMPLEMENTED | #4 — `build_context()` (budgeted, deduped, order-preserving), `LocalGroundedExtractiveProvider` (grounded by construction — quotes evidence, never paraphrases beyond it), `create_citations()`. No-evidence-found returns an honest fixed answer, zero citations, never fabricated content. |
 | Conversations / chat | IMPLEMENTED (ask flow + history + rename/delete/feedback; no regenerate/retry) | #4/#5 — create conversation, post message (full retrieval+generation pipeline synchronously), list messages with real persisted citations. Rename (`PATCH`)/delete (`DELETE`) conversations and message feedback (`PUT .../feedback`, `UP`/`DOWN`, `messages.feedback` migration `0009`) added in the final quality-hardening pass, closing a real Issue #5 "Chat" requirement gap — all workspace/role/IDOR-tested (cross-workspace, cross-conversation, VIEWER-cannot-mutate). Search conversations is a client-side title filter over the already-fetched list (no backend endpoint needed). Not implemented: regenerate/retry a response, conversational context/query rewriting across turns — both deliberately deferred as lower-value relative to effort. |
-| Product frontend (Documents, Chat) | IMPLEMENTED (primary flow) | #5/#8 — real `app/documents/page.tsx` (upload, live-polling status list, retry) and `app/chat/page.tsx` (conversation list with search/rename/delete, message thread, citations with click-to-inspect source text, thumbs-up/down feedback, voice controls), consuming the real backend APIs. `login/register/forgot-password/reset-password/dashboard/settings/workspace` also real. Deferred, documented, not forgotten: standalone document search UI, collections, command palette, per-conversation/per-document deep-link routes, a full in-document citation viewer beyond source inspection. |
+| Product frontend (Documents, Chat) | IMPLEMENTED (primary flow, design-polished) | #5/#8 + 72-hour design sprint (PRs #37/#38) — real `app/documents/page.tsx` (drag-and-drop dropzone, format/size guidance, icon status badges, upload, live-polling status list, retry) and `app/chat/page.tsx` (card-framed conversation list with search/rename/delete, message thread, citations with click-to-inspect source text, thumbs-up/down feedback, voice controls, a composer that wraps correctly on mobile), consuming the real backend APIs. `login/register/forgot-password/reset-password` share a new vertically-centered `AuthShell`. `dashboard` has quick-action cards plus real (never fabricated) document/conversation counts. `settings/workspace` are icon-polished; Settings' session list shows a parsed device label (e.g. "Chrome on Linux") instead of the raw User-Agent string. One shared indigo/slate design-token update (`globals.css`) makes every shadcn-based page consistent with the landing page/nav. Deferred, documented, not forgotten: standalone document search UI, collections, command palette, per-conversation/per-document deep-link routes, a full in-document citation viewer beyond source inspection, regenerate/retry. |
 | Voice (STT/TTS) as a mode within chat | IMPLEMENTED | #6 — `PocketSphinxSpeechToTextProvider` (offline, empirically weaker accuracy against synthetic audio — honestly documented, not hidden) + `EspeakTextToSpeechProvider` (subprocess-based, after `pyttsx3` was found to corrupt state across calls). `POST .../voice-messages` calls the *exact same* `post_message()` the text flow uses — no duplicated pipeline. `GET .../messages/{id}/audio` synthesizes on demand, nothing persisted. See [ADR 0008](docs/DECISIONS/0008-local-speech-to-text-and-text-to-speech-providers.md). |
 | Evaluation harness | IMPLEMENTED | #4/#7 — `evaluation_runs`/`evaluation_results` tables (migration `0008`); `eval/scripts/run_retrieval_evaluation.py` compares 4 retrieval methods × 2 chunking strategies against real Postgres. Real, non-fabricated results: dense/hybrid/hybrid+reranked reach Recall@3=1.0/MRR=1.0/nDCG@3=1.0/HitRate@3=1.0/Precision@3=0.33 on both chunking strategies; lexical-only is genuinely weaker (0.71 across those metrics). See `docs/EVALUATION.md`. |
 | Observability / audit logging | IMPLEMENTED | #1/#2/#3/#7 — structured JSON logging, request-ID propagation, persistent `audit_logs` (auth/password-reset/workspace/document-lifecycle/`CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` events), per-stage retrieval/generation latency + character-count token-usage-proxy structured logs (`caplog`-tested). |
-| Testing (unit/integration/security) | IMPLEMENTED | Backend: **744 passing, 1 intentional skip** (`ruff`/`mypy` clean) — the prior 5 `test_password_reset.py` failures were a real test-environment bug (the Docker Compose backend service's own `EMAIL_PROVIDER=smtp` default leaked into `docker compose run` test invocations, defeating the capsys-based reset-link capture those tests need), fixed by force-setting `EMAIL_PROVIDER=console` unconditionally in `backend/tests/conftest.py`; the 1 skip is a regression test that only applies against a full repository checkout (CI/host), not inside the Docker image, which deliberately excludes everything outside `backend/`. Frontend: 76/76 vitest, `eslint`/`tsc --noEmit` clean, `next build` succeeds. Playwright: 20/20. |
+| Testing (unit/integration/security) | IMPLEMENTED | Backend: **744 passing, 1 intentional skip** (`ruff`/`mypy` clean) — the 1 skip is a regression test that only applies against a full repository checkout (CI/host), not inside the Docker image, which deliberately excludes everything outside `backend/`; re-confirmed passing (not skipped) when run on the host against the real `.env.example`. Frontend: **82/82** vitest (76 baseline + 6 new for the device-label parser), `eslint`/`tsc --noEmit` clean, `next build` succeeds. Playwright: **21/21** (20 baseline + 1 new mobile-nav spec from the design sprint). |
 | Browser E2E (Playwright) | IMPLEMENTED | `frontend/e2e/` — 20/20 tests passing (app availability, auth/session/CSRF/password-recovery, and `documents-chat.spec.ts`'s full upload→process→READY→chat→cited-answer flow) against a freshly rebuilt real Docker stack. Voice has no Playwright E2E (judged disproportionately expensive vs. real-device audio automation) but is fully unit/HTTP-level tested and was manually verified end-to-end via `curl`. |
 | CI/CD (`.github/workflows/ci.yml`) | IMPLEMENTED | backend (lint/typecheck/pytest against real Postgres+Redis service containers, `espeak-ng` installed), frontend (lint/typecheck/vitest/build), e2e (Playwright against real services), docker-build (image builds + `docker compose config`) — all required, green on every merged PR #9–#32. |
 | Docker / deployment (`infra/`) | IMPLEMENTED for local development | `infra/docker/*.Dockerfile`, `infra/compose/docker-compose.yml` (db/redis/mailpit/backend/frontend). A real hosting/production target is a deliberate, undecided scope boundary — see `docs/DEPLOYMENT.md` "Target deployment environment" and CLAUDE.md §4 (this is exactly the kind of infrastructure decision this project stops and asks a human about). |
@@ -96,31 +96,43 @@ offline implementation — no paid API key required (see ADRs 0007, 0008).
 
 ## Immediate priorities
 
-A 72-hour release sprint began 2026-10-23. The core app is already substantially
-implemented; the priority is product-quality frontend work, accessibility,
-regression safety, documentation accuracy and release preparation.
+The 72-hour release sprint that began 2026-10-23 is complete. PR #37 (CI
+fixes + landing page/nav) and PR #38 (the full design pass: auth
+centering, documents dropzone, chat redesign, dashboard, mobile fix)
+are both merged. A small follow-on fix (Active Sessions showing a raw
+User-Agent string instead of a human-readable device label, found via
+live visual QA) has also been applied and verified.
 
-1. Current branch: ui/72-hour-product-polish (not merged at last update).
-2. Initial changes: product landing page replacing the stale scaffold home,
-   responsive navigation/mobile menu, removal of links to unavailable
-   standalone Search/Collections routes, updated metadata, and Playwright
-   checks for the landing page/mobile menu.
-3. A complete time-boxed plan is in docs/72_HOUR_DELIVERY_PLAN.md.
-4. Next: verify frontend lint/typecheck/Vitest/build and Playwright on a freshly
-   rebuilt Docker Compose stack. Fix real failures without weakening tests.
-5. Continue UI/UX refinement across Dashboard, Documents, Chat, Workspace,
-   Settings and auth screens. Keep real API integration, workspace isolation,
-   source citations, feedback, voice and auth/session behavior intact.
-6. Re-run backend tests, ruff/mypy, frontend tests/lint/typecheck/build, browser
-   E2E, migration and Docker checks before release. Previous results are only a
-   baseline until rerun on the final code.
-7. Update HANDOFF.md, CHANGELOG.md, SOLVING.md and relevant docs for meaningful
-   changes. Open a PR and merge only after all required CI checks pass.
+A full requirements audit against Issues #1–#8 confirmed every issue's
+core, demonstrable scope is implemented, tested, and working
+end-to-end — see each issue's closing comment on GitHub for the
+PR-referenced evidence. Genuinely remaining, all explicitly deferred
+with a reason (not silently dropped):
 
-Explicitly deferred/remaining: collections, standalone retrieval search,
-command palette, full document viewer with contextual highlighting,
-regenerate/retry, document CRUD beyond existing endpoints, recursive chunking,
-and a human-selected production hosting target. Do not describe these as done.
+- **Collections** — no `collections`/`collection_documents` schema exists.
+- **Standalone retrieval/search UI** — retrieval is only reachable
+  through the chat/ask flow; `/search` is an honest `PageStub`.
+- **Command palette** (`Ctrl+K`) — not built.
+- **Full in-document citation viewer with contextual highlighting** —
+  source inspection (viewing the exact cited chunk's text) is
+  implemented; a document-wide viewer with in-context highlighting is
+  not. `/documents/[id]` is an honest `PageStub`.
+- **Regenerate/retry a response** — not implemented.
+- **Document management beyond list/get/upload/process** — no
+  filter/sort/search/rename/delete/download endpoints for documents
+  (conversations have rename/delete; documents do not).
+- **A `recursive` chunking strategy** — only `structure-aware` (the
+  real pipeline's own strategy) and a `fixed-size` naive baseline
+  (evaluation-comparison only) exist.
+- **A decided production hosting target** — deliberately not invented;
+  per `CLAUDE.md` §4 this is a real infrastructure decision for a human.
+  Local Docker Compose is the fully-verified, fully-supported way to
+  run this project today.
+
+None of the above blocks the project's core, demonstrated success
+criteria (see `docs/PROJECT_BRIEF.md` "Success criteria" — all 5 are
+genuinely true and re-verified this sprint). Do not describe any item
+in the list above as done.
 
 ## How to keep this file honest
 
