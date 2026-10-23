@@ -23,6 +23,9 @@ test.describe("Application availability", () => {
     const response = await page.goto("/");
     expect(response?.ok()).toBeTruthy();
     await expect(page.getByRole("link", { name: "Advanced RAG Knowledge Assistant" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Your documents\. Answers you can trust\./ })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Create your workspace" })).toHaveAttribute("href", "/register");
+    await expect(page.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
 
     expect(consoleErrors, `Unexpected browser console errors:\n${consoleErrors.join("\n")}`).toEqual(
       []
@@ -43,4 +46,17 @@ test.describe("Application availability", () => {
     const body = await response.json();
     expect(body.status).toBe("ready");
   });
+});
+
+
+test("mobile navigation opens and exposes working auth entry points", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const menuButton = page.getByRole("button", { name: "Open navigation menu" });
+  await expect(menuButton).toBeVisible();
+  await menuButton.click();
+  await expect(page.getByRole("link", { name: "Log in" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Register" })).toBeVisible();
+  await page.getByRole("link", { name: "Register" }).click();
+  await expect(page).toHaveURL(/\\/register$/);
 });
