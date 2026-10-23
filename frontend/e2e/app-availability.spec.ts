@@ -58,5 +58,5 @@ test("mobile navigation opens and exposes working auth entry points", async ({ p
   await expect(page.getByRole("link", { name: "Log in" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Register" })).toBeVisible();
   await page.getByRole("link", { name: "Register" }).click();
-  await expect(page).toHaveURL(/\\/register$/);
+  await expect(page).toHaveURL(/\/register$/);
 });
