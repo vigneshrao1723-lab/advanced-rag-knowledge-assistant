@@ -18,9 +18,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Advanced RAG Knowledge Assistant",
+  title: {
+    default: "Advanced RAG Knowledge Assistant",
+    template: "%s · RAG Knowledge Assistant",
+  },
   description:
-    "Grounded, citation-backed answers over your own documents — application foundation.",
+    "Turn your documents into evidence-grounded answers with hybrid retrieval, source citations, private workspaces, and voice interaction.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

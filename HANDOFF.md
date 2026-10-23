@@ -8,22 +8,50 @@ in-flight task — overwrite it as work progresses, don't append a history
 
 ## Current task
 
-**GitHub Issues #1–#8 are all merged into `main`.** Two follow-on
-final-hardening PRs have also merged: PR #34 (`32aa102` — real
-`EMAIL_PROVIDER` test fix, source inspection, `.env.example`/config
-fixes, deprecation cleanup) and PR #35 (`4bec3cd` — a small fix-up for
-one of PR #34's own new tests). `main`/`origin/main` were at `4bec3cd`
-as of the point this pass began. Full per-issue implementation detail
-for #2 through #8 is preserved below under each issue's own "Completed
-work" section — not repeated here, per this file's "don't append a
-history" instruction.
+**72-hour completion sprint started on 2026-10-23.** Current UI/UX work is on
+branch ui/72-hour-product-polish, based on main after the final
+requirement-closure merge (1797b7f, PR #36). Do not assume this branch is
+merged. The original core app is already substantially implemented; this
+sprint should focus on high-impact frontend polish, UX/accessibility, regression
+verification, documentation accuracy and release preparation—not an
+architecture rewrite.
 
-**A final requirement-closure / GitHub-cleanup pass is now in progress,
-working directly on `main`** (no dedicated branch/PR opened yet). See
-"Completed work (Final requirement-closure pass)" below for exactly
-what's been done this session (branch cleanup, message feedback,
-conversation rename/delete, GitHub issue reconciliation) and "Exact next
-recommended action" at the end of this file for what's left.
+Completed in this sprint so far:
+- Added docs/72_HOUR_DELIVERY_PLAN.md with the 72-hour work breakdown and
+  release gates.
+- Replaced the stale foundation-placeholder homepage with a product landing
+  page that explains document ingestion, hybrid retrieval, cited answers and
+  voice. The sample chat UI is clearly marked illustrative.
+- Updated metadata and polished the shared responsive navigation, including a
+  mobile menu and removing nav links to unavailable standalone Search/Collections
+  routes.
+- Added Playwright coverage for landing-page content and mobile navigation.
+- Updated CHANGELOG.md to record the current unverified work honestly.
+
+Immediate next actions:
+1. Inspect this branch's diff and verify route links, TypeScript, responsive
+   layout, and all accessible names.
+2. Run frontend lint, typecheck, Vitest and production build; run Playwright
+   against a freshly rebuilt Docker Compose stack. Fix actual failures without
+   weakening or deleting tests.
+3. Extend the same design system to authenticated Dashboard, Documents, Chat,
+   Workspace and Settings surfaces, focusing on coherent loading/empty/error/
+   success states and small-screen usability.
+4. Re-run the backend baseline (744 passed + 1 intentional skip was last
+   reported), ruff, mypy, frontend suite (76/76 last reported) and Playwright
+   (20/20 last reported) after relevant changes. These are previous baseline
+   numbers, not a claim that this new branch is green.
+5. Update HANDOFF.md, PROJECT_STATE.md, CHANGELOG.md, SOLVING.md and relevant
+   UI/security/deployment docs when implementation changes warrant it.
+6. Open/update a PR, wait for CI, merge only when all required checks pass, then
+   verify the final main commit and delete the merged feature branch.
+
+The full time-boxed plan is in docs/72_HOUR_DELIVERY_PLAN.md. Remaining
+known product limitations remain explicit: collections, standalone retrieval
+search, command palette, full document viewer/highlighting, regenerate/retry,
+document CRUD beyond current endpoints, recursive chunking, and a human-selected
+production hosting target. Do not claim these are complete.
+
 
 Issue #2 (merged) covered: registration/login/logout/refresh with
 PostgreSQL-backed sessions, HttpOnly cookie + CSRF browser authentication,
