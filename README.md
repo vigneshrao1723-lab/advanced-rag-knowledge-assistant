@@ -1,14 +1,17 @@
 # Advanced RAG Knowledge Intelligence Assistant
 
-> **Status: Issues #1–#7 implemented and merged.** A multi-user,
-> voice-enabled RAG platform: authentication and workspaces, document
-> upload and ingestion, hybrid (dense + lexical) retrieval with
-> reranking, grounded generation with citations, a real product
-> frontend (documents, chat), voice input/output as a mode within chat,
-> and an evaluation/observability/security-hardening layer are all
+> **Status: Issues #1–#8 implemented, merged, and closed.** A
+> multi-user, voice-enabled RAG platform: authentication and
+> workspaces, document upload and ingestion, hybrid (dense + lexical)
+> retrieval with reranking, grounded generation with citations and
+> click-to-inspect source text, a polished real product frontend
+> (dashboard, documents, chat — rename/delete conversations, message
+> feedback), voice input/output as a mode within chat, and an
+> evaluation/observability/security-hardening layer are all
 > implemented, tested, and running end-to-end against real Postgres,
-> Redis, and the real UI — no paid external API required. Issue #8
-> (this document, plus final deployment/CI review) is in progress. See
+> Redis, and the real UI — no paid external API required. A real cloud
+> hosting target remains an explicit, deliberately undecided scope
+> boundary (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)). See
 > [`PROJECT_STATE.md`](PROJECT_STATE.md) for the authoritative,
 > up-to-date snapshot of every component.
 
@@ -84,10 +87,15 @@ Then, in a browser at `http://localhost:3000`:
 4. Once the document is `READY`, open **Chat**, start a new
    conversation, and **ask a question** about it. The answer appears
    with numbered citations pointing back to the source document(s).
+   Click a citation to fetch and reveal the exact cited evidence text
+   (source inspection), and use the thumbs up/down to leave feedback on
+   an answer.
 5. Try **voice**: click "Ask by voice," speak your question, click
    again to stop and transcribe — the transcript, answer, and citations
    appear exactly as they would for a typed question. Click "Play
    answer" under any assistant message to hear it read back.
+6. **Rename or delete** a conversation from the sidebar, or filter the
+   list with the search box, once you have more than one.
 
 `.env.example` documents every environment variable this project reads;
 `docker-compose.yml` supplies safe local-dev-only defaults for the ones
@@ -200,16 +208,21 @@ Kafka, Celery, Qdrant, multiple databases) and why — is documented in
 | Redis distributed rate limiting + abuse detection | IMPLEMENTED (ADR 0006) |
 | Knowledge ingestion (upload → extract → clean → chunk → embed → index) | IMPLEMENTED (Issue #3) |
 | Hybrid retrieval (dense + lexical + fusion + reranking) + grounded generation + citations | IMPLEMENTED (Issue #4) |
-| Product frontend (documents, chat, citations) | IMPLEMENTED (Issue #5, primary flow) |
+| Product frontend (dashboard, documents, chat, citations, source inspection, feedback, rename/delete) | IMPLEMENTED (Issue #5) |
 | Voice (STT/TTS) as a mode within chat | IMPLEMENTED (Issue #6) |
 | Evaluation harness, observability, security hardening | IMPLEMENTED (Issue #7) |
-| Finalization (this document, final deployment/CI review) | IN PROGRESS (Issue #8) |
+| Finalization, CI/CD, local deployment | IMPLEMENTED (Issue #8) |
+| Polished, design-system-consistent UI across every real route | IMPLEMENTED |
 
-Some lower-priority product-experience items remain deferred and
-documented, not silently dropped: standalone document search (outside
-chat), per-conversation/per-document deep-link routes, viewing a cited
-chunk's raw source text, message feedback, and rename/delete for
-conversations. See [`PROJECT_STATE.md`](PROJECT_STATE.md) for the
+Some lower-priority product-experience items remain deliberately
+deferred and documented, not silently dropped: collections, a
+standalone document search UI (outside chat), a command palette, a
+full in-document citation viewer with contextual highlighting beyond
+source inspection, response regenerate/retry, document CRUD beyond
+list/get/upload/process, and a `recursive` chunking strategy. A real
+cloud hosting target is also an explicit, undecided scope boundary —
+see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) "Target deployment
+environment". See [`PROJECT_STATE.md`](PROJECT_STATE.md) for the
 authoritative, current status of every component, including these.
 
 ## Documentation map
@@ -233,10 +246,12 @@ authoritative, current status of every component, including these.
 Real GitHub issues `#1`–`#8` track the work: `#1` Application
 Foundation, `#2` Authentication & Workspaces, `#3` Knowledge Ingestion,
 `#4` Hybrid RAG Pipeline, `#5` Product Experience, `#6` Voice, `#7`
-Evaluation, Security & Observability — all merged — and `#8` CI/CD,
-Deployment & Finalization, in progress. See
-[`PROJECT_STATE.md`](PROJECT_STATE.md#immediate-priorities) for current
-status and the exact next step.
+Evaluation, Security & Observability, `#8` CI/CD, Deployment &
+Finalization — all merged and closed. A follow-on product-quality
+frontend design pass (shared design tokens, redesigned auth/documents/
+chat/dashboard screens, mobile fixes) has also merged, on top of this
+baseline. See [`PROJECT_STATE.md`](PROJECT_STATE.md#immediate-priorities)
+for current status, remaining deferred scope, and the exact next step.
 
 ## License
 
