@@ -2,6 +2,9 @@ import { getApiBaseUrl } from "@/lib/config";
 import { getCsrfToken } from "@/lib/csrf";
 import {
   AuthResponseSchema,
+  CollectionListSchema,
+  CollectionSchema,
+  CollectionWithDocumentsSchema,
   ConversationListSchema,
   ConversationSchema,
   DocumentChunkSchema,
@@ -19,6 +22,8 @@ import {
   WorkspaceListSchema,
   WorkspaceSchema,
   type AuthResponse,
+  type Collection,
+  type CollectionWithDocuments,
   type Conversation,
   type Document,
   type DocumentChunk,
@@ -248,6 +253,77 @@ export async function updateMemberRole(
 
 export async function removeMember(workspaceId: string, userId: string): Promise<void> {
   await apiRequest(`/api/v1/workspaces/${workspaceId}/members/${userId}`, "DELETE");
+}
+
+// --- Collections ---
+
+export async function listCollections(workspaceId: string): Promise<Collection[]> {
+  const response = await apiRequest(`/api/v1/workspaces/${workspaceId}/collections`, "GET");
+  return CollectionListSchema.parse(await response.json());
+}
+
+export async function createCollection(
+  workspaceId: string,
+  name: string,
+  description: string | null
+): Promise<Collection> {
+  const response = await apiRequest(`/api/v1/workspaces/${workspaceId}/collections`, "POST", {
+    body: JSON.stringify({ name, description }),
+  });
+  return CollectionSchema.parse(await response.json());
+}
+
+export async function getCollection(
+  workspaceId: string,
+  collectionId: string
+): Promise<CollectionWithDocuments> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/collections/${collectionId}`,
+    "GET"
+  );
+  return CollectionWithDocumentsSchema.parse(await response.json());
+}
+
+export async function updateCollection(
+  workspaceId: string,
+  collectionId: string,
+  name: string,
+  description: string | null
+): Promise<Collection> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/collections/${collectionId}`,
+    "PATCH",
+    { body: JSON.stringify({ name, description }) }
+  );
+  return CollectionSchema.parse(await response.json());
+}
+
+export async function deleteCollection(workspaceId: string, collectionId: string): Promise<void> {
+  await apiRequest(`/api/v1/workspaces/${workspaceId}/collections/${collectionId}`, "DELETE");
+}
+
+export async function addDocumentToCollection(
+  workspaceId: string,
+  collectionId: string,
+  documentId: string
+): Promise<Document> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/collections/${collectionId}/documents`,
+    "POST",
+    { body: JSON.stringify({ document_id: documentId }) }
+  );
+  return DocumentSchema.parse(await response.json());
+}
+
+export async function removeDocumentFromCollection(
+  workspaceId: string,
+  collectionId: string,
+  documentId: string
+): Promise<void> {
+  await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/collections/${collectionId}/documents/${documentId}`,
+    "DELETE"
+  );
 }
 
 // --- Documents ---

@@ -47,6 +47,28 @@ def list_for_workspace(db: Session, *, workspace_id: uuid.UUID) -> list[Document
     )
 
 
+def list_by_ids_for_workspace(
+    db: Session, *, workspace_id: uuid.UUID, document_ids: list[uuid.UUID]
+) -> list[Document]:
+    """Scoped to `workspace_id` in the query itself, same IDOR-defense
+    shape as `get_by_id_for_workspace()` -- a document ID belonging to
+    another workspace is silently excluded, never returned, even if it
+    somehow appears in the caller's `document_ids` list (e.g. a
+    collection whose document somehow outlived a cross-workspace
+    edge case). Does not preserve `document_ids`' order -- callers that
+    need a specific order re-sort by it themselves."""
+    if not document_ids:
+        return []
+    return list(
+        db.execute(
+            select(Document).where(
+                Document.id.in_(document_ids),
+                Document.workspace_id == workspace_id,
+            )
+        ).scalars()
+    )
+
+
 def create(
     db: Session,
     *,

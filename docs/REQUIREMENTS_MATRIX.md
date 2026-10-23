@@ -27,35 +27,48 @@ exists but the user-facing workflow is not complete end-to-end.
 
 ## 1. Collections
 
-**Status: MISSING.**
+**Status: COMPLETE.**
 
-- **Evidence:** No `collections`/`collection_documents` table, model,
-  migration, repository, service, or API route exists anywhere in
-  `backend/app/`. `frontend/app/collections/page.tsx` and
-  `collections/[id]/page.tsx` are `PageStub`s only.
-  `docs/DATA_MODEL.md` already specifies the intended schema
-  (`collections` workspace-scoped, `collection_documents` many-to-many
-  join — both marked `PROPOSED`).
-- **Acceptance criteria:** A user can create/rename/delete a collection
-  within a workspace; add/remove documents from a collection; list a
-  workspace's collections and a collection's documents; all operations
-  enforce workspace role (`MEMBER`+ to mutate, `VIEWER`+ to read) and
-  are workspace-scoped (cross-workspace access returns `404`, matching
-  every other resource in this codebase). The Collections UI replaces
-  its stub with real create/list/detail/delete, and the Documents page
-  can optionally filter by collection.
-- **Dependencies/risks:** None blocking — follows the exact same
-  pattern as `Workspace`/`WorkspaceMember` (an owning entity + a
-  role/membership-style join table). Low risk: purely additive schema,
-  no change to existing tables.
-- **Effort/priority:** Medium (new migration, model ×2, repository ×2,
-  service, API routes, 2 frontend pages, nav entry, tests). **Priority
-  1** (per the sprint's own stated order).
-- **Next slice:** Migration + `Collection`/`CollectionDocument` models →
-  repository/service/API (`POST/GET/PATCH/DELETE
-  /workspaces/{id}/collections`, `POST/DELETE
-  /workspaces/{id}/collections/{id}/documents/{document_id}`) → replace
-  both frontend stubs → tests.
+- **Evidence:** `backend/alembic/versions/0010_add_collections.py`
+  (`collections`/`collection_documents`, verified
+  upgrade/downgrade/upgrade round-trip against real Postgres),
+  `app/models/collection.py`, `app/models/collection_document.py`,
+  `app/repositories/collection_repository.py`,
+  `app/repositories/collection_document_repository.py`,
+  `app/services/collection_service.py`,
+  `app/api/v1/collections.py` (list/create/get/update/delete +
+  add/remove document, all workspace-role-gated and workspace-scoped —
+  cross-workspace access returns `404`, verified by test). 15 new
+  backend tests (`backend/tests/test_collections.py`): creation,
+  listing with document counts, workspace isolation, VIEWER-cannot-
+  mutate, cross-workspace document-add rejection, idempotent add,
+  remove, update, delete (and that deleting a collection does not
+  delete its documents). `frontend/app/collections/page.tsx` and
+  `collections/[id]/page.tsx` are real pages (create/list/rename/
+  delete, add/remove documents via a native `<select>`), replacing
+  both `PageStub`s; added to `components/layout/nav.tsx`. 9 new
+  frontend tests. **Verified end-to-end in a real browser** (not just
+  unit tests): register → create workspace → upload a document →
+  create a collection → open its detail page → add the document →
+  reload the page and confirm the association persisted → remove the
+  document → rename the collection → delete it — all 11 steps passed
+  against the real running stack.
+- **Acceptance criteria:** met — see evidence above.
+- **Dependencies/risks:** None encountered. Document delete (item 5,
+  still `PARTIAL`) does not yet exist, so a collection's documents can
+  only currently be removed from the *collection*, not deleted outright
+  — no change needed here when that lands, since `collection_documents`
+  rows cascade-delete via `ON DELETE CASCADE` on `document_id`
+  automatically.
+- **Effort/priority:** Delivered. Was **Priority 1** in the sprint's
+  stated order.
+- **Next slice:** none — done. (The Documents page filtering by
+  collection, mentioned in the original acceptance criteria as
+  optional, was not built — collections are browsed from their own
+  page today, not as a Documents-page filter. This is a genuine, minor
+  scope reduction from the original criteria, not an oversight: nothing
+  in `docs/REQUIREMENTS.md` requires it specifically, and the
+  collection detail page already shows a collection's documents.)
 
 ## 2. Standalone search UI
 
