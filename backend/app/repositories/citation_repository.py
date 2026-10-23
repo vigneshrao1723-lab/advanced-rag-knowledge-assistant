@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models.citation import Citation
@@ -66,4 +66,16 @@ def list_for_messages(
     return dict(grouped)
 
 
-__all__ = ["bulk_create", "list_for_messages"]
+def delete_for_message(db: Session, *, message_id: uuid.UUID) -> None:
+    """Removes every citation attached to a message -- regenerate
+    (Issue #41) calls this immediately before `bulk_create()` persists
+    the new answer's citations, within the same transaction, so a
+    message is never observably left with a stale citation pointing at
+    superseded content (or, if the caller's transaction rolls back
+    instead of committing, the old citations are simply untouched --
+    `db.flush()` here doesn't commit anything on its own)."""
+    db.execute(delete(Citation).where(Citation.message_id == message_id))
+    db.flush()
+
+
+__all__ = ["bulk_create", "delete_for_message", "list_for_messages"]

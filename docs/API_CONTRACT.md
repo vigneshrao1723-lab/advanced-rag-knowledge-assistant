@@ -56,7 +56,7 @@ consistent, not a claim that every namespace below exists. See
 | `/api/v1/ingestion` | Ingestion pipeline status/control for a document |
 | `/api/v1/workspaces/{workspace_id}/search` | Standalone search mode (snippets, evidence, scores, retrieval method), retrieval only — never calls generation (**implemented**, Issue #41). |
 | `/api/v1/retrieval` | Lower-level retrieval operations (used internally by chat/search) |
-| `/api/v1/conversations` | Chat sessions, messages, regenerate/retry, feedback — nested under `/workspaces/{workspace_id}/`, matching this table's own existing convention. Minimal ask flow (create conversation, post a message and get a grounded answer, list messages) **implemented** (Issue #4 Slice 4.3); rename/delete/search/regenerate/feedback not yet implemented (Issue #5). |
+| `/api/v1/conversations` | Chat sessions, messages, regenerate, feedback — nested under `/workspaces/{workspace_id}/`, matching this table's own existing convention. Ask flow, rename/delete, feedback, and regenerate are all **implemented** (Issue #4 Slice 4.3; Issue #5; Issue #41); search is a client-side title filter, not a backend endpoint. |
 | `/api/v1/evaluations` | Trigger and inspect evaluation runs and results |
 | `/api/v1/voice` | STT/TTS session endpoints, integrated with conversations |
 | `/api/v1/health` | Liveness/readiness checks (**implemented**, Issue #1) |
@@ -453,14 +453,13 @@ conversation/message linkage.
 ## Implemented: `/api/v1/workspaces/{workspace_id}/conversations`
 
 **Chat/ask flow, conversation listing/rename/delete, message feedback,
-and voice** (GitHub Issue #4, Slice 4.3; list added Issue #5, Slice 5.1;
-voice added Issue #6; rename/delete/feedback added in the final
-quality-hardening pass, closing a real Issue #5 "Chat" requirement gap)
-— search conversations (client-side title filtering over the already-
-fetched list — see `frontend/app/chat/page.tsx`) and regenerate/retry a
-response remain not implemented, the latter deliberately deferred as a
-lower-value item relative to the effort of re-running generation for an
-already-answered turn.
+regenerate, and voice** (GitHub Issue #4, Slice 4.3; list added Issue
+#5, Slice 5.1; voice added Issue #6; rename/delete/feedback added in
+the final quality-hardening pass, closing a real Issue #5 "Chat"
+requirement gap; regenerate added Issue #41) — search conversations
+(client-side title filtering over the already-fetched list — see
+`frontend/app/chat/page.tsx`) remains not implemented (no backend
+endpoint needed for it).
 
 | Endpoint | Min. role | Body | Response |
 |---|---|---|---|
@@ -471,8 +470,27 @@ already-answered turn.
 | `POST /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages` | MEMBER | `{content}` | `201` `MessageRead`, or `404`/`422`/`429`/`500` (see below) |
 | `GET /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages` | VIEWER | none | `200` `list[MessageRead]`, or `404` |
 | `PUT /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages/{message_id}/feedback` | MEMBER | `{feedback}` (`"UP"`/`"DOWN"`/`null`) | `200` `MessageRead`, or `404` (including a `USER` message — only an `ASSISTANT` message has anything to give feedback *on*) |
+| `POST /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages/{message_id}/regenerate` | MEMBER | none | `200` `MessageRead`, or `404`/`409`/`429`/`500` (see below) |
 | `POST /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/voice-messages` | MEMBER | `multipart/form-data`, one field: `audio` (WAV) | `201` `VoiceMessageRead`, or `400`/`404`/`413`/`422`/`429`/`502` (see below) |
 | `GET /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages/{message_id}/audio` | VIEWER | none | `200` `audio/wav` bytes, or `404` |
+
+**Regenerate** (Issue #41): re-runs retrieval and generation for an
+`ASSISTANT` message's original question — the most recent `USER`
+message strictly before it in the same conversation — and replaces
+that message's `content` and citations *in place* (same `id`, no new
+row, so conversation length/ordering is unaffected). Any prior
+`feedback` on the superseded answer is cleared (set to `null`), since
+it no longer describes the new content. Same `404` shape as the
+feedback endpoint for a `USER` message or one from another
+conversation/workspace; `409` (`cannot_regenerate`) in the defensive
+edge case where no preceding `USER` message exists at all (not
+expected in normal use — every `ASSISTANT` message is created by
+answering one). A failure during generation leaves the prior answer
+and its citations completely untouched — nothing is deleted until the
+new answer has actually been produced. Rate-limited identically to
+posting a message (`conversation_message` operation/dimension — same
+retrieval+generation cost, just against an existing question instead
+of a new one).
 
 `ConversationRead`: `{id, title, created_at, updated_at}`. `PATCH`'s
 `{title}` is nullable — an explicit `null` clears a conversation back to

@@ -161,38 +161,49 @@ exists but the user-facing workflow is not complete end-to-end.
 
 ## 4. Answer regeneration/retry
 
-**Status: MISSING.**
+**Status: COMPLETE.**
 
-- **Evidence:** No `regenerate` concept anywhere in
-  `backend/app/services/conversation_service.py` or
-  `app/api/v1/conversations.py` (confirmed by reading both files in
-  full). `docs/API_CONTRACT.md` explicitly documents this as "not yet
-  implemented... deliberately deferred."
-- **Acceptance criteria:** From an assistant message, a user can
-  request regeneration; the system re-runs retrieval+generation for the
-  same preceding user question and replaces that assistant message's
-  content and citations with a fresh answer; any prior feedback on the
-  old answer is cleared (it no longer describes the current content);
-  a failure during regeneration leaves the prior answer intact (never
-  deletes-then-fails). Workspace/role/IDOR tested like every other
-  mutation in this codebase.
-- **Dependencies/risks:** Needs to find "the preceding user message"
-  for a given assistant message — straightforward via
-  `created_at`/ordering within the same conversation, no schema change
-  needed. Needs a citation-replacement path
-  (`citation_repository` currently has no `delete_for_message` — must
-  add one). Low risk otherwise; reuses the exact
-  `_run_retrieval_and_generation()` helper `post_message()` already
-  uses.
-- **Effort/priority:** Small-medium (one new repository method, one new
-  service function, one new endpoint, one new UI button). **Priority
-  4** (explicit, deliberate reasoning in the existing docs for why this
-  was deferred relative to effort — now in scope per this sprint).
-- **Next slice:** `citation_repository.delete_for_message()` →
-  `conversation_service.regenerate_message()` → `POST
-  .../messages/{message_id}/regenerate` (MEMBER+, same rate limit as
-  posting a message) → a "Regenerate" button on each assistant message
-  in the chat UI → tests.
+- **Evidence:** `POST /workspaces/{id}/conversations/{id}/messages/{id}/regenerate`
+  (MEMBER+, `backend/app/api/v1/conversations.py`,
+  `conversation_service.regenerate_message()`) — finds the preceding
+  `USER` message (`message_repository.get_preceding_user_message()`,
+  new), re-runs the exact same `_run_retrieval_and_generation()` helper
+  `post_message()` uses, then replaces the assistant message's content
+  in place (`message_repository.update_content()`, new — same row, no
+  new message, clearing any prior feedback) and its citations
+  (`citation_repository.delete_for_message()`, new, called immediately
+  before `bulk_create()` persists the fresh ones, both within the same
+  transaction as the content update — a failure during generation
+  happens *before* either delete/update call, so the prior answer is
+  never touched on failure). Same rate limit as posting a message
+  (`conversation_message` operation). A "Regenerate" button
+  (`RotateCcw` icon) on each assistant message in
+  `frontend/app/chat/page.tsx`. 8 new backend tests
+  (`tests/test_conversations.py`: fresh grounded answer + citations
+  with the message id/history-length unchanged, feedback cleared,
+  regenerating a `USER` message is `404`, nonexistent message `404`,
+  cross-workspace `404`, VIEWER `403`, unauthenticated `401`, rate
+  limit enforced), 1 new frontend test. **Verified end-to-end in a real
+  browser**: ask a question → rate the answer → click Regenerate →
+  confirm the answer is still grounded in the real document and the
+  prior rating was cleared.
+- **Acceptance criteria:** met — see evidence above.
+- **Dependencies/risks:** One real test-environment gotcha hit and
+  fixed, not a production bug: within a single test's shared Postgres
+  transaction, `created_at`'s `now()` default is frozen for the whole
+  transaction, so the user/assistant messages `_post_message()` creates
+  moments apart tied on `created_at`, which broke
+  `get_preceding_user_message()`'s strict `<` comparison in tests (and,
+  separately, revealed that relying on list *position* rather than
+  *role* to pick "the user message" in an older sibling test pattern is
+  fragile under the same tie). Fixed by forcing a distinct earlier
+  timestamp in the affected tests, matching
+  `test_document_listing.py`'s established precedent for this exact
+  class of issue — real, separate HTTP requests in production get
+  genuinely distinct transaction timestamps; only the shared-transaction
+  test fixture ties them.
+- **Effort/priority:** Delivered. Was **Priority 4**.
+- **Next slice:** none.
 
 ## 5. Document management beyond list/get/upload/process
 

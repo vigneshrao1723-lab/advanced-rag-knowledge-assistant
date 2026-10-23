@@ -582,12 +582,92 @@ def set_message_feedback(
     return _to_message_read(message, [_to_citation_read(citation) for citation in citations])
 
 
+def _cannot_regenerate_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "cannot_regenerate",
+            "message": "This message has no preceding question to regenerate an answer for.",
+        },
+    )
+
+
+async def regenerate_message(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    embedding_provider: EmbeddingProvider,
+    reranker: Reranker,
+    llm_provider: LLMProvider,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
+) -> MessageRead:
+    """Re-runs retrieval + generation for an assistant message's original
+    question, replacing its content and citations in place -- the same
+    message row, not a new one, so history length and ordering are
+    unaffected. Only an `ASSISTANT` message can be regenerated, same
+    404 shape as `set_message_feedback()`. Any prior feedback is
+    cleared: a rating on the superseded answer doesn't describe the new
+    one. A failure during generation leaves the prior answer and its
+    citations completely untouched -- nothing is deleted until the new
+    answer has actually been produced.
+    """
+    conversation = conversation_repository.get_by_id_for_workspace(
+        db, workspace_id=workspace_id, conversation_id=conversation_id
+    )
+    if conversation is None:
+        raise _conversation_not_found_error(
+            db,
+            workspace_id=workspace_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            ip_address=ip_address,
+        )
+
+    message = message_repository.get_by_id_for_conversation(
+        db, conversation_id=conversation.id, message_id=message_id
+    )
+    if message is None or message.role != MessageRole.ASSISTANT:
+        raise _message_not_found_error()
+
+    question = message_repository.get_preceding_user_message(
+        db, conversation_id=conversation.id, message=message
+    )
+    if question is None:
+        raise _cannot_regenerate_error()
+
+    answer, context = await asyncio.to_thread(
+        _run_retrieval_and_generation,
+        db,
+        workspace_id=workspace_id,
+        query=question.content,
+        embedding_provider=embedding_provider,
+        reranker=reranker,
+        llm_provider=llm_provider,
+        conversation_id=conversation.id,
+        user_message_id=question.id,
+    )
+
+    message = message_repository.update_content(db, message=message, content=answer, feedback=None)
+    citation_repository.delete_for_message(db, message_id=message.id)
+    citations = create_citations(
+        db, message_id=message.id, workspace_id=workspace_id, context=context
+    )
+    db.commit()
+
+    citation_reads = [_to_citation_read(citation) for citation in citations]
+    return _to_message_read(message, citation_reads)
+
+
 __all__ = [
     "create_conversation",
     "delete_conversation",
     "list_conversations",
     "list_messages",
     "post_message",
+    "regenerate_message",
     "rename_conversation",
     "set_message_feedback",
     "synthesize_message_audio",

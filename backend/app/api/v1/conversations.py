@@ -241,3 +241,37 @@ async def set_message_feedback(
         user_id=ctx.user.id,
         ip_address=client_ip(request),
     )
+
+
+@router.post(
+    "/{workspace_id}/conversations/{conversation_id}/messages/{message_id}/regenerate",
+    response_model=MessageRead,
+)
+async def regenerate_message(
+    request: Request,
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.MEMBER)),
+    db: Session = Depends(get_db),
+    embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
+    reranker: Reranker = Depends(get_reranker),
+    llm_provider: LLMProvider = Depends(get_llm_provider),
+    redis_client: redis.Redis | None = Depends(get_redis_client),
+) -> MessageRead:
+    """Re-answers an assistant message's original question (Issue #41)
+    -- same retrieval/generation cost as posting a new message, so the
+    same rate limit applies."""
+    enforce_conversation_message_rate_limit(
+        request, user_id=ctx.user.id, redis_client=redis_client
+    )
+    return await conversation_service.regenerate_message(
+        db,
+        workspace_id=ctx.workspace.id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+        embedding_provider=embedding_provider,
+        reranker=reranker,
+        llm_provider=llm_provider,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
+    )

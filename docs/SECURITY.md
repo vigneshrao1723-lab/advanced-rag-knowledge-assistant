@@ -577,7 +577,15 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
   proves a search from workspace B returns zero results for a document
   that only exists in workspace A (not an error — search's correct
   cross-workspace behavior is silence, since there is no single
-  resource ID being looked up to 404 on).
+  resource ID being looked up to 404 on). **Extended to document-chunk
+  listing and regenerate (Issue #41)** —
+  `backend/tests/test_document_listing.py::test_list_document_chunks_from_another_workspace_is_not_reachable`
+  and `backend/tests/test_conversations.py`
+  (`test_cross_workspace_regenerate_is_not_reachable`,
+  `test_regenerate_a_user_message_returns_404`) prove the same
+  non-leaking `404` for the full document viewer's chunk-listing
+  endpoint and for regenerate, and `test_viewer_cannot_regenerate`
+  proves the VIEWER role is correctly read-only there too.
 - **Malicious upload tests** — oversized files, mismatched
   extension/content, malformed PDFs/DOCX, zip-bomb-style payloads; must be
   rejected or safely contained. **Implemented (Issue #3, Slices 3.3–3.4)**

@@ -33,6 +33,7 @@ vi.mock("@/lib/api-client", async () => {
     postVoiceMessage: vi.fn(),
     getDocumentChunk: vi.fn(),
     setMessageFeedback: vi.fn(),
+    regenerateMessage: vi.fn(),
   };
 });
 
@@ -437,6 +438,45 @@ describe("ChatPage", () => {
     expect(await screen.findByRole("button", { name: /good response/i })).toHaveAttribute(
       "aria-pressed",
       "true"
+    );
+  });
+
+  it("regenerates an assistant message's answer", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([
+      { id: "c1", title: null, created_at: "", updated_at: "" },
+    ]);
+    vi.mocked(api.listDocuments).mockResolvedValue([]);
+    vi.mocked(api.listMessages).mockResolvedValue([
+      {
+        id: "m1",
+        role: "ASSISTANT",
+        content: "Refunds within 30 days.",
+        created_at: "",
+        citations: [],
+        feedback: "UP",
+      },
+    ]);
+    vi.mocked(api.regenerateMessage).mockResolvedValue({
+      id: "m1",
+      role: "ASSISTANT",
+      content: "Refunds within thirty days of purchase.",
+      created_at: "",
+      citations: [],
+      feedback: null,
+    });
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText("Refunds within 30 days.");
+    await user.click(screen.getByRole("button", { name: /regenerate response/i }));
+
+    expect(api.regenerateMessage).toHaveBeenCalledWith("w1", "c1", "m1");
+    expect(await screen.findByText("Refunds within thirty days of purchase.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /good response/i })).toHaveAttribute(
+      "aria-pressed",
+      "false"
     );
   });
 });
