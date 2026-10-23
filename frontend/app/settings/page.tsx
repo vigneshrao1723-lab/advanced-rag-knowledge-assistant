@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Laptop, Mail, ShieldCheck } from "lucide-react";
 
 import { ProtectedRoute } from "@/components/protected-route";
 import { Button } from "@/components/ui/button";
@@ -51,19 +52,26 @@ function SettingsContent() {
     <div className="flex flex-col gap-6">
       <Card>
         <CardHeader>
-          <CardTitle>Profile</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="size-4 text-indigo-600" aria-hidden="true" />
+            Profile
+          </CardTitle>
           <CardDescription>Account settings.</CardDescription>
         </CardHeader>
         <CardContent className="text-sm">
-          <p>
-            <span className="text-muted-foreground">Email:</span> {user?.email}
+          <p className="flex items-center gap-2">
+            <Mail className="text-muted-foreground size-4" aria-hidden="true" />
+            {user?.email}
           </p>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Active sessions</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Laptop className="size-4 text-indigo-600" aria-hidden="true" />
+            Active sessions
+          </CardTitle>
           <CardDescription>Devices/sessions currently signed in to your account.</CardDescription>
         </CardHeader>
         <CardContent>
@@ -78,18 +86,25 @@ function SettingsContent() {
               {sessions.map((session) => (
                 <li
                   key={session.id}
-                  className="flex items-center justify-between gap-4 border-b pb-3 last:border-b-0 last:pb-0"
+                  className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 p-3"
                 >
-                  <div className="text-sm">
-                    <p className="font-medium">
-                      {session.device_label ?? "Unknown device"}
-                      {session.is_current && (
-                        <span className="text-muted-foreground ml-2 text-xs">(this device)</span>
-                      )}
-                    </p>
-                    <p className="text-muted-foreground text-xs">
-                      Last used {new Date(session.last_used_at).toLocaleString()}
-                    </p>
+                  <div className="flex items-start gap-3 text-sm">
+                    <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                      <Laptop className="size-4" aria-hidden="true" />
+                    </div>
+                    <div>
+                      <p className="font-medium">
+                        {session.device_label ?? "Unknown device"}
+                        {session.is_current && (
+                          <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                            this device
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-muted-foreground text-xs">
+                        Last used {new Date(session.last_used_at).toLocaleString()}
+                      </p>
+                    </div>
                   </div>
                   <Button
                     size="sm"
