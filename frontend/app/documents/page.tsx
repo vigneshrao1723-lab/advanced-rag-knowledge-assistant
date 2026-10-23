@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
   CheckCircle2,
@@ -170,12 +171,17 @@ function DocumentRow({
   return (
     <li className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-slate-300">
       <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 items-start gap-3">
+        <Link
+          href={`/documents/${document.id}`}
+          className="flex min-w-0 items-start gap-3 focus-visible:outline-none"
+        >
           <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
             <FileText className="size-4" aria-hidden="true" />
           </div>
           <div className="min-w-0 text-sm">
-            <p className="truncate font-medium text-slate-900">{document.filename}</p>
+            <p className="truncate font-medium text-slate-900 hover:underline">
+              {document.filename}
+            </p>
             <p className="text-muted-foreground text-xs">
               {formatSize(document.size_bytes)}
               {document.page_count !== null ? ` · ${document.page_count} pages` : ""}
@@ -184,7 +190,7 @@ function DocumentRow({
               <p className="text-destructive mt-1 text-xs">{document.failure_reason}</p>
             )}
           </div>
-        </div>
+        </Link>
         <div className="flex shrink-0 items-center gap-2">
           <span
             className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${classes}`}

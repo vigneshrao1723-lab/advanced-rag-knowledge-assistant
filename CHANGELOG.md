@@ -10,10 +10,59 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-10-23 — Standalone search (feature-completion sprint, Issue #41, priority 2 of 7) (in progress)
+### 2026-10-23 — Full document viewer + citation highlighting (feature-completion sprint, Issue #41, priority 3 of 7) (in progress)
 
-*(Branch `feat/standalone-search`, cut from `main` at `06b8c9e`. Not
-yet committed as of this entry.)*
+*(Branch `feat/document-viewer`, cut from `main` at `45e5c85`. Not yet
+committed as of this entry.)*
+
+- Implements the full document viewer end-to-end: `GET
+  /workspaces/{id}/documents/{id}/chunks` (plural, ordered by
+  `chunk_index`, `document_service.list_document_chunks()`) — additive
+  to, never replacing, the existing single-chunk source-inspection
+  endpoint. Real `frontend/app/documents/[id]/page.tsx` renders a
+  document's full extracted content, replacing the `PageStub`, and
+  accepts a `?chunk=` query param to highlight and scroll to a
+  specific chunk.
+- Wires the chat citation chip (`CitationSource`) with a "View in
+  document" link to `/documents/{document_id}?chunk={chunk_id}`.
+- **Found and fixed a real gap via live-browser verification, not code
+  review**: the Documents list page never linked a filename to
+  anything — there was no way to reach the new viewer except via a
+  chat citation. Added a link from each row to its `/documents/[id]`.
+- 5 new backend tests, 4 new frontend tests in a new
+  `app/documents/[id]/page.test.tsx`; the chat-page and documents-list
+  test files got new assertions added to existing tests rather than
+  new test cases.
+- **Found and fixed a real robustness gap**: the highlight-and-scroll
+  effect called `Element.scrollIntoView()` unconditionally, which threw
+  in jsdom (no-op in that environment, but a worthwhile defensive guard
+  generally) — made the call optionally-chained.
+- Full regression re-run clean: backend 772 passed + 1 skip, frontend
+  98/98, Playwright 21/21 (no regression), `ruff`/`mypy`/`eslint`/`tsc`/
+  `next build` all clean.
+- Real-browser verification beyond the automated suites: upload a
+  document → open it from the Documents list and see its real
+  extracted content → ask a question in chat → open the citation →
+  click "View in document" → land on the viewer with the cited chunk
+  visibly highlighted.
+- Updates `docs/API_CONTRACT.md` and `docs/REQUIREMENTS_MATRIX.md` §3
+  and `PROJECT_STATE.md` to record the document viewer as `COMPLETE`
+  with evidence.
+
+## [Unreleased — committed]
+
+### 2026-10-23 — `feat: add standalone search (Issue #41, priority 2 of 7)` (#44), merged as `45e5c85`
+
+*(Branch `feat/standalone-search`, cut from the merged collections PR
+(`06b8c9e`, PR #43). First CI run failed on `Mypy` —
+`tests/test_search.py` had an unannotated `response.json()` assignment
+that `mypy .` (CI's actual command, scoped wider than the `mypy app`
+run locally beforehand) flagged as `no-any-return`; fixed and
+re-verified against the literal CI command before pushing again — see
+`SOLVING.md`'s 2026-10-23 entry. Verified green on GitHub Actions CI
+(including an unusually slow `espeak-ng`/Playwright-browser-install
+runner that day, unrelated to this diff) and **merged into `main` as
+squash commit `45e5c85`**.)*
 
 - Implements standalone search end-to-end: `GET
   /workspaces/{id}/search` (`backend/app/api/v1/search.py`,
@@ -36,8 +85,6 @@ yet committed as of this entry.)*
   94/94, `ruff`/`mypy`/`eslint`/`tsc`/`next build` all clean.
 - Updates `docs/REQUIREMENTS_MATRIX.md` §2 and `PROJECT_STATE.md` to
   record standalone search as `COMPLETE` with evidence.
-
-## [Unreleased — committed]
 
 ### 2026-10-23 — `feat: add collections (Issue #41, priority 1 of 7)` (#43), merged as `06b8c9e`
 

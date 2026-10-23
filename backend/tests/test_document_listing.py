@@ -378,3 +378,88 @@ def test_viewer_can_get_document_chunk(
         headers=csrf_headers(viewer),
     )
     assert response.status_code == 200, response.text
+
+
+# --- list document chunks (full document viewer, Issue #41) -----------------
+
+
+def test_list_document_chunks_returns_them_in_order(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    document = _ingest_ready_document(client, workspace["id"])
+
+    response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/documents/{document['id']}/chunks"
+    )
+
+    assert response.status_code == 200, response.text
+    chunks = response.json()
+    assert len(chunks) >= 1
+    assert all(c["document_id"] == document["id"] for c in chunks)
+    assert [c["chunk_index"] for c in chunks] == sorted(c["chunk_index"] for c in chunks)
+    assert "refund policy" in chunks[0]["content"]
+
+
+def test_list_document_chunks_for_unprocessed_document_returns_empty_list(
+    client: TestClient,
+) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    document = _upload(client, workspace["id"], content=_TXT_BYTES)
+
+    response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/documents/{document['id']}/chunks"
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == []
+
+
+def test_list_document_chunks_not_found_returns_404(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+
+    response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/documents/{uuid.uuid4()}/chunks"
+    )
+
+    assert response.status_code == 404
+
+
+def test_list_document_chunks_from_another_workspace_is_not_reachable(
+    client_factory: Callable[[], TestClient],
+) -> None:
+    owner_a = client_factory()
+    _register(owner_a)
+    workspace_a = _create_workspace(owner_a, name="A")
+    document = _ingest_ready_document(owner_a, workspace_a["id"])
+
+    owner_b = client_factory()
+    _register(owner_b)
+    workspace_b = _create_workspace(owner_b, name="B")
+
+    response = owner_b.get(
+        f"/api/v1/workspaces/{workspace_b['id']}/documents/{document['id']}/chunks"
+    )
+
+    assert response.status_code == 404
+
+
+def test_viewer_can_list_document_chunks(
+    client_factory: Callable[[], TestClient],
+) -> None:
+    owner = client_factory()
+    _register(owner)
+    workspace = _create_workspace(owner)
+    document = _ingest_ready_document(owner, workspace["id"])
+
+    viewer_email = _unique_email()
+    _register(client_factory(), viewer_email)
+    _add_member(owner, workspace["id"], viewer_email, "VIEWER")
+    viewer = client_factory()
+    _login(viewer, viewer_email)
+
+    response = viewer.get(
+        f"/api/v1/workspaces/{workspace['id']}/documents/{document['id']}/chunks"
+    )
+    assert response.status_code == 200, response.text
