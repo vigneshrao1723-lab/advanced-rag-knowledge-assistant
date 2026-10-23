@@ -2,16 +2,17 @@
 
 **Status:** PARTIALLY IMPLEMENTED — `/api/v1/health`, `/api/v1/auth`,
 `/api/v1/users`, `/api/v1/workspaces`, `/api/v1/workspaces/{id}/documents`
-(including chunk-level source inspection), and
+(including chunk-level source inspection),
+`/api/v1/workspaces/{id}/collections`,
+`/api/v1/workspaces/{id}/search`, and
 `/api/v1/workspaces/{id}/conversations` (including voice) are all
 implemented, with the concrete request/response schemas below.
-`/api/v1/collections`, `/api/v1/search`, `/api/v1/evaluations`, and
-`/api/v1/workspaces/{id}/audit-logs` remain PROPOSED / target only —
-evaluation runs exist as real, persisted database rows (see
-`docs/EVALUATION.md`) but are produced by a standalone script, not a
-queryable API endpoint. This document records the intended full API
-namespace layout to keep future implementation consistent, not a claim
-that every namespace below exists. See
+`/api/v1/evaluations` and `/api/v1/workspaces/{id}/audit-logs` remain
+PROPOSED / target only — evaluation runs exist as real, persisted
+database rows (see `docs/EVALUATION.md`) but are produced by a
+standalone script, not a queryable API endpoint. This document records
+the intended full API namespace layout to keep future implementation
+consistent, not a claim that every namespace below exists. See
 [`PROJECT_STATE.md`](../PROJECT_STATE.md) for current status.
 
 ## Conventions (intended)
@@ -51,9 +52,9 @@ that every namespace below exists. See
 | `/api/v1/workspaces` | Create/rename/delete/switch workspaces, membership, roles (**implemented**, Issue #2) |
 | `/api/v1/workspaces/{workspace_id}/audit-logs` | Query security-relevant audit log entries for a workspace (`ADMIN`/`OWNER` only) |
 | `/api/v1/workspaces/{workspace_id}/documents` | Upload + synchronous extraction/cleaning/chunking pipeline through to `CHUNKED`, including retrying a `FAILED` or resuming an interrupted document via the same `/process` endpoint (**implemented**, Issue #3 Slices 3.3–3.6); list, search, filter, sort, rename, delete, re-index, download, metadata/status (not yet implemented). Nested under the owning workspace, matching `/workspaces/{workspace_id}/members` and `/audit-logs`'s existing convention, rather than the flat `/api/v1/documents` this table previously sketched. |
-| `/api/v1/collections` | Logical document grouping and collection-scoped retrieval |
+| `/api/v1/workspaces/{workspace_id}/collections` | Logical document grouping — create/list/get/rename/delete a collection, add/remove a document (**implemented**, Issue #41). Collection-scoped *retrieval* filtering (restricting a search/chat query to one collection) is not implemented — collections organize documents today, they don't yet narrow a query. |
 | `/api/v1/ingestion` | Ingestion pipeline status/control for a document |
-| `/api/v1/search` | Standalone search mode (snippets, evidence, scores, retrieval method) |
+| `/api/v1/workspaces/{workspace_id}/search` | Standalone search mode (snippets, evidence, scores, retrieval method), retrieval only — never calls generation (**implemented**, Issue #41). |
 | `/api/v1/retrieval` | Lower-level retrieval operations (used internally by chat/search) |
 | `/api/v1/conversations` | Chat sessions, messages, regenerate/retry, feedback — nested under `/workspaces/{workspace_id}/`, matching this table's own existing convention. Minimal ask flow (create conversation, post a message and get a grounded answer, list messages) **implemented** (Issue #4 Slice 4.3); rename/delete/search/regenerate/feedback not yet implemented (Issue #5). |
 | `/api/v1/evaluations` | Trigger and inspect evaluation runs and results |
@@ -374,6 +375,67 @@ performs no distinct work (see "Indexing" above); `AuditEvent.DOCUMENT_READY`
 `embedding_dimension`) once, on the pipeline's overall successful
 completion. Every `reason` is the same storage-safe string returned to
 the client, never a raw exception, filesystem path, or storage key.
+
+## Implemented: `/api/v1/workspaces/{workspace_id}/collections`
+
+Logical grouping of documents within a workspace (GitHub Issue #41).
+Collection-scoped retrieval filtering (restricting a chat/search query to
+one collection) is not implemented — this is organization only.
+
+| Endpoint | Min. role | Body | Response |
+|---|---|---|---|
+| `GET /api/v1/workspaces/{workspace_id}/collections` | VIEWER | none | `200` `list[CollectionRead]`, newest-created first |
+| `POST /api/v1/workspaces/{workspace_id}/collections` | MEMBER | `{name, description}` | `201` `CollectionRead` |
+| `GET /api/v1/workspaces/{workspace_id}/collections/{collection_id}` | VIEWER | none | `200` `CollectionWithDocumentsRead`, or `404` |
+| `PATCH /api/v1/workspaces/{workspace_id}/collections/{collection_id}` | MEMBER | `{name, description}` | `200` `CollectionRead`, or `404` |
+| `DELETE /api/v1/workspaces/{workspace_id}/collections/{collection_id}` | MEMBER | none | `204`, or `404` — deletes only the collection and its document associations (`collection_documents` rows), never the documents themselves |
+| `POST /api/v1/workspaces/{workspace_id}/collections/{collection_id}/documents` | MEMBER | `{document_id}` | `201` `DocumentRead`, or `404` (collection, or a document not in this workspace) — idempotent: adding an already-associated document is a no-op success, not a `409` |
+| `DELETE /api/v1/workspaces/{workspace_id}/collections/{collection_id}/documents/{document_id}` | MEMBER | none | `204`, or `404` (collection, document outside the workspace, or the link doesn't exist) |
+
+`CollectionRead`: `{id, name, description, created_at, updated_at,
+document_count}`. `CollectionWithDocumentsRead` extends it with
+`documents: list[DocumentRead]`, ordered newest-added-first. `name` is
+required (1–200 characters); `description` is optional/nullable
+(≤2000 characters). `PATCH`'s body is a full replace, matching
+`WorkspaceUpdate`'s own convention — both fields are always required,
+`description: null` explicitly clears it.
+
+Every lookup is workspace-scoped at the query level (never filtered
+after the fact), matching every other resource in this codebase — a
+collection or document ID from another workspace resolves to `404`,
+indistinguishable from a nonexistent ID, and is audited as
+`AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED`. Collection
+creation/deletion are additionally audited as
+`AuditEvent.COLLECTION_CREATED`/`COLLECTION_DELETED`.
+
+## Implemented: `/api/v1/workspaces/{workspace_id}/search`
+
+Standalone search (GitHub Issue #41) — retrieval only, per
+docs/REQUIREMENTS.md "Search": "distinct from chat." Never calls
+`app.generation`; returns ranked evidence, not a generated answer.
+
+| Endpoint | Min. role | Query params | Response |
+|---|---|---|---|
+| `GET /api/v1/workspaces/{workspace_id}/search` | VIEWER | `q` (1–4000 chars, required) | `200` `SearchResponse`, or `422` (missing/empty `q`) |
+
+`SearchResponse`: `{query, method, results}`, where `results` is
+`list[SearchResultRead]` — `{rank, chunk_id, document_id,
+document_filename, page, section, content, score}`, in ranked order
+(`rank` 0-based). `method` is currently always `"hybrid"` (the same
+dense+lexical+RRF+rerank pipeline chat uses, via the same
+`hybrid_search()` entry point) — a plain string, not a closed enum, so
+a future single-method mode (e.g. `?method=lexical`) wouldn't need a
+schema change.
+
+Exactly the same `hybrid_search()` call chat's ask flow uses — workspace
+isolation, the `READY`-only SQL-level filter, and the Redis-backed Tier
+A rate limiting (`search` operation, IP + authenticated user ID, same
+numbers as `conversation_message`) all apply identically. Each search
+records a `RetrievalEvent` with `conversation_id`/`message_id` both
+`null` (that table's columns are nullable specifically for this case —
+see `app/models/retrieval_event.py`), so search queries are observable/
+evaluable exactly like chat ones, distinguishable by their null
+conversation/message linkage.
 
 ## Implemented: `/api/v1/workspaces/{workspace_id}/conversations`
 

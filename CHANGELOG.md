@@ -10,10 +10,42 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-10-23 — Collections (feature-completion sprint, Issue #41, priority 1 of 7) (in progress)
+### 2026-10-23 — Standalone search (feature-completion sprint, Issue #41, priority 2 of 7) (in progress)
 
-*(Branch `feat/collections`, cut from `main` at `faef86b`. Not yet
-committed as of this entry.)*
+*(Branch `feat/standalone-search`, cut from `main` at `06b8c9e`. Not
+yet committed as of this entry.)*
+
+- Implements standalone search end-to-end: `GET
+  /workspaces/{id}/search` (`backend/app/api/v1/search.py`,
+  `app/services/search_service.py`) — retrieval only, reuses the exact
+  same `hybrid_search()` chat's ask flow calls, never touches
+  `app.generation`. Records a `RetrievalEvent` with `conversation_id`/
+  `message_id` both `null` (that table's columns are nullable
+  specifically for this case). Rate-limited the same way
+  `conversation_message` is (`enforce_search_rate_limit()`, new
+  `search` operation/dimension in `app/core/rate_limit.py`).
+- Real `frontend/app/search/page.tsx` (query input, loading/error/
+  empty/no-results states, ranked results with filename/page/section/
+  score/snippet), replacing the `PageStub`; added to the nav.
+- 8 new backend tests, 3 new frontend tests.
+- Backfills `docs/API_CONTRACT.md`/`docs/SECURITY.md` with the new
+  search endpoint's contract and isolation/rate-limit evidence, and
+  also catches up the same documentation for Collections (Issue #41
+  priority 1), which was missed in that PR.
+- Full regression re-run clean: backend 767 passed + 1 skip, frontend
+  94/94, `ruff`/`mypy`/`eslint`/`tsc`/`next build` all clean.
+- Updates `docs/REQUIREMENTS_MATRIX.md` §2 and `PROJECT_STATE.md` to
+  record standalone search as `COMPLETE` with evidence.
+
+## [Unreleased — committed]
+
+### 2026-10-23 — `feat: add collections (Issue #41, priority 1 of 7)` (#43), merged as `06b8c9e`
+
+*(Branch `feat/collections`, cut from the merged requirements-matrix
+PR (`faef86b`, PR #42). Verified green on GitHub Actions CI (all 4
+required jobs, including a notably slow `espeak-ng`/Playwright-browser
+install on the runner that day, unrelated to this diff) and **merged
+into `main` as squash commit `06b8c9e`**.)*
 
 - Implements collections end-to-end: `collections`/`collection_documents`
   schema (migration `0010`), workspace-role-gated CRUD + document
@@ -31,8 +63,6 @@ committed as of this entry.)*
   all clean.
 - Updates `docs/REQUIREMENTS_MATRIX.md` §1 and `PROJECT_STATE.md` to
   record Collections as `COMPLETE` with evidence.
-
-## [Unreleased — committed]
 
 ### 2026-10-23 — `docs: requirements matrix for feature-completion sprint` (#42), merged as `faef86b`
 

@@ -16,6 +16,7 @@ import {
   MessageListSchema,
   MessageResponseSchema,
   MessageSchema,
+  SearchResponseSchema,
   SessionListSchema,
   UserSchema,
   VoiceMessageSchema,
@@ -31,6 +32,7 @@ import {
   type Message,
   type MessageFeedback,
   type MessageResponse,
+  type SearchResponse,
   type SessionInfo,
   type User,
   type VoiceMessage,
@@ -368,6 +370,16 @@ export async function getDocumentChunk(
     "GET"
   );
   return DocumentChunkSchema.parse(await response.json());
+}
+
+// --- Search ---
+
+export async function search(workspaceId: string, query: string): Promise<SearchResponse> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/search?q=${encodeURIComponent(query)}`,
+    "GET"
+  );
+  return SearchResponseSchema.parse(await response.json());
 }
 
 // --- Conversations ---

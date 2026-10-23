@@ -161,6 +161,28 @@ export const CollectionWithDocumentsSchema = CollectionSchema.extend({
 });
 export type CollectionWithDocuments = z.infer<typeof CollectionWithDocumentsSchema>;
 
+// --- Search (Issue #41) ---
+// Mirrors backend/app/schemas/search.py exactly.
+
+export const SearchResultSchema = z.object({
+  rank: z.number(),
+  chunk_id: z.string(),
+  document_id: z.string(),
+  document_filename: z.string(),
+  page: z.number().nullable(),
+  section: z.string().nullable(),
+  content: z.string(),
+  score: z.number(),
+});
+export type SearchResult = z.infer<typeof SearchResultSchema>;
+
+export const SearchResponseSchema = z.object({
+  query: z.string(),
+  method: z.string(),
+  results: z.array(SearchResultSchema),
+});
+export type SearchResponse = z.infer<typeof SearchResponseSchema>;
+
 // --- Conversations (Issue #4/#5) ---
 // Mirrors backend/app/schemas/conversation.py exactly.
 
