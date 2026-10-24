@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { CommandPalette } from "@/components/command-palette";
 import { Nav } from "@/components/layout/nav";
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -7,6 +8,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="min-h-screen">
       <Nav />
       <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
+      <CommandPalette />
     </div>
   );
 }

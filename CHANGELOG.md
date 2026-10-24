@@ -10,10 +10,58 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-10-24 — Document management: rename/delete/download/filter/search (feature-completion sprint, Issue #41, priority 5 of 7) (in progress)
+### 2026-10-24 — Command palette (feature-completion sprint, Issue #41, priority 6 of 7) (in progress)
 
-*(Branch `feat/document-management`, cut from `main` at `6822b76`. Not
-yet committed as of this entry.)*
+*(Branch `feat/command-palette`, cut from `main` at `b642afc`. Not yet
+committed as of this entry.)*
+
+- Implements a global `Ctrl+K`/`Cmd+K` command palette end-to-end:
+  `frontend/components/command-palette.tsx`, mounted once in
+  `AppShell` so it's available from every authenticated page.
+  Deliberately no new dependency (`cmdk` etc.) — a small, self-
+  contained filtered action list covers this feature's scope. A
+  visible trigger button plus the keyboard shortcut; actions for
+  every real route (Dashboard/Documents/Collections/Search/Chat/
+  Settings/Workspace) and a dynamic "Switch workspace to…" action per
+  other workspace. `evaluations`/`analytics` deliberately excluded —
+  both remain `PageStub`s, matching the main nav's own existing
+  precedent of not linking to still-stubbed routes.
+- Avoided a `setState`-in-`useEffect` ESLint violation by resetting
+  the selected-action index directly at each place the palette opens
+  or the query changes, rather than via a derived effect.
+- 9 new component tests
+  (`frontend/components/command-palette.test.tsx`).
+- **Found and fixed a real, reproduced flaky backend test** during the
+  routine full-suite sanity run (no backend *feature* code changed
+  this slice, but the suite is still re-run as a habit):
+  `test_feedback_on_a_user_message_is_rejected` picked "the user
+  message" by list position rather than role, the same shared-
+  transaction `created_at`-tie fragility already fixed twice this
+  sprint in the regenerate tests — it had simply never actually
+  flaked before this run. See `SOLVING.md`'s 2026-10-24 entry.
+- Full regression re-run clean: frontend 113/113, Playwright 21/21 (no
+  regression), `eslint`/`tsc`/`next build` all clean; backend 797
+  passed + 1 skip, `ruff`/`mypy .` clean (after the flaky-test fix
+  above).
+- Real-browser verification beyond the automated suites: visible
+  trigger present; `Ctrl+K` opens the palette *while a text input
+  already has focus*, with that input's typed content verified
+  completely unaffected afterward (direct evidence the one explicit
+  risk this item's own plan flagged didn't materialize); filter →
+  arrow-down → Enter navigates; outside click closes it; `Escape`
+  closes it; a real switch-workspace action actually switches the
+  active workspace.
+- Updates `docs/ARCHITECTURE.md`, `docs/REQUIREMENTS_MATRIX.md` §6,
+  and `PROJECT_STATE.md` to record the command palette as `COMPLETE`
+  with evidence.
+
+## [Unreleased — committed]
+
+### 2026-10-24 — `feat: add document management (Issue #41, priority 5 of 7)` (#47), merged as `b642afc`
+
+*(Branch `feat/document-management`, cut from the merged regenerate PR
+(`6822b76`, PR #46). Verified green on GitHub Actions CI and **merged
+into `main` as squash commit `b642afc`**.)*
 
 - Implements document management end-to-end: `PATCH`/`DELETE`/
   `GET .../download` on `/workspaces/{id}/documents/{id}`
@@ -56,8 +104,6 @@ yet committed as of this entry.)*
 - Updates `docs/API_CONTRACT.md`, `docs/SECURITY.md`,
   `docs/REQUIREMENTS_MATRIX.md` §5, and `PROJECT_STATE.md` to record
   document management as `COMPLETE` with evidence.
-
-## [Unreleased — committed]
 
 ### 2026-10-23 — `feat: add answer regeneration (Issue #41, priority 4 of 7)` (#46), merged as `6822b76`
 

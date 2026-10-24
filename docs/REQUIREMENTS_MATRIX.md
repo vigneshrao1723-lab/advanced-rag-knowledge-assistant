@@ -258,37 +258,57 @@ exists but the user-facing workflow is not complete end-to-end.
 
 ## 6. Command palette
 
-**Status: MISSING.**
+**Status: COMPLETE.**
 
-- **Evidence:** No `cmdk` dependency in `frontend/package.json`, no
-  component matching `CommandPalette`/`command-palette` anywhere in
-  `frontend/` (confirmed by `grep`). `docs/ARCHITECTURE.md` specifies
-  `Ctrl+K` with actions: open document, new chat, search, switch
-  workspace, evaluations, settings.
-- **Acceptance criteria:** `Ctrl+K`/`Cmd+K` opens a searchable palette
-  listing the actions above; works from any authenticated page;
-  keyboard-navigable (arrow keys + Enter), closes on `Escape` or an
-  outside click/selection; has a visible, accessible trigger as well
-  (not keyboard-shortcut-only, for discoverability and
-  non-keyboard/mobile users); does not trap focus incorrectly or break
-  existing page keyboard shortcuts (e.g. the chat composer).
-  Correctness of each action depends on items 1/2 above already
-  existing (e.g. "search" as a palette action only makes sense once
-  `/search` is real) — so this is sequenced after them.
-- **Dependencies/risks:** Purely additive frontend work, zero backend
-  change, zero risk to existing RAG/auth correctness. The only real
-  risk is a global keyboard-shortcut listener interfering with existing
-  input fields (the chat composer, auth forms) — must be scoped to not
-  fire while a text input/textarea already has focus for a conflicting
-  key, and tested for that explicitly.
-- **Effort/priority:** Small (self-contained, no backend). **Priority 6**
-  (explicitly sequenced last among the frontend items since several of
-  its actions depend on 1–3 existing first).
-- **Next slice:** add a small, dependency-free or `cmdk`-based palette
-  component → wire the actions that already exist today (new chat,
-  switch workspace, settings, documents) → extend with search/
-  evaluations links once those slices land → tests (keyboard nav,
-  focus-trap-avoidance, accessible labels).
+- **Evidence:** `frontend/components/command-palette.tsx`, mounted
+  once in `AppShell` (`components/layout/shell.tsx`) so it's available
+  from every authenticated page. Deliberately no new dependency
+  (`cmdk` etc.) — a small, self-contained filtered action list covers
+  this feature's actual scope. A visible trigger button (bottom-right,
+  always rendered when authenticated, `aria-label="Open command
+  palette"`) plus a global `Ctrl+K`/`Cmd+K` listener. Actions: go to
+  Dashboard/Documents/Collections/Search/Chat/Settings/Workspace
+  settings, plus a dynamic "Switch workspace to…" action per other
+  workspace (excludes the already-current one).
+  `evaluations`/`analytics` are deliberately excluded — both remain
+  `PageStub`s, matching the main nav's own existing precedent of not
+  linking to still-stubbed routes (see PR #38's nav cleanup).
+  9 new component tests
+  (`frontend/components/command-palette.test.tsx`: renders nothing
+  unauthenticated, opens via the trigger button and via `Ctrl+K`,
+  filters by query, arrow-key-then-Enter navigates, click navigates,
+  `Escape` closes, switch-workspace action fires with the right ID,
+  current workspace excluded from switch targets). **Verified
+  end-to-end in a real browser**, not just unit tests: the visible
+  trigger is present; `Ctrl+K` opens the palette *while a text input
+  already has focus*, and that input's typed content is verified
+  completely unaffected afterward (direct evidence the risk below
+  didn't materialize); filter → arrow-down → Enter navigates; an
+  outside click closes it; `Escape` closes it; a real switch-workspace
+  action actually switches the active workspace.
+- **Acceptance criteria:** met — see evidence above. (A routine
+  full-suite sanity run during this slice also surfaced and fixed an
+  unrelated, real, pre-existing flaky backend test —
+  `test_feedback_on_a_user_message_is_rejected` — see `SOLVING.md`'s
+  2026-10-24 entry; not a consequence of this item's own changes,
+  which are frontend-only.)
+- **Dependencies/risks:** None encountered. The one explicit risk this
+  item's own earlier note flagged — a global keyboard listener
+  interfering with existing input fields — was verified, not just
+  assumed, not to materialize: `Ctrl+K`/`Cmd+K` is a modifier chord
+  that never collides with normal typing (confirmed no existing
+  Escape/Ctrl/Cmd handler exists anywhere else in this app via
+  `grep`), and the live-browser check above directly proves a focused
+  input's content survives the shortcut firing. No focus trap is
+  implemented (deliberately — the acceptance criterion is "does not
+  trap focus incorrectly," which the simplest way to satisfy is to not
+  attempt one at all; `Escape`/outside-click/`Enter` are the only close
+  paths, which is sufficient for this feature's scope).
+- **Effort/priority:** Delivered. Was **Priority 6**.
+- **Next slice:** none. A natural future extension once
+  `evaluations`/`analytics` graduate from `PageStub` to real pages:
+  add them as palette actions then, matching this item's own stated
+  sequencing logic for why they were excluded now.
 
 ## 7. Recursive chunking strategy
 

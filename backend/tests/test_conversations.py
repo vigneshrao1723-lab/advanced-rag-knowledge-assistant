@@ -770,10 +770,15 @@ def test_feedback_on_a_user_message_is_rejected(client: TestClient) -> None:
     workspace = _create_workspace(client)
     conversation = _create_conversation(client, workspace["id"])
     _post_message(client, workspace["id"], conversation["id"], "anything")
-    user_message_id = client.get(
+    messages = client.get(
         f"/api/v1/workspaces/{workspace['id']}/conversations/{conversation['id']}/messages",
         headers=csrf_headers(client),
-    ).json()[0]["id"]
+    ).json()
+    # Found by role, not list position -- within a single test's shared
+    # transaction, `created_at` ties between the user/assistant message
+    # (see `_push_user_message_earlier()`'s docstring below), so the
+    # list's own order is not a reliable way to pick "the" user message.
+    user_message_id = next(m["id"] for m in messages if m["role"] == "USER")
 
     response = _set_feedback(client, workspace["id"], conversation["id"], user_message_id, "UP")
     assert response.status_code == 404
