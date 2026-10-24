@@ -241,6 +241,32 @@ caller-supplied key.
   document-level authorization beyond the standard workspace role check
   (no per-document ACLs exist).
 
+**Implemented (Issue #41 — rename/delete/download,**
+`PATCH`/`DELETE`/`GET .../download` on
+`/api/v1/workspaces/{workspace_id}/documents/{document_id}`**):**
+
+- **Rename** only ever updates the display `filename` column — never
+  the storage key, which stays server-generated and permanent. Bounded
+  (1–255 characters) by `DocumentRename`.
+- **Delete** removes the database row, then attempts the underlying
+  storage object; its citation/chunk-cascade behavior is a documented
+  decision, not an oversight — see `docs/API_CONTRACT.md` "Document
+  delete." The storage-cleanup attempt is best-effort: a failure is
+  logged (identifiers only, never a path) and never surfaces as a
+  user-facing error, since the database state is already correct and
+  consistent by that point.
+- **Download's `Content-Disposition` header is sanitized** before the
+  user-supplied `filename` is placed into it — CR/LF (header/response
+  splitting, which could otherwise inject an arbitrary second header)
+  and `"` (which would otherwise let a crafted filename break out of
+  the quoted `filename="..."` parameter) are stripped. This is the
+  first endpoint in this API that puts user-controlled text directly
+  into a response header value, so no prior precedent covered it.
+  Tested: `backend/tests/test_document_management.py::test_download_sanitizes_an_unsafe_filename_in_the_header`
+  (renames a document to a filename containing `"`/CR/LF plus an
+  injected header line, downloads it, and asserts neither the raw
+  characters nor the injected header appear in the real response).
+
 **Implemented (Issue #3, Slice 3.4 — text extraction,**
 `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process`,
 `backend/app/ingestion/extraction.py` +
@@ -502,9 +528,12 @@ detail). **`AuditEvent.DOCUMENT_PARSED`/`DOCUMENT_PARSING_FAILED` are
 implemented** (Issue #3, Slice 3.4) — emitted exactly once per
 `/process` call, on the extraction outcome (never on an already-`PARSED`
 `409` rejection, which never reaches the extraction step at all); see
-"Upload & document safety" above for the exact metadata. Document-delete
-and other document-lifecycle audit events will be added when those
-surfaces exist. **`AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` is
+"Upload & document safety" above for the exact metadata.
+**`AuditEvent.DOCUMENT_RENAMED`/`DOCUMENT_DELETED` are implemented**
+(Issue #41) — emitted exactly once per successful rename/delete, with
+metadata limited to `document_id` (never the filename, which is
+user-controlled display text, not something to persist redundantly
+into the audit trail). **`AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` is
 implemented** (Issue #7) — distinct from `AUTHORIZATION_DENIED` (which
 fires at the workspace-membership gate, before a request ever reaches an
 endpoint's own logic): this fires when an already-workspace-authorized
@@ -585,7 +614,16 @@ Per `AGENTS.md` §3, security assumptions are verified, not just documented:
   `test_regenerate_a_user_message_returns_404`) prove the same
   non-leaking `404` for the full document viewer's chunk-listing
   endpoint and for regenerate, and `test_viewer_cannot_regenerate`
-  proves the VIEWER role is correctly read-only there too.
+  proves the VIEWER role is correctly read-only there too. **Extended
+  to document rename/delete/download (Issue #41)** —
+  `backend/tests/test_document_management.py`
+  (`test_rename_cross_workspace_is_not_reachable`,
+  `test_delete_cross_workspace_is_not_reachable`,
+  `test_download_cross_workspace_is_not_reachable`) prove the same
+  non-leaking `404` for all three, and
+  `test_viewer_cannot_rename_document`/`test_viewer_cannot_delete_document`
+  prove the VIEWER role is correctly read-only there too (download
+  stays VIEWER-accessible by design, like every other read endpoint).
 - **Malicious upload tests** — oversized files, mismatched
   extension/content, malformed PDFs/DOCX, zip-bomb-style payloads; must be
   rejected or safely contained. **Implemented (Issue #3, Slices 3.3–3.4)**

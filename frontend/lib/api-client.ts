@@ -29,6 +29,7 @@ import {
   type Conversation,
   type Document,
   type DocumentChunk,
+  type DocumentStatus,
   type Member,
   type Message,
   type MessageFeedback,
@@ -331,8 +332,18 @@ export async function removeDocumentFromCollection(
 
 // --- Documents ---
 
-export async function listDocuments(workspaceId: string): Promise<Document[]> {
-  const response = await apiRequest(`/api/v1/workspaces/${workspaceId}/documents`, "GET");
+export async function listDocuments(
+  workspaceId: string,
+  options?: { status?: DocumentStatus; q?: string }
+): Promise<Document[]> {
+  const params = new URLSearchParams();
+  if (options?.status) params.set("status", options.status);
+  if (options?.q) params.set("q", options.q);
+  const query = params.toString();
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/documents${query ? `?${query}` : ""}`,
+    "GET"
+  );
   return DocumentListSchema.parse(await response.json());
 }
 
@@ -342,6 +353,32 @@ export async function getDocument(workspaceId: string, documentId: string): Prom
     "GET"
   );
   return DocumentSchema.parse(await response.json());
+}
+
+export async function renameDocument(
+  workspaceId: string,
+  documentId: string,
+  filename: string
+): Promise<Document> {
+  const response = await apiRequest(
+    `/api/v1/workspaces/${workspaceId}/documents/${documentId}`,
+    "PATCH",
+    { body: JSON.stringify({ filename }) }
+  );
+  return DocumentSchema.parse(await response.json());
+}
+
+export async function deleteDocument(workspaceId: string, documentId: string): Promise<void> {
+  await apiRequest(`/api/v1/workspaces/${workspaceId}/documents/${documentId}`, "DELETE");
+}
+
+/** A plain URL, not a fetch wrapper -- meant to be used directly as an
+ * `<a href>` with a `download` attribute, matching
+ * `getMessageAudioUrl()`'s identical pattern: a same-site `GET` already
+ * carries this app's auth cookies on its own, and CSRF protection only
+ * covers state-changing methods (see `buildRequestInit()`). */
+export function getDocumentDownloadUrl(workspaceId: string, documentId: string): string {
+  return `${getApiBaseUrl()}/api/v1/workspaces/${workspaceId}/documents/${documentId}/download`;
 }
 
 export async function uploadDocument(workspaceId: string, file: File): Promise<Document> {

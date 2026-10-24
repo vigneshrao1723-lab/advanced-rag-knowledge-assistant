@@ -43,8 +43,10 @@ test.describe.serial("Upload a document and ask a grounded question about it", (
     // Wait for the pipeline to reach READY (polled every 3s by the page
     // itself) — a generous timeout since extraction/cleaning/chunking/
     // embedding/indexing all run synchronously, in-request, on the
-    // backend's own `/process` call.
-    await expect(page.getByText("READY")).toBeVisible({ timeout: 30_000 });
+    // backend's own `/process` call. Scoped to the document row's own
+    // status badge (`getByRole("listitem")`) — the status-filter
+    // dropdown added for Issue #41 also has a "READY" `<option>`.
+    await expect(page.getByRole("listitem").getByText("READY")).toBeVisible({ timeout: 30_000 });
 
     // Ask a question in Chat and verify a real, grounded, cited answer.
     await page.goto("/chat");

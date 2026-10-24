@@ -10,10 +10,60 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-10-23 — Answer regeneration (feature-completion sprint, Issue #41, priority 4 of 7) (in progress)
+### 2026-10-24 — Document management: rename/delete/download/filter/search (feature-completion sprint, Issue #41, priority 5 of 7) (in progress)
 
-*(Branch `feat/regenerate-response`, cut from `main` at `4cfc546`. Not
+*(Branch `feat/document-management`, cut from `main` at `6822b76`. Not
 yet committed as of this entry.)*
+
+- Implements document management end-to-end: `PATCH`/`DELETE`/
+  `GET .../download` on `/workspaces/{id}/documents/{id}`
+  (`document_service.rename_document()`/`delete_document()`/
+  `download_document()`), plus `?status=`/`?q=` filter/search on the
+  list endpoint (`document_repository.list_for_workspace()` extended
+  with optional, backward-compatible params). Delete removes the
+  database row first, then best-effort-deletes the storage file;
+  `StorageProvider.delete()` turned out to already exist. Download's
+  `Content-Disposition` filename is sanitized (CR/LF/`"` stripped) --
+  the first endpoint in this API to put user-controlled text directly
+  into a response header.
+- **Citation-retention decision, made and documented rather than left
+  implicit**: `citations.document_id`/`chunk_id` already have `ON
+  DELETE CASCADE`, so deleting a document removes its chunks and any
+  citations pointing at them -- kept as-is (a dead citation to a gone
+  document would only be dead UI) rather than migrating two foreign
+  keys for no real benefit. Chat message *content* was never at risk
+  either way, since there's no foreign key from `messages` to
+  `documents` at all. See `docs/API_CONTRACT.md`'s new "Document
+  delete" section for the full reasoning.
+- Real rename (inline)/delete (confirm)/download (`<a download>`)
+  controls plus a filename-search box and a status `<select>` on
+  `frontend/app/documents/page.tsx`.
+- 17 new backend tests (`tests/test_document_management.py`), 5 new
+  frontend tests in `app/documents/page.test.tsx`.
+- **Found and fixed a real regression in the formal Playwright
+  suite**, not just my own new tests: the new status-filter `<select>`
+  added a `<option>READY</option>`, which collided with
+  `e2e/documents-chat.spec.ts`'s existing `page.getByText("READY")`
+  (a strict-mode violation -- two matching elements). Scoped that
+  query to the document row itself.
+- Full regression re-run clean: backend 797 passed + 1 skip, frontend
+  104/104, Playwright 21/21 (after the fix above), `ruff`/`mypy .`/
+  `eslint`/`tsc`/`next build` all clean.
+- Real-browser verification beyond the automated suites: upload →
+  rename → search by the new name → filter by status → download
+  (byte-for-byte content verified) → delete → confirm back to the
+  empty state.
+- Updates `docs/API_CONTRACT.md`, `docs/SECURITY.md`,
+  `docs/REQUIREMENTS_MATRIX.md` §5, and `PROJECT_STATE.md` to record
+  document management as `COMPLETE` with evidence.
+
+## [Unreleased — committed]
+
+### 2026-10-23 — `feat: add answer regeneration (Issue #41, priority 4 of 7)` (#46), merged as `6822b76`
+
+*(Branch `feat/regenerate-response`, cut from the merged document-viewer
+PR (`4cfc546`, PR #45). Verified green on GitHub Actions CI and
+**merged into `main` as squash commit `6822b76`**.)*
 
 - Implements answer regeneration end-to-end: `POST
   /workspaces/{id}/conversations/{id}/messages/{id}/regenerate`
@@ -51,8 +101,6 @@ yet committed as of this entry.)*
 - Updates `docs/API_CONTRACT.md`, `docs/SECURITY.md`,
   `docs/REQUIREMENTS_MATRIX.md` §4, and `PROJECT_STATE.md` to record
   answer regeneration as `COMPLETE` with evidence.
-
-## [Unreleased — committed]
 
 ### 2026-10-23 — `feat: add full document viewer + citation highlighting (Issue #41, priority 3 of 7)` (#45), merged as `4cfc546`
 

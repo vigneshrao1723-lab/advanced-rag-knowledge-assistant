@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -26,6 +26,8 @@ vi.mock("@/lib/api-client", async () => {
     listDocuments: vi.fn(),
     uploadDocument: vi.fn(),
     processDocument: vi.fn(),
+    renameDocument: vi.fn(),
+    deleteDocument: vi.fn(),
   };
 });
 
@@ -73,8 +75,12 @@ describe("DocumentsPage", () => {
     render(<DocumentsPage />);
 
     expect(await screen.findByText("report.pdf")).toBeInTheDocument();
-    expect(screen.getByText("READY")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /report\.pdf/i })).toHaveAttribute(
+    // Scoped to the document row, not the page overall -- the status
+    // filter dropdown also has a "READY" option elsewhere on the page.
+    expect(within(screen.getByRole("listitem")).getByText("READY")).toBeInTheDocument();
+    // Anchored at the start -- the download link's accessible name is
+    // "Download report.pdf", which would otherwise also match.
+    expect(screen.getByRole("link", { name: /^report\.pdf/i })).toHaveAttribute(
       "href",
       "/documents/d1"
     );
@@ -147,5 +153,99 @@ describe("DocumentsPage", () => {
     render(<DocumentsPage />);
 
     expect(await screen.findByText(/select or create a workspace/i)).toBeInTheDocument();
+  });
+
+  const SAMPLE_DOCUMENT = {
+    id: "d1",
+    filename: "report.pdf",
+    mime_type: "application/pdf",
+    size_bytes: 2048,
+    checksum_sha256: "abc",
+    status: "READY" as const,
+    page_count: 3,
+    failure_reason: null,
+    created_at: "",
+    updated_at: "",
+  };
+
+  it("renames a document from the inline form", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listDocuments).mockResolvedValue([SAMPLE_DOCUMENT]);
+    vi.mocked(api.renameDocument).mockResolvedValue({ ...SAMPLE_DOCUMENT, filename: "renamed.pdf" });
+    const user = userEvent.setup();
+
+    render(<DocumentsPage />);
+    await screen.findByText("report.pdf");
+    await user.click(screen.getByRole("button", { name: /rename report\.pdf/i }));
+    const input = screen.getByLabelText(/document name/i);
+    await user.clear(input);
+    await user.type(input, "renamed.pdf");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(api.renameDocument).toHaveBeenCalledWith("w1", "d1", "renamed.pdf");
+  });
+
+  it("deletes a document after confirmation", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listDocuments).mockResolvedValue([SAMPLE_DOCUMENT]);
+    vi.mocked(api.deleteDocument).mockResolvedValue(undefined);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+
+    render(<DocumentsPage />);
+    await screen.findByText("report.pdf");
+    await user.click(screen.getByRole("button", { name: /delete report\.pdf/i }));
+
+    expect(api.deleteDocument).toHaveBeenCalledWith("w1", "d1");
+    await waitFor(() => expect(screen.queryByText("report.pdf")).not.toBeInTheDocument());
+  });
+
+  it("does not delete a document when the confirmation is declined", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listDocuments).mockResolvedValue([SAMPLE_DOCUMENT]);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+
+    render(<DocumentsPage />);
+    await screen.findByText("report.pdf");
+    await user.click(screen.getByRole("button", { name: /delete report\.pdf/i }));
+
+    expect(api.deleteDocument).not.toHaveBeenCalled();
+  });
+
+  it("hides rename/delete controls for a VIEWER but still shows download", async () => {
+    mockAuthenticated();
+    mockWorkspace("VIEWER");
+    vi.mocked(api.listDocuments).mockResolvedValue([SAMPLE_DOCUMENT]);
+
+    render(<DocumentsPage />);
+
+    await screen.findByText("report.pdf");
+    expect(screen.queryByRole("button", { name: /rename report\.pdf/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /delete report\.pdf/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /download report\.pdf/i })).toBeInTheDocument();
+  });
+
+  it("filters the document list by status and searches by filename", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listDocuments).mockResolvedValue([SAMPLE_DOCUMENT]);
+    const user = userEvent.setup();
+
+    render(<DocumentsPage />);
+    await screen.findByText("report.pdf");
+
+    await user.selectOptions(screen.getByLabelText(/^status$/i), "READY");
+    await waitFor(() =>
+      expect(api.listDocuments).toHaveBeenLastCalledWith("w1", { status: "READY", q: undefined })
+    );
+
+    await user.type(screen.getByLabelText(/search by filename/i), "report");
+    await waitFor(() =>
+      expect(api.listDocuments).toHaveBeenLastCalledWith("w1", { status: "READY", q: "report" })
+    );
   });
 });

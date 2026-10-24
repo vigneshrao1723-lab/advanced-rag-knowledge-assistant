@@ -16,50 +16,62 @@ in-flight task — overwrite it as work progresses, don't append a history
 2. **Standalone search UI — done.** Merged as `45e5c85` (PR #44).
 3. **Full document viewer + citation highlighting — done.** Merged as
    `4cfc546` (PR #45).
-4. **Answer regeneration — done this pass, uncommitted.** See
-   "Completed this pass" below.
-5. Document management beyond list/get/upload/process (delete/rename/
-   download/filter) — not started.
+4. **Answer regeneration — done.** Merged as `6822b76` (PR #46).
+5. **Document management (rename/delete/download/filter/search) —
+   done this pass, uncommitted.** See "Completed this pass" below.
 6. Command palette — not started.
 7. Recursive chunking strategy — not started.
 
-`main` is at `4cfc546`. Work for item 4 is on branch
-`feat/regenerate-response`, fully implemented and verified, not yet
+`main` is at `6822b76`. Work for item 5 is on branch
+`feat/document-management`, fully implemented and verified, not yet
 committed.
 
-## Completed this pass (uncommitted, on `feat/regenerate-response`)
+## Completed this pass (uncommitted, on `feat/document-management`)
 
-- `POST /workspaces/{id}/conversations/{id}/messages/{id}/regenerate`
-  (MEMBER+): `backend/app/api/v1/conversations.py`,
-  `conversation_service.regenerate_message()`. Finds the preceding
-  `USER` message (`message_repository.get_preceding_user_message()`,
-  new), re-runs the same `_run_retrieval_and_generation()` helper
-  `post_message()` uses, replaces the assistant message's content in
-  place (`message_repository.update_content()`, new — clears prior
-  feedback) and its citations
-  (`citation_repository.delete_for_message()`, new, immediately before
-  `bulk_create()` persists fresh ones — a generation failure happens
-  before either call, so the prior answer is never touched). Same rate
-  limit as posting a message.
-- A "Regenerate" button (`RotateCcw` icon) on each assistant message in
-  `frontend/app/chat/page.tsx` (renamed the `MessageBubble` callback
-  prop from `onFeedbackChanged` to `onMessageUpdated` since it's now
-  shared by feedback and regenerate — same "replace this message by
-  id" behavior either way, just a more accurate name).
-- Tests: 8 new backend (`tests/test_conversations.py`: fresh grounded
-  answer + citations with message id/history-length unchanged,
-  feedback cleared, regenerating a `USER` message is `404`,
-  nonexistent message `404`, cross-workspace `404`, VIEWER `403`,
-  unauthenticated `401`, rate limit enforced), 1 new frontend test.
+- `PATCH`/`DELETE`/`GET .../download` on
+  `/workspaces/{id}/documents/{id}`
+  (`document_service.rename_document()`/`delete_document()`/
+  `download_document()`), plus `?status=`/`?q=` filter/search on the
+  list endpoint. `document_repository.rename()`/`delete()` (new);
+  `list_for_workspace()` extended with optional, backward-compatible
+  `status`/`filename_query` params. `StorageProvider.delete()` already
+  existed — didn't need to be built. Delete removes the database row
+  first, then best-effort-deletes the storage file (logged on
+  failure, never surfaced as a user-facing error). Download's
+  `Content-Disposition` filename is sanitized (CR/LF/`"` stripped) —
+  the first endpoint in this API to put user-controlled text directly
+  into a response header.
+- **Citation-retention decision, made and documented**:
+  `citations.document_id`/`chunk_id` already have `ON DELETE CASCADE`
+  — deleting a document removes its chunks and any citations pointing
+  at them. Kept as-is rather than migrating two foreign keys: a
+  citation to a now-gone document/chunk would only be dead UI, and
+  chat message *content* was never at risk either way (no FK from
+  `messages` to `documents` exists at all). Full reasoning in
+  `docs/API_CONTRACT.md`'s new "Document delete" section.
+- Real rename (inline)/delete (confirm)/download (`<a download>`)
+  controls plus a filename-search box and a status `<select>` on
+  `frontend/app/documents/page.tsx`.
+- Tests: 17 new backend (`tests/test_document_management.py` —
+  rename/delete/download each with not-found/cross-workspace/
+  VIEWER-role checks, empty-filename rejection, header-injection
+  sanitization, status-filter/filename-search checks, and a direct
+  cascade-vs-message-content verification), 5 new frontend.
+- **Found and fixed a real regression in the formal Playwright
+  suite** (not just my own new tests): the status-filter `<select>`'s
+  `<option>READY</option>` collided with
+  `e2e/documents-chat.spec.ts`'s existing `page.getByText("READY")` —
+  a strict-mode violation. Fixed by scoping that query to the document
+  row.
 - `docs/API_CONTRACT.md`, `docs/SECURITY.md`,
-  `docs/REQUIREMENTS_MATRIX.md` §4, and `PROJECT_STATE.md` updated to
-  record regenerate as `COMPLETE` with evidence.
+  `docs/REQUIREMENTS_MATRIX.md` §5, and `PROJECT_STATE.md` updated to
+  record document management as `COMPLETE` with evidence.
 
 ## Explicitly NOT done (do not assume otherwise)
 
-- Items 5–7 above (document management, command palette, recursive
-  chunking) — see `docs/REQUIREMENTS_MATRIX.md` for each one's
-  acceptance criteria and planned next slice. None have any code yet.
+- Items 6–7 above (command palette, recursive chunking) — see
+  `docs/REQUIREMENTS_MATRIX.md` for each one's acceptance criteria and
+  planned next slice. Neither has any code yet.
 - Production hosting target remains undecided — see
   `docs/PRODUCTION_READINESS.md`; not this sprint's concern per
   `CLAUDE.md` §4.
@@ -69,46 +81,47 @@ committed.
 None. `gh` CLI, Docker, and the full local stack are all working in
 this environment.
 
-## Tests run (this pass, on `feat/regenerate-response`, after the regenerate implementation)
+## Tests run (this pass, on `feat/document-management`, after the document-management implementation)
 
-- Backend: `uv run ruff check .` (clean), `uv run mypy .` — **the
-  literal CI command, checked before pushing this time** (see
-  `SOLVING.md`'s 2026-10-23 entry from the prior pass) — clean.
-  `uv run pytest -q` — **780 passed, 1 skipped** (772 baseline + 8 new).
+- Backend: `uv run ruff check .` (clean, 162 files), `uv run mypy .`
+  (the literal CI command) clean. `uv run pytest -q` — **797 passed,
+  1 skipped** (780 baseline + 17 new).
 - Frontend: `eslint` (clean), `tsc --noEmit` (clean), `vitest run` —
-  **99/99 passed** (98 baseline + 1 new), `next build` succeeds.
+  **104/104 passed** (99 baseline + 5 new document-management tests;
+  two pre-existing tests in this file needed a query-scope fix for the
+  new status-filter `<select>`'s "READY" option, not a count change).
+  `next build` succeeds (17 routes).
 - Playwright E2E, against a freshly `docker compose up --build -d`
-  stack: **21/21 passed**, no regression.
+  stack: **21/21 passed** — only after fixing the real
+  `documents-chat.spec.ts` regression described above; it failed
+  before that fix.
 - Real-browser verification beyond the automated suites (a standalone
-  Playwright-core script): register → workspace → upload/process a
-  document → ask a question in chat → rate the answer "good" → click
-  Regenerate → confirm the new answer is still grounded in the real
-  document and the prior rating was cleared (`aria-pressed` false
-  again). All 8 steps passed. (One demo-script bug along the way, not
-  a product bug: the script initially skipped the "New conversation"
-  click the chat page needs before a composer renders, then read the
-  feedback button's `aria-pressed` attribute immediately after
-  clicking instead of waiting for the async update — both fixed in the
-  script itself.)
+  Playwright-core script): register → workspace → upload → rename →
+  search by the new name (and confirm a no-match search shows the
+  right empty state) → filter by status (both a match and a
+  non-match) → download (confirmed real byte-for-byte file content,
+  not just a 200) → delete → confirm back to the empty state. All 10
+  steps passed.
 
 ## Exact next recommended action
 
 1. Provenance sweep (`git diff | grep -iE "claude|anthropic|co-authored|generated with"`),
    commit, push, open a PR referencing Issue #41, confirm CI green
-   (check the literal CI commands locally first), merge.
-2. Continue to item 5 (document management beyond list/get/upload/
-   process) — the matrix already has the acceptance criteria and
-   next-slice plan: `StorageProvider.delete()` (new) → `DELETE
-   .../documents/{id}` (decide and implement an explicit
-   citation-retention policy — keep historical citations pointing at a
-   deleted document rather than cascading message deletion, so a past
-   chat answer's history doesn't disappear because its source document
-   was later removed) → `PATCH .../documents/{id}` (rename) → `GET
-   .../documents/{id}/download` → UI buttons → tests. This is the one
-   remaining item flagged as needing the most care (storage cleanup +
-   an explicit, documented decision about what happens to citations),
-   not just mechanical wiring like items 1–4.
-3. Continue through items 6–7 in the matrix's stated priority order,
-   each as its own small, independently tested, separately merged PR.
-   If the available time/effort doesn't cover all seven, update the
-   matrix and this file to say exactly which remain, honestly.
+   (run the literal CI commands locally first), merge.
+2. Continue to item 6 (command palette) — the matrix already has the
+   acceptance criteria and next-slice plan: a `Ctrl+K`/`Cmd+K`-
+   triggered palette (plus a visible, accessible trigger for
+   discoverability) with actions that already exist today (new chat,
+   switch workspace, settings, documents, collections, search) —
+   purely frontend, zero backend change. Must be scoped to not fire
+   while a text input/textarea already has focus (the chat composer,
+   auth forms) — test that explicitly.
+3. Then item 7 (recursive chunking) — a new `RecursiveChunker` class
+   implementing the existing `ChunkingStrategy` protocol
+   (`backend/app/ingestion/chunking.py`), added to
+   `eval/scripts/run_retrieval_evaluation.py`'s comparison set, with a
+   real (never fabricated) evaluation re-run recorded in
+   `eval/results/`.
+4. Each as its own small, independently tested, separately merged PR.
+   After item 7, the matrix's full seven-item scope is done — give a
+   final report covering all of it, not just the last slice.
