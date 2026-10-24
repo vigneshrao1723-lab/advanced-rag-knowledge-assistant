@@ -57,7 +57,12 @@ UPLOADED → PROCESSING → PARSED → CLEANED → CHUNKED → EMBEDDED → INDE
   with configurable chunk size, overlap, and minimum/maximum limits.
   Strategies are meant to be measurably compared (see
   [`docs/EVALUATION.md`](EVALUATION.md)) rather than chosen by intuition
-  alone.
+  alone. **IMPLEMENTED** (GitHub Issues #3/#7/#41,
+  `backend/app/ingestion/chunking.py`): all three now exist —
+  `StructureAwareChunker` (the real ingestion pipeline's only chunker),
+  `FixedSizeChunker`, and `RecursiveChunker` (both evaluation-
+  comparison-only baselines, wired into
+  `eval/scripts/run_retrieval_evaluation.py`'s 3-way comparison).
 - **Embeddings** go through a provider abstraction (`EmbeddingProvider`)
   with batching, retry handling, rate-limit awareness, and tracking of
   which model/version/dimension produced each embedding — this matters

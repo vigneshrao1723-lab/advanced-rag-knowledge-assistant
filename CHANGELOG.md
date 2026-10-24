@@ -10,10 +10,58 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-10-24 — Command palette (feature-completion sprint, Issue #41, priority 6 of 7) (in progress)
+### 2026-10-24 — Recursive chunking strategy (feature-completion sprint, Issue #41, priority 7 of 7) (in progress)
 
-*(Branch `feat/command-palette`, cut from `main` at `b642afc`. Not yet
-committed as of this entry.)*
+*(Branch `feat/recursive-chunking`, cut from `main` at `f1426bc`. Not
+yet committed as of this entry.)*
+
+- Implements `RecursiveChunker` (`backend/app/ingestion/chunking.py`),
+  the sprint's final item: a third, comparison-only chunking strategy
+  implementing the existing `ChunkingStrategy` protocol via a fixed,
+  universal separator priority list (paragraph → line → sentence →
+  word → hard character cut) — deliberately document-type-agnostic,
+  unlike `StructureAwareChunker`'s per-extractor paragraph heuristics.
+  Still never merges across `ExtractedSection`s. The sentence-boundary
+  split uses a lookbehind regex (`(?<=[.!?])\s+`) so terminal
+  punctuation is never dropped. Greedy-packs split pieces up to
+  `target_chunk_size` with character-based overlap, carrying forward
+  the same `buffer_is_pure_overlap` guard `StructureAwareChunker._pack()`
+  already established, so no chunk is ever emitted that's purely
+  carried-forward overlap with no new content. Purely additive — the
+  real ingestion pipeline (`document_service.process_document()`) is
+  unchanged and still uses `StructureAwareChunker` exclusively.
+- 15 new unit tests (`backend/tests/test_chunking.py`): separator
+  fallback at each level (paragraph/line/sentence/word/hard-cut),
+  terminal-punctuation preservation, max-size enforcement, overlap
+  presence in the next chunk, no pure-overlap-only chunk, determinism,
+  never-merges-across-sections, gapless zero-based indexes, empty-
+  section/short-text edge cases, default-config behavior, protocol
+  conformance, and a direct behavioral contrast against
+  `StructureAwareChunker` on single-newline text.
+- Wired into `eval/scripts/run_retrieval_evaluation.py`'s
+  chunking-strategy comparison set (now 3 strategies × 4 retrieval
+  methods = 12 persisted `evaluation_runs`, up from 8) and actually
+  re-run against real Postgres — genuine, non-fabricated numbers
+  recorded in `eval/results/retrieval_evaluation.json`. All three
+  chunking strategies produce identical retrieval metrics on the eval
+  fixture (same honest artifact already documented for
+  structure-aware vs. fixed-size: every fixture document is short
+  enough to become exactly one chunk under any of the three chunkers).
+- Full regression re-run clean: backend **812 passed + 1 skip** (was
+  797; +15 matches the new tests exactly), `ruff check .`/`uv run mypy .`
+  (the exact CI commands) both clean. No frontend change in this item.
+- Updates `docs/EVALUATION.md`, `docs/REQUIREMENTS_MATRIX.md` §7, and
+  `PROJECT_STATE.md` to record recursive chunking as `COMPLETE` with
+  evidence, and to mark the feature-completion sprint's full 7-item
+  scope as implemented.
+
+## [Unreleased — committed]
+
+### 2026-10-24 — `feat: add command palette (Issue #41, priority 6 of 7)` (#48), merged as `f1426bc`
+
+*(Branch `feat/command-palette`, cut from `main` at `b642afc`. Verified
+green on GitHub Actions CI and **merged into `main` as squash commit
+`f1426bc`**.)*
 
 - Implements a global `Ctrl+K`/`Cmd+K` command palette end-to-end:
   `frontend/components/command-palette.tsx`, mounted once in
@@ -54,8 +102,6 @@ committed as of this entry.)*
 - Updates `docs/ARCHITECTURE.md`, `docs/REQUIREMENTS_MATRIX.md` §6,
   and `PROJECT_STATE.md` to record the command palette as `COMPLETE`
   with evidence.
-
-## [Unreleased — committed]
 
 ### 2026-10-24 — `feat: add document management (Issue #41, priority 5 of 7)` (#47), merged as `b642afc`
 

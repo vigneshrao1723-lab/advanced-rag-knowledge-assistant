@@ -162,10 +162,10 @@ class Chunk:
 
 class ChunkingStrategy(Protocol):
     """A strategy is any object providing `chunk(document) -> list[Chunk]`.
-    `StructureAwareChunker` below is the one concrete implementation this
-    slice provides; the protocol exists so a future strategy (fixed-size,
-    recursive -- both explicitly named in `docs/RAG_DESIGN.md`, not
-    implemented here) can be swapped in without changing any caller."""
+    Three concrete implementations exist (`StructureAwareChunker`,
+    `FixedSizeChunker`, `RecursiveChunker` -- all explicitly named in
+    `docs/RAG_DESIGN.md`); the protocol exists so any of them can be
+    swapped in without changing any caller."""
 
     def chunk(self, document: ExtractedDocument) -> list[Chunk]: ...
 
@@ -436,11 +436,166 @@ class FixedSizeChunker:
         ]
 
 
+_RECURSIVE_SPLIT_PATTERNS: Final = (
+    re.compile(r"\n[ \t]*\n+"),  # paragraph (blank line)
+    re.compile(r"\n"),  # line
+    re.compile(r"(?<=[.!?])\s+"),  # sentence -- lookbehind keeps the
+    # terminal punctuation attached to the preceding piece rather than
+    # consumed as part of the separator, matching this module's
+    # existing `_SENTENCE_SPLIT_RE` convention above.
+    re.compile(r"\s+"),  # word
+)
+
+
+class RecursiveChunker:
+    """A generic "recursive character splitting" strategy (GitHub Issue
+    #41, feature-completion sprint priority 7) -- distinct from
+    `StructureAwareChunker` in one deliberate way: it always tries the
+    exact same fixed separator list, in the same order (paragraph ->
+    line -> sentence -> word -> hard character cut), regardless of
+    document type, with no extractor-specific heuristics.
+    `StructureAwareChunker._split_into_pieces()`, by contrast, adapts
+    its paragraph-detection to each extractor's own line-joining
+    convention (falling back to single-newline blocks only for
+    extractors that join lines with `\\n`, not `\\n\\n`) -- a project-
+    specific heuristic this chunker deliberately does not have. This is
+    the textbook "recursive character splitting" definition
+    `docs/RAG_DESIGN.md` names alongside "fixed-size" and
+    "structure-aware."
+
+    Still never merges content across two different `ExtractedSection`s
+    -- that's this module's own schema-compatibility rule (see the
+    module docstring), which applies to every strategy here, not just
+    `StructureAwareChunker`.
+
+    Deterministic, same guarantee as the other two chunkers: the same
+    input and config always produce byte-identical output (verified in
+    tests). Evaluation-comparison only, like `FixedSizeChunker` -- the
+    real ingestion pipeline (`document_service.process_document()`) is
+    unaffected and continues to use `StructureAwareChunker` exclusively.
+    """
+
+    def __init__(self, *, config: ChunkingConfig | None = None) -> None:
+        self._config = config or ChunkingConfig()
+
+    def chunk(self, document: ExtractedDocument) -> list[Chunk]:
+        chunks: list[Chunk] = []
+        next_index = 0
+        for section in document.sections:
+            section_chunks = self._chunk_section(section, start_index=next_index)
+            chunks.extend(section_chunks)
+            next_index += len(section_chunks)
+        return chunks
+
+    def _chunk_section(self, section: ExtractedSection, *, start_index: int) -> list[Chunk]:
+        text = section.text.strip()
+        if not text:
+            return []
+        pieces = self._split(text, _RECURSIVE_SPLIT_PATTERNS)
+        packed = self._pack(pieces)
+        return [
+            Chunk(
+                chunk_index=start_index + i,
+                page=section.page,
+                section=section.heading,
+                content=content,
+            )
+            for i, content in enumerate(packed)
+        ]
+
+    def _split(self, text: str, patterns: tuple[re.Pattern[str], ...]) -> list[str]:
+        """Recursively splits `text` using the first pattern in
+        `patterns` that actually divides it into more than one piece,
+        falling through to the next pattern (and finally a hard
+        character cut) for any piece still over `max_chunk_size`.
+        Always terminates for the same reason
+        `StructureAwareChunker._split_oversized()` does: a hard
+        character cut always makes guaranteed progress."""
+        if len(text) <= self._config.max_chunk_size:
+            return [text]
+        if not patterns:
+            return self._split_hard(text)
+
+        pattern, *remaining_patterns = patterns
+        parts = [part.strip() for part in pattern.split(text) if part.strip()]
+        if len(parts) <= 1:
+            return self._split(text, tuple(remaining_patterns))
+
+        pieces: list[str] = []
+        for part in parts:
+            if len(part) > self._config.max_chunk_size:
+                pieces.extend(self._split(part, tuple(remaining_patterns)))
+            else:
+                pieces.append(part)
+        return pieces
+
+    def _split_hard(self, text: str) -> list[str]:
+        max_size = self._config.max_chunk_size
+        return [text[i : i + max_size] for i in range(0, len(text), max_size)]
+
+    def _pack(self, pieces: list[str]) -> list[str]:
+        """Greedily merges consecutive pieces (each already
+        `<= max_chunk_size` from `_split()`), joined by a single space,
+        up to `target_chunk_size`. Simpler than
+        `StructureAwareChunker._pack()`'s min-size merge-back handling
+        -- deliberately, since this chunker's whole point is the
+        simpler, more generic algorithm -- but still guarantees no
+        produced chunk ever exceeds `max_chunk_size` (verified in
+        tests) and carries `chunk_overlap` characters from each closed
+        chunk's tail into the next one. `buffer_is_pure_overlap`
+        mirrors `StructureAwareChunker._pack()`'s identical tracking
+        (see its own comment) so a piece that doesn't fit even
+        alongside pure overlap text discards that overlap instead of
+        emitting it as its own redundant near-duplicate chunk."""
+        if not pieces:
+            return []
+        config = self._config
+        chunks: list[str] = []
+        buffer = ""
+        buffer_is_pure_overlap = False
+
+        for piece in pieces:
+            candidate = f"{buffer} {piece}" if buffer else piece
+            if len(candidate) <= config.max_chunk_size:
+                buffer = candidate
+                buffer_is_pure_overlap = False
+                if len(buffer) >= config.target_chunk_size:
+                    chunks.append(buffer)
+                    buffer = self._overlap_tail(buffer)
+                    buffer_is_pure_overlap = bool(buffer)
+                continue
+
+            if buffer and not buffer_is_pure_overlap:
+                chunks.append(buffer)
+                overlap = self._overlap_tail(buffer)
+            else:
+                overlap = ""
+
+            candidate_with_overlap = f"{overlap} {piece}" if overlap else piece
+            buffer = (
+                candidate_with_overlap
+                if len(candidate_with_overlap) <= config.max_chunk_size
+                else piece
+            )
+            buffer_is_pure_overlap = False
+
+        if buffer and not buffer_is_pure_overlap:
+            chunks.append(buffer)
+        return chunks
+
+    def _overlap_tail(self, text: str) -> str:
+        overlap = self._config.chunk_overlap
+        if overlap <= 0 or not text:
+            return ""
+        return text[-overlap:]
+
+
 __all__ = [
     "Chunk",
     "ChunkingConfig",
     "ChunkingError",
     "ChunkingStrategy",
     "FixedSizeChunker",
+    "RecursiveChunker",
     "StructureAwareChunker",
 ]
