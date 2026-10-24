@@ -198,7 +198,14 @@ answer → inspect citations.**
 Requirements: responsive across desktop/tablet/mobile, accessible and
 reusable components, explicit loading/empty/error/success/processing states,
 and a command palette (`Ctrl+K`) with actions such as open document, new
-chat, search, switch workspace, evaluations, settings.
+chat, search, switch workspace, evaluations, settings. **Implemented**
+(GitHub Issue #41) — `frontend/components/command-palette.tsx`, mounted
+once in `AppShell`: a visible trigger button plus `Ctrl+K`/`Cmd+K`,
+filterable actions for every real route (dashboard, documents,
+collections, search, chat, settings, workspace) and a dynamic
+switch-workspace action per other workspace. `evaluations`/`analytics`
+are deliberately excluded, matching the main nav's own precedent of not
+linking to still-stubbed `PageStub` routes.
 
 ## Provider abstractions
 

@@ -879,3 +879,59 @@ pass/fail) — matching CI's working directory and arguments precisely
 is cheap and this is the second time in this project's history a
 "local checks passed" claim turned out to be checking something
 narrower than what CI actually runs.
+
+## 2026-10-24 — A pre-existing test flaked for real: `test_feedback_on_a_user_message_is_rejected`
+
+**Symptom:** A routine full-suite sanity run (triggered because the
+command-palette slice, Issue #41 priority 6, touched only frontend
+files but the established habit is to re-run the backend suite once
+anyway) failed on
+`tests/test_conversations.py::test_feedback_on_a_user_message_is_rejected`
+— a test that had never failed before in this project's history and
+whose own code hadn't changed in this pass.
+
+**Root cause:** The test picks "the user message" with
+`client.get(".../messages").json()[0]["id"]` — trusting list
+*position* (index 0) rather than *role*. `list_messages()`'s own query
+orders by `created_at` with no secondary sort key. Inside a single
+test's shared Postgres transaction, `created_at`'s `now()` default is
+constant for the whole transaction (the same fact this project has
+already hit and documented twice this sprint — see the
+`_push_user_message_earlier()` helper added for the regenerate slice,
+and `test_document_listing.py`'s own ordering-test precedent before
+that) — so the USER and ASSISTANT message created moments apart in
+`_post_message()` tie on `created_at`. Postgres has no obligation to
+break that tie consistently; it had apparently always broken it in
+this test's favor (USER first) by incidental heap-scan order, until
+this one run, where it didn't.
+
+**Failed attempts:** None — once the symptom was reproduced, the root
+cause was immediately recognizable as the exact same bug class already
+fixed twice earlier in this same sprint (in two *new* tests this
+session added, `test_regenerate_a_user_message_returns_404` and its
+sibling). This pre-existing older test had simply never been touched
+when that lesson was first learned, so it kept carrying the fragile
+pattern forward un-fixed.
+
+**Fix:** Changed the lookup to find the message by `role == "USER"`
+(`next(m["id"] for m in messages if m["role"] == "USER")`) instead of
+by list position — matching the fix already applied to the newer
+regenerate tests.
+
+**Verification:** Ran the single test 3 times in a loop after the fix
+(all 3 passed — a positional fix can't be "verified" by one green run
+alone, since the original bug was itself intermittent); then the full
+`pytest -q` suite (797 passed, 1 skipped, clean).
+
+**Prevention/lesson:** `grep -rn '\.json()\[0\]\["id"\]' tests/` across
+the whole suite the moment this class of bug is found once, not just
+in the one failing test — done this time, and it surfaced two more
+matches in `test_auth.py`, both confirmed safe on inspection (exactly
+one session exists at that point in each, so there's nothing for a
+tie to be ambiguous between) rather than assumed safe. More generally:
+picking "the X" from a list a test itself populated should select by
+the distinguishing *property* that makes it "the X" (role, status,
+title), never by the position it happened to land at — position is
+never guaranteed stable when two rows can share a sort key, and this
+project's own shared-transaction test fixture guarantees exactly that
+collision for same-request-adjacent rows.
