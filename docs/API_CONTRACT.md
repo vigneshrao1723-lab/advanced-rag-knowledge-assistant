@@ -51,7 +51,7 @@ consistent, not a claim that every namespace below exists. See
 | `/api/v1/users` | Profile and settings management (**partially implemented** — `GET /me` only, Issue #2) |
 | `/api/v1/workspaces` | Create/rename/delete/switch workspaces, membership, roles (**implemented**, Issue #2) |
 | `/api/v1/workspaces/{workspace_id}/audit-logs` | Query security-relevant audit log entries for a workspace (`ADMIN`/`OWNER` only) |
-| `/api/v1/workspaces/{workspace_id}/documents` | Upload + synchronous extraction/cleaning/chunking pipeline through to `CHUNKED`, including retrying a `FAILED` or resuming an interrupted document via the same `/process` endpoint (**implemented**, Issue #3 Slices 3.3–3.6); list, search, filter, sort, rename, delete, re-index, download, metadata/status (not yet implemented). Nested under the owning workspace, matching `/workspaces/{workspace_id}/members` and `/audit-logs`'s existing convention, rather than the flat `/api/v1/documents` this table previously sketched. |
+| `/api/v1/workspaces/{workspace_id}/documents` | Upload + synchronous extraction/cleaning/chunking pipeline through to `CHUNKED`, including retrying a `FAILED` or resuming an interrupted document via the same `/process` endpoint; list (with filter/search), rename, delete, download, metadata/status — all **implemented** (Issue #3 Slices 3.3–3.6; rename/delete/download/filter/search added Issue #41). Sort is always newest-first, not configurable. Nested under the owning workspace, matching `/workspaces/{workspace_id}/members` and `/audit-logs`'s existing convention, rather than the flat `/api/v1/documents` this table previously sketched. |
 | `/api/v1/workspaces/{workspace_id}/collections` | Logical document grouping — create/list/get/rename/delete a collection, add/remove a document (**implemented**, Issue #41). Collection-scoped *retrieval* filtering (restricting a search/chat query to one collection) is not implemented — collections organize documents today, they don't yet narrow a query. |
 | `/api/v1/ingestion` | Ingestion pipeline status/control for a document |
 | `/api/v1/workspaces/{workspace_id}/search` | Standalone search mode (snippets, evidence, scores, retrieval method), retrieval only — never calls generation (**implemented**, Issue #41). |
@@ -152,25 +152,61 @@ from Issue #1: `{"error": {"code", "message", "request_id"}}` — see
 
 ## Implemented: `/api/v1/workspaces/{workspace_id}/documents`
 
-**Upload, listing, full processing pipeline, source inspection, and
-the full document viewer** (GitHub Issue #3, Slices 3.3–3.7; list/get
-added Issue #5, Slice 5.1; chunk/source inspection added Issue #8;
-ordered chunk listing for the full document viewer added Issue #41) —
-search/filter/sort/rename/delete/re-index/download are not implemented
-yet. Documents reach `UPLOADED` (upload), then progress through
-`PROCESSING → PARSED → CLEANED → CHUNKED → EMBEDDED → INDEXED → READY`
-(or `FAILED` at any stage) via the same `/process` endpoint; chunks are
-persisted to `document_chunks` once `CHUNKED` is reached, and each
-chunk's embedding vector once `EMBEDDED` is reached.
+**Upload, listing (with filter/search), full processing pipeline,
+source inspection, the full document viewer, rename, delete, and
+download** (GitHub Issue #3, Slices 3.3–3.7; list/get added Issue #5,
+Slice 5.1; chunk/source inspection added Issue #8; ordered chunk
+listing for the full document viewer added Issue #41; filter/search/
+rename/delete/download added Issue #41) — re-index is the existing
+`/process` endpoint, already idempotent-on-retry (see "Resuming" in
+the module docstring); there is no separate re-index endpoint. Sort is
+always newest-first, not client-configurable. Documents reach
+`UPLOADED` (upload), then progress through `PROCESSING → PARSED →
+CLEANED → CHUNKED → EMBEDDED → INDEXED → READY` (or `FAILED` at any
+stage) via the same `/process` endpoint; chunks are persisted to
+`document_chunks` once `CHUNKED` is reached, and each chunk's
+embedding vector once `EMBEDDED` is reached.
 
-| Endpoint | Min. role | Body | Response |
+| Endpoint | Min. role | Body / Query | Response |
 |---|---|---|---|
-| `GET /api/v1/workspaces/{workspace_id}/documents` | VIEWER | none | `200` `list[DocumentRead]`, newest first |
+| `GET /api/v1/workspaces/{workspace_id}/documents` | VIEWER | query: `status` (a `DocumentStatus` value), `q` (filename substring, case-insensitive) — both optional | `200` `list[DocumentRead]`, newest first |
 | `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}` | VIEWER | none | `200` `DocumentRead`, or `404` |
 | `POST /api/v1/workspaces/{workspace_id}/documents` | MEMBER | `multipart/form-data`, one field: `file` | `201` `DocumentRead`, or `400`/`409`/`413`/`429`/`500` (see below) |
 | `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` | MEMBER | none | `200` `DocumentRead`, or `404`/`409`/`429`/`500` (see below) |
+| `PATCH /api/v1/workspaces/{workspace_id}/documents/{document_id}` | MEMBER | `{filename}` (1–255 chars) | `200` `DocumentRead`, or `404`/`422` |
+| `DELETE /api/v1/workspaces/{workspace_id}/documents/{document_id}` | MEMBER | none | `204`, or `404` — see "Document delete" below |
+| `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}/download` | VIEWER | none | the original uploaded bytes, `Content-Type` = the document's own `mime_type`, `Content-Disposition: attachment`, or `404` |
 | `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}/chunks` | VIEWER | none | `200` `list[DocumentChunkRead]`, ordered by `chunk_index`, or `404` |
 | `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}/chunks/{chunk_id}` | VIEWER | none | `200` `DocumentChunkRead`, or `404` |
+
+**Document delete** (Issue #41): deletes the document row.
+`document_chunks` and `collection_documents` rows referencing it
+cascade-delete (`ON DELETE CASCADE`, migrations `0004`/`0010`) — so do
+any `citations` referencing the document or one of its now-deleted
+chunks (`ON DELETE CASCADE` on both `citations.document_id` and
+`citations.chunk_id`, migration `0006`). **This is a deliberate,
+documented decision, not an overlooked side effect**: a deleted
+document's evidence genuinely no longer exists, so a citation chip
+pointing at it would otherwise be dead UI (its chunk content is gone
+either way, since chunks cascade-delete too) — removing the citation
+row is simpler and no less correct than leaving a citation that can
+never be opened. **Chat message *content* is never affected** — there
+is no foreign key from `messages` to `documents` at all, so a past
+answer's text survives a later deletion of the document it cited;
+only that answer's citation markers/sources disappear. Deletes the
+database row first, then attempts to remove the underlying storage
+file — if that second step fails, the result is a harmless orphaned
+file on disk (logged for an operator to find), never a database row
+pointing at a file that's already gone.
+
+**Download** (Issue #41) returns the original uploaded bytes exactly
+as stored, never re-derived from extracted/cleaned text (which, per
+this module's own design, isn't persisted between ingestion stages).
+The `filename` sent in `Content-Disposition` is sanitized (CR/LF and
+`"` stripped) before being placed in the header value, since it's
+user-controlled display text, not trusted input — the first endpoint
+in this API that puts a user-supplied string directly into a response
+header.
 
 `DocumentRead`: `{id, filename, mime_type, size_bytes, checksum_sha256, status, page_count, failure_reason, created_at, updated_at}` — never `storage_key` (internal only). Both `GET` endpoints follow the same non-leaking `404` pattern as every other workspace-scoped lookup (a missing document or one belonging to another workspace is indistinguishable).
 

@@ -35,16 +35,26 @@ def get_by_id_for_workspace(
     ).scalar_one_or_none()
 
 
-def list_for_workspace(db: Session, *, workspace_id: uuid.UUID) -> list[Document]:
+def list_for_workspace(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    status: DocumentStatus | None = None,
+    filename_query: str | None = None,
+) -> list[Document]:
     """Newest first -- matches the order a document-list UI wants to
-    show (most recently uploaded/processed on top)."""
-    return list(
-        db.execute(
-            select(Document)
-            .where(Document.workspace_id == workspace_id)
-            .order_by(Document.created_at.desc())
-        ).scalars()
-    )
+    show (most recently uploaded/processed on top). `status`/
+    `filename_query` are optional filters (Issue #41) -- omitting both
+    preserves every existing caller's exact prior behavior (list
+    everything). `filename_query` is a case-insensitive substring match
+    against `filename`, not a full-text search -- this is a short
+    display name, not document content."""
+    query = select(Document).where(Document.workspace_id == workspace_id)
+    if status is not None:
+        query = query.where(Document.status == status)
+    if filename_query:
+        query = query.where(Document.filename.ilike(f"%{filename_query}%"))
+    return list(db.execute(query.order_by(Document.created_at.desc())).scalars())
 
 
 def list_by_ids_for_workspace(
@@ -210,3 +220,34 @@ def mark_ready(db: Session, *, document: Document) -> Document:
     db.flush()
     db.refresh(document)
     return document
+
+
+def rename(db: Session, *, document: Document, filename: str) -> Document:
+    """Updates the display filename in place (Issue #41) -- `filename`
+    is purely a display label (see `app/models/document.py`'s
+    docstring: `storage_key` is the real, server-generated storage
+    identifier, never derived from this column), so renaming never
+    touches storage."""
+    document.filename = filename
+    db.add(document)
+    db.flush()
+    db.refresh(document)
+    return document
+
+
+def delete(db: Session, *, document: Document) -> None:
+    """Deletes the document row. `document_chunks`/`collection_documents`
+    rows cascade-delete (`ON DELETE CASCADE` on `document_id`, migrations
+    `0004`/`0010`); so do any `citations` referencing this document or
+    one of its now-deleted chunks (`ON DELETE CASCADE` on both
+    `citations.document_id` and `citations.chunk_id`, migration `0006`)
+    -- a deliberate, accepted consequence (see
+    `docs/API_CONTRACT.md`'s "Document delete" section for the full
+    reasoning), not an overlooked side effect: historical chat
+    *messages* are never affected (no FK from `messages` to `documents`
+    at all), only the citation rows pointing at evidence that no longer
+    exists. The caller is responsible for deleting the underlying
+    storage object separately (this function only removes the database
+    row) and for committing."""
+    db.delete(document)
+    db.flush()

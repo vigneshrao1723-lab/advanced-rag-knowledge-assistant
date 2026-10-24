@@ -8,10 +8,11 @@ both orchestration strategies.
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import redis
-from fastapi import APIRouter, Depends, File, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -24,8 +25,9 @@ from app.core.rate_limit import (
 )
 from app.core.redis_client import get_redis_client
 from app.ingestion.embedding import EmbeddingProvider, get_embedding_provider
+from app.models.document import DocumentStatus
 from app.models.workspace_member import WorkspaceRole
-from app.schemas.document import DocumentChunkRead, DocumentRead
+from app.schemas.document import DocumentChunkRead, DocumentRead, DocumentRename
 from app.services import document_service
 from app.services.storage_provider import StorageProvider, get_storage_provider
 
@@ -37,10 +39,14 @@ router = APIRouter(prefix="/workspaces", tags=["documents"])
     response_model=list[DocumentRead],
 )
 async def list_documents(
+    status_filter: DocumentStatus | None = Query(default=None, alias="status"),
+    q: str | None = Query(default=None, max_length=255),
     ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.VIEWER)),
     db: Session = Depends(get_db),
 ) -> list[DocumentRead]:
-    return document_service.list_documents(db, workspace_id=ctx.workspace.id)
+    return document_service.list_documents(
+        db, workspace_id=ctx.workspace.id, status_filter=status_filter, filename_query=q
+    )
 
 
 @router.get(
@@ -160,4 +166,91 @@ async def process_document(
         embedding_provider=embedding_provider,
         embedding_batch_size=settings.embedding_batch_size,
         ip_address=client_ip(request),
+    )
+
+
+@router.patch(
+    "/{workspace_id}/documents/{document_id}",
+    response_model=DocumentRead,
+)
+async def rename_document(
+    request: Request,
+    document_id: uuid.UUID,
+    body: DocumentRename,
+    ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.MEMBER)),
+    db: Session = Depends(get_db),
+) -> DocumentRead:
+    return document_service.rename_document(
+        db,
+        workspace_id=ctx.workspace.id,
+        document_id=document_id,
+        filename=body.filename,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
+    )
+
+
+@router.delete(
+    "/{workspace_id}/documents/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_document(
+    request: Request,
+    document_id: uuid.UUID,
+    ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.MEMBER)),
+    db: Session = Depends(get_db),
+    storage: StorageProvider = Depends(get_storage_provider),
+) -> None:
+    await document_service.delete_document(
+        db,
+        workspace_id=ctx.workspace.id,
+        document_id=document_id,
+        storage=storage,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
+    )
+
+
+_UNSAFE_HEADER_CHARS = re.compile(r'[\r\n"]')
+
+
+def _content_disposition_filename(filename: str) -> str:
+    """Sanitizes a user-supplied filename for safe use inside an HTTP
+    header value -- `filename` is display-only, user-controlled input
+    (docs/SECURITY.md "Upload & document safety": never used as a
+    storage path, but never previously needed to be safe as a *header
+    value* either, since this is the first endpoint that puts it in
+    one). Strips CR/LF (header/response-splitting) and double quotes
+    (which would otherwise let a crafted filename break out of the
+    quoted `filename="..."` parameter); ASCII-only RFC 6266 encoding for
+    anything outside it is intentionally not attempted here, as a
+    stripped-but-still-readable fallback name is an acceptable
+    simplification for this feature's scope.
+    """
+    return _UNSAFE_HEADER_CHARS.sub("", filename) or "download"
+
+
+@router.get(
+    "/{workspace_id}/documents/{document_id}/download",
+)
+async def download_document(
+    request: Request,
+    document_id: uuid.UUID,
+    ctx: WorkspaceContext = Depends(require_workspace_role(WorkspaceRole.VIEWER)),
+    db: Session = Depends(get_db),
+    storage: StorageProvider = Depends(get_storage_provider),
+) -> Response:
+    document, content = document_service.download_document(
+        db,
+        workspace_id=ctx.workspace.id,
+        document_id=document_id,
+        storage=storage,
+        user_id=ctx.user.id,
+        ip_address=client_ip(request),
+    )
+    safe_filename = _content_disposition_filename(document.filename)
+    return Response(
+        content=content,
+        media_type=document.mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
     )

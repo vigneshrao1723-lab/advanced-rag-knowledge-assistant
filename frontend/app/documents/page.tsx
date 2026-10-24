@@ -1,13 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChangeEvent, DragEvent } from "react";
+import type { ChangeEvent, DragEvent, FormEvent } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
   CheckCircle2,
+  Download,
   FileText,
   Loader2,
+  Pencil,
+  Search,
+  Trash2,
   UploadCloud,
 } from "lucide-react";
 
@@ -17,7 +21,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import * as api from "@/lib/api-client";
 import { ApiError } from "@/lib/api-client";
 import { IN_PROGRESS_DOCUMENT_STATUSES } from "@/lib/schemas";
-import type { Document, WorkspaceRole } from "@/lib/schemas";
+import type { Document, DocumentStatus, WorkspaceRole } from "@/lib/schemas";
 import { useWorkspace } from "@/lib/workspace-context";
 
 const POLL_INTERVAL_MS = 3000;
@@ -143,14 +147,19 @@ function DocumentRow({
   workspaceId,
   canManage,
   onChanged,
+  onDeleted,
 }: {
   document: Document;
   workspaceId: string;
   canManage: boolean;
   onChanged: () => void;
+  onDeleted: (id: string) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isBusy, setIsBusy] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [filenameDraft, setFilenameDraft] = useState(document.filename);
 
   async function handleRetry() {
     setIsRetrying(true);
@@ -165,8 +174,74 @@ function DocumentRow({
     }
   }
 
+  async function handleRenameSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!filenameDraft.trim()) return;
+    setIsBusy(true);
+    setError(null);
+    try {
+      await api.renameDocument(workspaceId, document.id, filenameDraft.trim());
+      onChanged();
+      setIsRenaming(false);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not rename the document.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!window.confirm(`Delete "${document.filename}"? This cannot be undone.`)) return;
+    setIsBusy(true);
+    setError(null);
+    try {
+      await api.deleteDocument(workspaceId, document.id);
+      onDeleted(document.id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not delete the document.");
+      setIsBusy(false);
+    }
+  }
+
   const { classes, icon: StatusIcon } = statusBadge(document.status);
   const isInProgress = IN_PROGRESS_DOCUMENT_STATUSES.includes(document.status);
+
+  if (isRenaming) {
+    return (
+      <li className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4">
+        <form onSubmit={handleRenameSubmit} className="flex flex-col gap-2">
+          <label htmlFor={`rename-${document.id}`} className="sr-only">
+            Document name
+          </label>
+          <input
+            id={`rename-${document.id}`}
+            autoFocus
+            value={filenameDraft}
+            onChange={(event) => setFilenameDraft(event.target.value)}
+            className="border-input bg-background rounded-md border px-2 py-1.5 text-sm"
+          />
+          <div className="flex gap-1.5">
+            <Button type="submit" size="sm" disabled={isBusy}>
+              Save
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={isBusy}
+              onClick={() => {
+                setFilenameDraft(document.filename);
+                setIsRenaming(false);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+          {error && <p className="text-destructive text-xs">{error}</p>}
+        </form>
+      </li>
+    );
+  }
 
   return (
     <li className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-slate-300">
@@ -203,6 +278,39 @@ function DocumentRow({
               {isRetrying ? "Retrying…" : "Retry"}
             </Button>
           )}
+          <a
+            href={api.getDocumentDownloadUrl(workspaceId, document.id)}
+            download={document.filename}
+            title="Download original file"
+            aria-label={`Download ${document.filename}`}
+            className="text-muted-foreground hover:bg-slate-100 hover:text-foreground rounded-md p-1.5 transition"
+          >
+            <Download className="size-3.5" aria-hidden="true" />
+          </a>
+          {canManage && (
+            <>
+              <button
+                type="button"
+                title="Rename document"
+                aria-label={`Rename ${document.filename}`}
+                disabled={isBusy}
+                onClick={() => setIsRenaming(true)}
+                className="text-muted-foreground hover:bg-slate-100 hover:text-foreground rounded-md p-1.5 transition"
+              >
+                <Pencil className="size-3.5" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                title="Delete document"
+                aria-label={`Delete ${document.filename}`}
+                disabled={isBusy}
+                onClick={handleDelete}
+                className="text-muted-foreground hover:text-destructive rounded-md p-1.5 transition hover:bg-red-50"
+              >
+                <Trash2 className="size-3.5" aria-hidden="true" />
+              </button>
+            </>
+          )}
         </div>
       </div>
       {error && <p className="text-destructive text-sm">{error}</p>}
@@ -210,11 +318,25 @@ function DocumentRow({
   );
 }
 
+const STATUS_FILTER_OPTIONS: DocumentStatus[] = [
+  "UPLOADED",
+  "PROCESSING",
+  "PARSED",
+  "CLEANED",
+  "CHUNKED",
+  "EMBEDDED",
+  "INDEXED",
+  "READY",
+  "FAILED",
+];
+
 function DocumentsContent() {
   const { currentWorkspace, isLoading: isWorkspaceLoading } = useWorkspace();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<DocumentStatus | "">("");
 
   const workspaceId = currentWorkspace?.id ?? null;
 
@@ -226,14 +348,19 @@ function DocumentsContent() {
       return;
     }
     try {
-      setDocuments(await api.listDocuments(workspaceId));
+      setDocuments(
+        await api.listDocuments(workspaceId, {
+          status: statusFilter || undefined,
+          q: searchQuery.trim() || undefined,
+        })
+      );
       setError(null);
     } catch {
       setError("Could not load documents.");
     } finally {
       setIsLoading(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, statusFilter, searchQuery]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -276,6 +403,43 @@ function DocumentsContent() {
         {canManage && (
           <UploadForm workspaceId={currentWorkspace.id} onUploaded={loadDocuments} />
         )}
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex min-w-[180px] flex-1 flex-col gap-1.5">
+            <label htmlFor="document-search" className="text-sm font-medium">
+              Search by filename
+            </label>
+            <div className="relative">
+              <Search
+                className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-slate-400"
+                aria-hidden="true"
+              />
+              <input
+                id="document-search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="border-input bg-background w-full rounded-md border py-2 pl-8 pr-3 text-sm"
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="document-status-filter" className="text-sm font-medium">
+              Status
+            </label>
+            <select
+              id="document-status-filter"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as DocumentStatus | "")}
+              className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+            >
+              <option value="">All</option>
+              {STATUS_FILTER_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
         {isLoading ? (
           <p className="text-muted-foreground text-sm">Loading documents…</p>
         ) : error ? (
@@ -286,8 +450,12 @@ function DocumentsContent() {
         ) : documents.length === 0 ? (
           <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-slate-200 py-10 text-center">
             <FileText className="size-6 text-slate-400" aria-hidden="true" />
-            <p className="text-muted-foreground text-sm">No documents uploaded yet.</p>
-            {canManage && (
+            <p className="text-muted-foreground text-sm">
+              {searchQuery || statusFilter
+                ? "No documents match this filter."
+                : "No documents uploaded yet."}
+            </p>
+            {canManage && !searchQuery && !statusFilter && (
               <p className="text-muted-foreground text-xs">
                 Upload a file above to start building this workspace&apos;s knowledge base.
               </p>
@@ -302,6 +470,7 @@ function DocumentsContent() {
                 workspaceId={currentWorkspace.id}
                 canManage={canManage}
                 onChanged={loadDocuments}
+                onDeleted={(id) => setDocuments((prev) => prev.filter((d) => d.id !== id))}
               />
             ))}
           </ul>

@@ -57,6 +57,8 @@ class AuditEvent:
     DOCUMENT_CHUNKING_FAILED = "document_chunking_failed"
     DOCUMENT_EMBEDDING_FAILED = "document_embedding_failed"
     DOCUMENT_READY = "document_ready"
+    DOCUMENT_RENAMED = "document_renamed"
+    DOCUMENT_DELETED = "document_deleted"
     COLLECTION_CREATED = "collection_created"
     COLLECTION_DELETED = "collection_deleted"
 

@@ -207,41 +207,54 @@ exists but the user-facing workflow is not complete end-to-end.
 
 ## 5. Document management beyond list/get/upload/process
 
-**Status: PARTIAL.**
+**Status: COMPLETE.**
 
-- **Evidence:** Upload/list/get/process exist
-  (`backend/app/api/v1/documents.py`). **Retry-after-`FAILED` already
-  works** — `document_service.py`'s `_REPROCESSABLE_STATUSES` includes
-  `FAILED`, and `POST .../process` is the same endpoint used for both a
-  first attempt and a retry; the frontend documents page already has a
-  working "Retry" button (`frontend/app/documents/page.tsx:152-197`).
-  **Missing:** delete, rename, download the original file, and any
-  filter/sort/search over the document list (`list_documents()` takes
-  no query parameters at all).
-- **Acceptance criteria:** A user can delete a document (removing its
-  `document_chunks` rows and its stored file via `StorageProvider`,
-  and — since citations reference `document_id` — deciding and
-  implementing a safe citation-on-delete policy: keep historical
-  citations pointing at a now-deleted document rather than cascading
-  message deletion, since a chat answer's history shouldn't disappear
-  because its source document was later removed); rename a document's
-  display name; download the original uploaded file; filter the
-  document list by status and search by filename.
-- **Dependencies/risks:** Delete is the one genuinely risk-bearing item
-  here — it touches storage cleanup (`StorageProvider.delete()` doesn't
-  exist yet either) and the citation foreign key's delete behavior
-  needs an explicit, documented decision (not an unconsidered cascade).
-  This is squarely an implementation decision, not an architectural one
-  — no new infrastructure, no auth/isolation-model change — so it does
-  not require owner sign-off under `CLAUDE.md` §4, but the exact
-  citation-retention behavior should be stated plainly in
-  `docs/API_CONTRACT.md` once built, not left implicit.
-- **Effort/priority:** Medium (delete needs the most care; rename and
-  download are small). **Priority 5.**
-- **Next slice:** `StorageProvider.delete()` → `DELETE
-  .../documents/{id}` (decide + implement the citation-retention
-  policy) → `PATCH .../documents/{id}` (rename) → `GET
-  .../documents/{id}/download` → UI buttons → tests.
+- **Evidence:** `PATCH`/`DELETE`/`GET .../download` on
+  `/workspaces/{id}/documents/{id}` (`backend/app/api/v1/documents.py`,
+  `document_service.rename_document()`/`delete_document()`/
+  `download_document()`), plus `GET .../documents?status=...&q=...`
+  filter/search (`document_repository.list_for_workspace()` extended
+  with optional `status`/`filename_query` params, backward-compatible
+  with every existing caller). Retry-after-`FAILED` already worked
+  before this slice (`_REPROCESSABLE_STATUSES` includes `FAILED`) —
+  not new scope, just confirmed still correct. Real UI: rename
+  (inline, Pencil icon), delete (Trash2 icon + confirm), download
+  (native `<a download>`, no JS fetch/blob dance needed), a filename
+  search box, and a status `<select>` on
+  `frontend/app/documents/page.tsx`. 17 new backend tests
+  (`tests/test_document_management.py`: rename/delete/download each
+  with not-found/cross-workspace/VIEWER-role checks, an empty-filename
+  rejection, a header-injection-sanitization check, status-filter and
+  filename-search checks, and — the most important one — a direct
+  verification that deleting a document cascades its chunks/citations
+  but a chat message's own text content survives unaffected), 5 new
+  frontend tests. **Verified end-to-end in a real browser**: upload →
+  rename → search by the new name → filter by status → download
+  (confirmed real byte-for-byte content) → delete → confirm back to
+  the empty state.
+- **Acceptance criteria:** met — see evidence above, including the
+  citation-retention decision below.
+- **Citation-retention decision, made and documented, not left
+  implicit** (`docs/API_CONTRACT.md`'s "Document delete" section): on
+  closer inspection of the real schema (not assumed from this item's
+  own earlier, pre-implementation note above), `citations.document_id`
+  and `citations.chunk_id` already have `ON DELETE CASCADE` — deleting
+  a document removes its chunks, and removes any citation rows that
+  pointed at those chunks. **Chat message *content* is never affected
+  either way** — there is no foreign key from `messages` to `documents`
+  at all, so this was never actually a risk to message history, only
+  to citation *rows*. Keeping a citation alive after its source
+  document and chunk are both gone would only produce a dead UI
+  element (nothing left to view), so the existing cascade was kept
+  rather than migrating two foreign keys to `SET NULL` for no real
+  benefit. Directly tested:
+  `test_delete_document_cascades_chunks_and_citations_but_preserves_message_content`.
+- **Dependencies/risks:** None encountered.
+  `StorageProvider.delete()` turned out to already exist (declared on
+  the `Protocol` and implemented by `LocalStorage` since Issue #3) —
+  this item's own earlier note assumed otherwise without checking.
+- **Effort/priority:** Delivered. Was **Priority 5**.
+- **Next slice:** none.
 
 ## 6. Command palette
 

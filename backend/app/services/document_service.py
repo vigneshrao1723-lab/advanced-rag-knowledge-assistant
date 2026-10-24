@@ -227,8 +227,16 @@ def _to_document_read(document: Document) -> DocumentRead:
     )
 
 
-def list_documents(db: Session, *, workspace_id: uuid.UUID) -> list[DocumentRead]:
-    documents = document_repository.list_for_workspace(db, workspace_id=workspace_id)
+def list_documents(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    status_filter: DocumentStatus | None = None,
+    filename_query: str | None = None,
+) -> list[DocumentRead]:
+    documents = document_repository.list_for_workspace(
+        db, workspace_id=workspace_id, status=status_filter, filename_query=filename_query
+    )
     return [_to_document_read(document) for document in documents]
 
 
@@ -254,6 +262,145 @@ def get_document(
         )
         raise _document_not_found_error()
     return _to_document_read(document)
+
+
+def rename_document(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    document_id: uuid.UUID,
+    filename: str,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
+) -> DocumentRead:
+    """Updates only the display filename (Issue #41) -- never the
+    storage key, which is server-generated and permanent (see
+    `app/models/document.py`'s docstring)."""
+    document = document_repository.get_by_id_for_workspace(
+        db, workspace_id=workspace_id, document_id=document_id
+    )
+    if document is None:
+        record_audit_event(
+            db,
+            event_type=AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+            metadata={"resource_type": "document", "attempted_document_id": str(document_id)},
+        )
+        raise _document_not_found_error()
+
+    document = document_repository.rename(db, document=document, filename=filename)
+    record_audit_event(
+        db,
+        event_type=AuditEvent.DOCUMENT_RENAMED,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        ip_address=ip_address,
+        metadata={"document_id": str(document.id)},
+    )
+    db.commit()
+    return _to_document_read(document)
+
+
+async def delete_document(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    document_id: uuid.UUID,
+    storage: StorageProvider,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
+) -> None:
+    """Deletes a document and its derived data (Issue #41).
+
+    Order: delete and commit the database row first, then attempt to
+    remove the underlying storage object. `document_chunks`/
+    `collection_documents`/`citations` referencing this document (or one
+    of its chunks) cascade-delete at the database level -- see
+    `document_repository.delete()`'s docstring for the accepted
+    consequence this has on historical citations, and
+    `docs/API_CONTRACT.md`'s "Document delete" section for the full
+    reasoning. Chat **message content** is never affected -- there is
+    no foreign key from `messages` to `documents` at all.
+
+    Deliberately DB-then-storage, not the reverse: if the storage delete
+    below fails, the database is already in the correct, consistent
+    state (the document is genuinely gone) and the only consequence is
+    a harmless orphaned file on disk, logged for an operator to find --
+    the same "prefer the failure mode with no confusing user-visible
+    half-state" reasoning `_cleanup_orphaned_storage_object()` already
+    documents for the reverse (upload) case. Deleting storage first
+    would risk the opposite: a database row surviving a crash between
+    the two deletes, now pointing at a file that's already gone.
+    """
+    document = document_repository.get_by_id_for_workspace(
+        db, workspace_id=workspace_id, document_id=document_id
+    )
+    if document is None:
+        record_audit_event(
+            db,
+            event_type=AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+            metadata={"resource_type": "document", "attempted_document_id": str(document_id)},
+        )
+        raise _document_not_found_error()
+
+    storage_key = document.storage_key
+    document_repository.delete(db, document=document)
+    record_audit_event(
+        db,
+        event_type=AuditEvent.DOCUMENT_DELETED,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        ip_address=ip_address,
+        metadata={"document_id": str(document_id)},
+    )
+    db.commit()
+
+    await asyncio.to_thread(_cleanup_orphaned_storage_object, storage, storage_key=storage_key)
+
+
+def download_document(
+    db: Session,
+    *,
+    workspace_id: uuid.UUID,
+    document_id: uuid.UUID,
+    storage: StorageProvider,
+    user_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
+) -> tuple[Document, bytes]:
+    """Returns the document row and its original uploaded bytes exactly
+    as stored (Issue #41) -- never re-derived from extracted/cleaned
+    text (which, per this module's own docstring, isn't even persisted
+    between ingestion stages)."""
+    document = document_repository.get_by_id_for_workspace(
+        db, workspace_id=workspace_id, document_id=document_id
+    )
+    if document is None:
+        record_audit_event(
+            db,
+            event_type=AuditEvent.CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            ip_address=ip_address,
+            metadata={"resource_type": "document", "attempted_document_id": str(document_id)},
+        )
+        raise _document_not_found_error()
+
+    try:
+        content = storage.read(key=document.storage_key)
+    except StorageError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "document_download_failed",
+                "message": "This document's file could not be read.",
+            },
+        ) from exc
+    return document, content
 
 
 def _duplicate_document_error(existing: Document) -> HTTPException:
