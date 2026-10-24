@@ -5,12 +5,13 @@ tracking: proves the retrieval + generation pipeline is measurable by
 actually running it against a small, deterministic fixture set
 (`eval/datasets/retrieval_fixture.py`), comparing **4 retrieval
 methods** (dense-only, lexical-only, hybrid, hybrid+reranked) across
-**2 chunking strategies** (structure-aware, fixed-size — GitHub Issue
-#7's explicit "at least two chunking strategies" requirement), and
-persisting every run's configuration and computed metrics as a real
-`EvaluationRun`/`EvaluationResult` row pair, per `docs/EVALUATION.md`.
-Never fabricates a number — every value in its report was computed
-from this run.
+**3 chunking strategies** (structure-aware, fixed-size, recursive —
+GitHub Issue #7's explicit "at least two chunking strategies"
+requirement, now extended by Issue #41's recursive-chunking slice),
+and persisting every run's configuration and computed metrics as a
+real `EvaluationRun`/`EvaluationResult` row pair, per
+`docs/EVALUATION.md`. Never fabricates a number — every value in its
+report was computed from this run.
 
 Requires a real, reachable Postgres database (`DATABASE_URL`, same as
 the application itself) and the backend's own dependencies. Run from
@@ -23,7 +24,7 @@ per docs/EVALUATION.md, this file is the only legitimate source of
 evaluation numbers referenced elsewhere in the docs) and prints a
 human-readable summary to stdout. Also persists one `EvaluationRun` +
 its `EvaluationResult` rows per (chunking strategy, retrieval method)
-combination — 8 runs total — committed to the real database, so
+combination — 12 runs total — committed to the real database, so
 `evaluation_runs`/`evaluation_results` accumulate real, comparable
 history across repeated executions of this script over time.
 
@@ -92,6 +93,7 @@ _RETRIEVAL_METHODS = ("dense", "lexical", "hybrid", "hybrid_reranked")
 _CHUNKING_STRATEGIES: dict[str, ChunkingStrategy] = {
     "structure_aware": chunking.StructureAwareChunker(),
     "fixed_size": chunking.FixedSizeChunker(),
+    "recursive": chunking.RecursiveChunker(),
 }
 
 

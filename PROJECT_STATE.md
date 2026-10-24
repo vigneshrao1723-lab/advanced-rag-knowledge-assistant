@@ -3,9 +3,9 @@
 **Last updated:** 2026-10-23  
 **Current phase:** 72-hour release sprint — complete. The frontend design pass (PR #38, merged on top of PR #37's CI fixes) is now in `main`: shared indigo/slate design tokens, vertically centered auth screens, a real documents drag-and-drop dropzone, a fully redesigned chat experience (sidebar, bubbles, citations, feedback, playback, a mobile composer-wrap fix), dashboard quick actions with real counts, and settings/workspace polish — including a real post-merge fix (the Active Sessions list was showing the raw User-Agent string instead of a human-readable device label). `main`/`origin/main` are at the commit recorded in the "Immediate priorities" section below.
 
-This is the authoritative living snapshot. The current repository contents and latest test runs take precedence over old counts in this file. The current main baseline, re-verified fresh after every merge: backend 797 passed + 1 intentional skip, frontend 113/113, Playwright 21/21, with ruff/mypy/eslint/TypeScript/build checks clean.
+This is the authoritative living snapshot. The current repository contents and latest test runs take precedence over old counts in this file. The current main baseline, re-verified fresh after every merge: backend 812 passed + 1 intentional skip, frontend 113/113, Playwright 21/21, with ruff/mypy/eslint/TypeScript/build checks clean.
 
-**Feature-completion sprint (started 2026-10-23, [Issue #41](https://github.com/vigneshrao1723-lab/advanced-rag-knowledge-assistant/issues/41)):** Collections, Standalone search, the full document viewer, answer regeneration, document management, and the command palette (priorities 1–6 of 7) are now implemented — see the Component status table and `docs/REQUIREMENTS_MATRIX.md` §1–6. The remaining item (recursive chunking) is tracked there, not yet started.
+**Feature-completion sprint (started 2026-10-23, [Issue #41](https://github.com/vigneshrao1723-lab/advanced-rag-knowledge-assistant/issues/41)):** All 7 items — Collections, Standalone search, the full document viewer, answer regeneration, document management, the command palette, and recursive chunking — are now implemented. See the Component status table and `docs/REQUIREMENTS_MATRIX.md` §1–7.
 
 Repository: vigneshrao1723-lab/advanced-rag-knowledge-assistant.
 
@@ -46,9 +46,9 @@ offline implementation — no paid API key required (see ADRs 0007, 0008).
 | Conversations / chat | IMPLEMENTED (ask flow + history + rename/delete/feedback/regenerate) | #4/#5/#41 — create conversation, post message (full retrieval+generation pipeline synchronously), list messages with real persisted citations. Rename (`PATCH`)/delete (`DELETE`) conversations and message feedback (`PUT .../feedback`, `UP`/`DOWN`, `messages.feedback` migration `0009`) added in the final quality-hardening pass. Regenerate (`POST .../regenerate`, Issue #41) re-runs retrieval+generation for an assistant message's original question, replacing its content/citations in place and clearing prior feedback. All workspace/role/IDOR-tested (cross-workspace, cross-conversation, VIEWER-cannot-mutate). Search conversations is a client-side title filter over the already-fetched list (no backend endpoint needed). Not implemented: conversational context/query rewriting across turns — deliberately deferred as lower-value relative to effort. |
 | Product frontend (Documents, Chat) | IMPLEMENTED (primary flow, design-polished) | #5/#8 + 72-hour design sprint (PRs #37/#38) — real `app/documents/page.tsx` (drag-and-drop dropzone, format/size guidance, icon status badges, upload, live-polling status list, retry, and — as of Issue #41 — rename/delete/download and a filename-search/status-filter UI) and `app/chat/page.tsx` (card-framed conversation list with search/rename/delete, message thread, citations with click-to-inspect source text plus a "View in document" deep link, thumbs-up/down feedback, a "Regenerate" control, voice controls, a composer that wraps correctly on mobile), consuming the real backend APIs. `login/register/forgot-password/reset-password` share a new vertically-centered `AuthShell`. `dashboard` has quick-action cards plus real (never fabricated) document/conversation counts. `settings/workspace` are icon-polished; Settings' session list shows a parsed device label (e.g. "Chrome on Linux") instead of the raw User-Agent string. One shared indigo/slate design-token update (`globals.css`) makes every shadcn-based page consistent with the landing page/nav. Collections (`app/collections/page.tsx`/`[id]/page.tsx`), standalone search (`app/search/page.tsx`), the full document viewer (`app/documents/[id]/page.tsx`), and a global command palette (`components/command-palette.tsx`, mounted in `AppShell`) were added in the feature-completion sprint (Issue #41) — see their own rows below. Deferred, documented, not forgotten: the `/chat/[id]` deep-link route. |
 | Voice (STT/TTS) as a mode within chat | IMPLEMENTED | #6 — `PocketSphinxSpeechToTextProvider` (offline, empirically weaker accuracy against synthetic audio — honestly documented, not hidden) + `EspeakTextToSpeechProvider` (subprocess-based, after `pyttsx3` was found to corrupt state across calls). `POST .../voice-messages` calls the *exact same* `post_message()` the text flow uses — no duplicated pipeline. `GET .../messages/{id}/audio` synthesizes on demand, nothing persisted. See [ADR 0008](docs/DECISIONS/0008-local-speech-to-text-and-text-to-speech-providers.md). |
-| Evaluation harness | IMPLEMENTED | #4/#7 — `evaluation_runs`/`evaluation_results` tables (migration `0008`); `eval/scripts/run_retrieval_evaluation.py` compares 4 retrieval methods × 2 chunking strategies against real Postgres. Real, non-fabricated results: dense/hybrid/hybrid+reranked reach Recall@3=1.0/MRR=1.0/nDCG@3=1.0/HitRate@3=1.0/Precision@3=0.33 on both chunking strategies; lexical-only is genuinely weaker (0.71 across those metrics). See `docs/EVALUATION.md`. |
+| Evaluation harness | IMPLEMENTED | #4/#7/#41 — `evaluation_runs`/`evaluation_results` tables (migration `0008`); `eval/scripts/run_retrieval_evaluation.py` compares 4 retrieval methods × 3 chunking strategies (structure-aware, fixed-size, recursive) against real Postgres (12 persisted runs). Real, non-fabricated results: dense/hybrid/hybrid+reranked reach Recall@3=1.0/MRR=1.0/nDCG@3=1.0/HitRate@3=1.0/Precision@3=0.33 on all three chunking strategies; lexical-only is genuinely weaker (0.71 across those metrics). See `docs/EVALUATION.md`. |
 | Observability / audit logging | IMPLEMENTED | #1/#2/#3/#7 — structured JSON logging, request-ID propagation, persistent `audit_logs` (auth/password-reset/workspace/document-lifecycle/`CROSS_WORKSPACE_RESOURCE_ACCESS_DENIED` events), per-stage retrieval/generation latency + character-count token-usage-proxy structured logs (`caplog`-tested). |
-| Testing (unit/integration/security) | IMPLEMENTED | Backend: **797 passing, 1 intentional skip** (`ruff`/`mypy` clean) — the 1 skip is a regression test that only applies against a full repository checkout (CI/host), not inside the Docker image, which deliberately excludes everything outside `backend/`; re-confirmed passing (not skipped) when run on the host against the real `.env.example`. Frontend: **113/113** vitest, `eslint`/`tsc --noEmit` clean, `next build` succeeds. Playwright: **21/21**. |
+| Testing (unit/integration/security) | IMPLEMENTED | Backend: **812 passing, 1 intentional skip** (`ruff`/`mypy` clean) — the 1 skip is a regression test that only applies against a full repository checkout (CI/host), not inside the Docker image, which deliberately excludes everything outside `backend/`; re-confirmed passing (not skipped) when run on the host against the real `.env.example`. Frontend: **113/113** vitest, `eslint`/`tsc --noEmit` clean, `next build` succeeds. Playwright: **21/21**. |
 | Browser E2E (Playwright) | IMPLEMENTED | `frontend/e2e/` — 20/20 tests passing (app availability, auth/session/CSRF/password-recovery, and `documents-chat.spec.ts`'s full upload→process→READY→chat→cited-answer flow) against a freshly rebuilt real Docker stack. Voice has no Playwright E2E (judged disproportionately expensive vs. real-device audio automation) but is fully unit/HTTP-level tested and was manually verified end-to-end via `curl`. |
 | CI/CD (`.github/workflows/ci.yml`) | IMPLEMENTED | backend (lint/typecheck/pytest against real Postgres+Redis service containers, `espeak-ng` installed), frontend (lint/typecheck/vitest/build), e2e (Playwright against real services), docker-build (image builds + `docker compose config`) — all required, green on every merged PR #9–#32. |
 | Docker / deployment (`infra/`) | IMPLEMENTED for local development | `infra/docker/*.Dockerfile`, `infra/compose/docker-compose.yml` (db/redis/mailpit/backend/frontend). Uploaded documents now persist across a backend container recreate via a named volume (`backend_documents`, matching `db_data`'s pattern — see `SOLVING.md` 2026-10-23). A real hosting/production target is a deliberate, undecided scope boundary — see `docs/DEPLOYMENT.md` "Target deployment environment", `docs/PRODUCTION_READINESS.md`, and CLAUDE.md §4 (this is exactly the kind of infrastructure decision this project stops and asks a human about). |
@@ -58,6 +58,7 @@ offline implementation — no paid API key required (see ADRs 0007, 0008).
 | Answer regeneration | IMPLEMENTED | Issue #41 — `POST /workspaces/{id}/conversations/{id}/messages/{id}/regenerate` re-runs retrieval+generation for an assistant message's original question, replacing its content/citations in place (same message id, no new row) and clearing any prior feedback. A "Regenerate" button on each assistant message in `app/chat/page.tsx`. 8 backend + 1 frontend test, plus a full real-browser verification (rate an answer → regenerate → confirm it's still grounded and the rating was cleared). See `docs/REQUIREMENTS_MATRIX.md` §4. |
 | Document management (rename/delete/download/filter/search) | IMPLEMENTED | Issue #41 — `PATCH`/`DELETE`/`GET .../download` on `/workspaces/{id}/documents/{id}`, plus `?status=`/`?q=` filter/search on the list endpoint. Real rename/delete/download controls and a search/status-filter UI on `app/documents/page.tsx`. Document delete cascades its chunks/citations (a documented decision — see `docs/API_CONTRACT.md` "Document delete") but never affects a chat message's own text content. 17 backend + 5 frontend tests, plus a full real-browser verification (upload → rename → search → filter → download with byte-for-byte content verification → delete). See `docs/REQUIREMENTS_MATRIX.md` §5. |
 | Command palette | IMPLEMENTED | Issue #41 — `frontend/components/command-palette.tsx`, mounted once in `AppShell`: a visible trigger button plus `Ctrl+K`/`Cmd+K`, filterable actions for every real route and a dynamic switch-workspace action per other workspace. No new dependency. 9 component tests, plus a full real-browser verification (trigger button, `Ctrl+K` while a text input has focus — confirmed its content is unaffected, filter + arrow-key + Enter navigation, outside-click close, `Escape` close, a real workspace switch). See `docs/REQUIREMENTS_MATRIX.md` §6. |
+| Recursive chunking strategy | IMPLEMENTED | Issue #41 — `RecursiveChunker` (`backend/app/ingestion/chunking.py`), a third comparison-only chunking strategy using a fixed, universal separator list (paragraph → line → sentence → word → hard character cut), unlike `StructureAwareChunker`'s per-extractor heuristics; still never merges across `ExtractedSection`s. Real ingestion is unaffected (still `StructureAwareChunker` exclusively). Wired into `eval/scripts/run_retrieval_evaluation.py`'s 3-way comparison and re-run against real Postgres (12 persisted `evaluation_runs`). 15 backend unit tests. See `docs/REQUIREMENTS_MATRIX.md` §7. |
 | Skills system (`.agents/skills/`) | PARTIALLY IMPLEMENTED | Roster documented (`.agents/skills/README.md`); individual skill procedures not yet written. |
 
 ## Known limitations
@@ -73,13 +74,13 @@ offline implementation — no paid API key required (see ADRs 0007, 0008).
   providers only — not production-scale quality. Any future retrieval/
   generation quality claim must come from an actual run recorded under
   `eval/results/`/`evaluation_runs` — never fabricated.
-- Chunking-strategy comparison covers two strategies (structure-aware, a
-  naive fixed-size baseline); a `recursive` third strategy and a
-  size/overlap sweep are not implemented. The eval fixture's documents are
-  each short enough to become exactly one chunk under either chunker, so
-  the two currently produce identical retrieval metrics on that fixture —
-  an artifact of fixture scale, not a claim the chunkers are equivalent in
-  general.
+- Chunking-strategy comparison now covers three strategies (structure-
+  aware, a naive fixed-size baseline, and a recursive-separator-list
+  baseline); a chunk-size/overlap sweep is not implemented. The eval
+  fixture's documents are each short enough to become exactly one chunk
+  under any of the three chunkers, so all three currently produce
+  identical retrieval metrics on that fixture — an artifact of fixture
+  scale, not a claim the chunkers are equivalent in general.
 - Concurrency/race-condition behavior of the Redis token-bucket engine is
   tested against a real Redis instance at the unit level; behavior
   *through a real endpoint under genuinely concurrent multi-process HTTP
@@ -111,12 +112,9 @@ live visual QA) has also been applied and verified.
 A full requirements audit against Issues #1–#8 confirmed every issue's
 core, demonstrable scope is implemented, tested, and working
 end-to-end — see each issue's closing comment on GitHub for the
-PR-referenced evidence. Genuinely remaining, all explicitly deferred
-with a reason (not silently dropped):
+PR-referenced evidence. Genuinely remaining, explicitly deferred with a
+reason (not silently dropped):
 
-- **A `recursive` chunking strategy** — only `structure-aware` (the
-  real pipeline's own strategy) and a `fixed-size` naive baseline
-  (evaluation-comparison only) exist.
 - **A decided production hosting target** — deliberately not invented;
   per `CLAUDE.md` §4 this is a real infrastructure decision for a human.
   Local Docker Compose is the fully-verified, fully-supported way to
@@ -124,16 +122,17 @@ with a reason (not silently dropped):
 
 None of the above blocks the project's core, demonstrated success
 criteria (see `docs/PROJECT_BRIEF.md` "Success criteria" — all 5 are
-genuinely true and re-verified this sprint). Do not describe any item
-in the list above as done.
+genuinely true and re-verified this sprint). Do not describe the item
+above as done.
 
 **Feature completion sprint (started 2026-10-23, tracked as
 [Issue #41](https://github.com/vigneshrao1723-lab/advanced-rag-knowledge-assistant/issues/41)):**
-every item in the list above now has a full, evidence-based entry
-(status, acceptance criteria, dependencies/risks, effort/priority, next
-slice) in [`docs/REQUIREMENTS_MATRIX.md`](docs/REQUIREMENTS_MATRIX.md).
-Update that file, not this list, as each item actually ships — this
-section stays a condensed pointer.
+all 7 items now have a full, evidence-based `COMPLETE` entry (status,
+acceptance criteria, dependencies/risks, effort/priority, next slice)
+in [`docs/REQUIREMENTS_MATRIX.md`](docs/REQUIREMENTS_MATRIX.md). The
+only scope remaining under Issue #41 is the production-deployment
+decision above, which is explicitly a human decision, not an
+implementation gap.
 
 ## How to keep this file honest
 

@@ -6,8 +6,8 @@ GitHub Issue #7, extending Issue #4 Slice 4.4's fixture-scale hooks).
 tables (migration `0008`), populated by an actually-executed run of
 `eval/scripts/run_retrieval_evaluation.py` comparing **4 retrieval
 methods** (dense-only, lexical-only, hybrid, hybrid+reranked) across
-**2 chunking strategies** (structure-aware, fixed-size) — see
-"Evaluation hooks" below for the real, reproducible numbers this
+**3 chunking strategies** (structure-aware, fixed-size, recursive) —
+see "Evaluation hooks" below for the real, reproducible numbers this
 produced. No number in this document was fabricated — see "Rule: never
 fabricate results" below.
 
@@ -61,7 +61,7 @@ experiment history via `evaluation_runs`/`evaluation_results`.**
   — reconstructed from `dense_search()`/`lexical_search()`/
   `reciprocal_rank_fusion()`/the reranker directly, without changing
   `hybrid_search()` itself) computes the metrics above and **persists
-  one `EvaluationRun` + its `EvaluationResult` rows** (8 runs total: 2
+  one `EvaluationRun` + its `EvaluationResult` rows** (12 runs total: 3
   chunking strategies × 4 retrieval methods). Also runs
   `generate_answer()` for two representative queries (against the
   hybrid+reranked configuration only) and computes the citation checks.
@@ -75,17 +75,25 @@ experiment history via `evaluation_runs`/`evaluation_results`.**
   row; each run appends new `evaluation_runs` rows, by design, so
   history accumulates). Run it yourself: `cd backend && uv run python
   ../eval/scripts/run_retrieval_evaluation.py`.
-- **`FixedSizeChunker`** (`backend/app/ingestion/chunking.py`, new,
-  Issue #7): a naive, non-structure-aware baseline chunker (fixed-size
-  character windows, no boundary preference) — exists purely as the
-  second chunking strategy this comparison needs; the real ingestion
+- **`FixedSizeChunker`** (`backend/app/ingestion/chunking.py`, Issue
+  #7): a naive, non-structure-aware baseline chunker (fixed-size
+  character windows, no boundary preference) — exists purely as a
+  second chunking strategy for this comparison; the real ingestion
   pipeline (`document_service.process_document()`) is unaffected and
   continues to use `StructureAwareChunker` exclusively.
+- **`RecursiveChunker`** (`backend/app/ingestion/chunking.py`, Issue
+  #41): a third comparison-only strategy using a fixed, universal,
+  document-type-agnostic separator priority list (paragraph → line →
+  sentence → word → hard character cut), unlike `StructureAwareChunker`
+  which adapts its paragraph-detection heuristic per extractor. Like
+  `FixedSizeChunker`, it exists for this comparison only — the real
+  ingestion pipeline is unaffected. See that class's own docstring for
+  the full distinction.
 - **Real results from the run committed in `eval/results/retrieval_evaluation.json`**
   (top-K = 3, 6 documents, 7 queries), averaged across all 7 queries,
-  for both chunking strategies (identical between the two on this
+  for all three chunking strategies (identical across all three on this
   fixture — each fixture document is short enough to become exactly one
-  chunk under either chunker, so chunking strategy has no
+  chunk under any of the three chunkers, so chunking strategy has no
   differentiating effect at this fixture's scale; a real difference
   would only emerge on longer, multi-chunk documents):
 
@@ -150,17 +158,13 @@ same query set, in one run:
 
 Independently of retrieval-method comparisons, **chunking strategy
 comparisons are also implemented**: the same query set and retrieval
-configuration is re-run against corpora chunked with two strategies —
-`StructureAwareChunker` (the real pipeline's own chunker) and
-`FixedSizeChunker` (a naive baseline, Issue #7) — to measure their
-effect on the retrieval metrics above. A `recursive` strategy or
-size/overlap sweep is not implemented — the Definition of Done's "at
-least two chunking strategies" is met by these two; see
-`backend/app/ingestion/chunking.py`'s own docstring for why a third
-strategy wasn't added (matches this project's established "one real
-implementation, `ChunkingStrategy`/`Protocol`-ready for more" pattern
-already used for `EmbeddingProvider`/`Reranker`/`LLMProvider`).
-Chunking strategy is tracked per run — see "Experiment tracking" below.
+configuration is re-run against corpora chunked with three strategies —
+`StructureAwareChunker` (the real pipeline's own chunker),
+`FixedSizeChunker` (a naive baseline, Issue #7), and `RecursiveChunker`
+(a fixed-separator-list baseline, Issue #41) — to measure their effect
+on the retrieval metrics above. A chunk-size/overlap sweep is not
+implemented — out of scope for this item; chunking strategy is tracked
+per run — see "Experiment tracking" below.
 
 ## Experiment tracking
 

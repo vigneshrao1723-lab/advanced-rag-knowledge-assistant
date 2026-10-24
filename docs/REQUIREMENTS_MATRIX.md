@@ -312,49 +312,50 @@ exists but the user-facing workflow is not complete end-to-end.
 
 ## 7. Recursive chunking strategy
 
-**Status: PARTIAL** (the extensibility point exists; the strategy does
-not).
+**Status: COMPLETE**
 
-- **Evidence:** `backend/app/ingestion/chunking.py` defines
-  `ChunkingStrategy` as a `Protocol` (line 163) specifically so a future
-  strategy can be swapped in without changing callers, and already has
-  two concrete implementations: `StructureAwareChunker` (the real
-  pipeline's strategy) and `FixedSizeChunker` (an evaluation-comparison
-  baseline only, used by `eval/scripts/run_retrieval_evaluation.py`,
-  never by the production ingestion pipeline). No `RecursiveChunker` or
-  anything matching `recursive` as a class exists (confirmed by
-  `grep -rn "recursive" backend/app/` returning only the `Protocol`
-  docstring's forward-reference comment).
-- **Acceptance criteria:** A `RecursiveChunker` implementing the same
-  `ChunkingStrategy` protocol — splits recursively by a prioritized
-  list of separators (e.g. section → paragraph → sentence → word),
-  falling back to the next separator only when a piece still exceeds
-  the configured chunk size, matching the common "recursive character
-  splitting" definition `docs/RAG_DESIGN.md` names it alongside
-  fixed-size/structure-aware. Deterministic (same input/config →
-  byte-identical output, matching `StructureAwareChunker`'s own tested
-  guarantee). Preserves the same `Chunk` metadata shape
-  (`chunk_index`/`page`/`section`/`content`). Added to the evaluation
-  script's comparison set (now 3 strategies) so its retrieval quality
-  is measured, never asserted without a real run.
-- **Dependencies/risks:** None blocking. Purely additive — does not
-  change the production pipeline's default strategy
-  (`StructureAwareChunker` stays the default; this is a new, selectable
-  option, not a replacement). Risk is isolated to getting the
-  recursive-split boundary logic correct and genuinely deterministic,
-  verified by tests, same as the existing chunkers.
-- **Effort/priority:** Small-medium (one new class + tests + an
-  evaluation-script wiring change; no schema/migration/API change
-  needed since chunking strategy is an internal pipeline detail today,
-  not a per-document user choice). **Priority 7** (explicitly last —
-  lowest user-facing value of the seven, as it's an internal
-  evaluation/architecture completeness item, not a visible product
-  feature).
-- **Next slice:** `RecursiveChunker` class + unit tests (determinism,
-  boundary cases) → add to
-  `eval/scripts/run_retrieval_evaluation.py`'s strategy set → re-run the
-  real evaluation and record genuine (not fabricated) comparative
-  numbers in `eval/results/` → update `docs/EVALUATION.md`.
+- **Evidence:** `RecursiveChunker` (`backend/app/ingestion/chunking.py`)
+  implements the `ChunkingStrategy` protocol: splits recursively by a
+  fixed, universal separator priority list (paragraph → line → sentence
+  → word → hard character cut), falling back to the next separator only
+  when a piece still exceeds `max_chunk_size`, matching the common
+  "recursive character splitting" definition. Unlike
+  `StructureAwareChunker` (which adapts its paragraph-detection
+  heuristic per extractor), the separator list here is the same
+  regardless of document type — the deliberate, documented distinction
+  between the two. Still never merges across `ExtractedSection`s, same
+  hard rule as every other chunker. 15 unit tests
+  (`backend/tests/test_chunking.py`): paragraph/line/sentence/word/
+  hard-cut fallback at each level, sentence-terminal punctuation never
+  dropped (lookbehind regex), no chunk exceeds `max_chunk_size`,
+  overlap-tail appears in the next chunk, no pure-overlap-only chunk is
+  ever emitted, determinism, never merges across sections, gapless
+  zero-based indexes, empty-section/short-text edge cases, and a direct
+  behavioral contrast against `StructureAwareChunker` on single-newline
+  text. `ruff check .`/`mypy .` (the exact CI commands) both clean. Full
+  backend regression suite re-run clean: **812 passed, 1 skipped** (was
+  797 before this item; +15 matches the new tests exactly, confirming
+  no regression elsewhere).
+  Wired into `eval/scripts/run_retrieval_evaluation.py`'s comparison set
+  (now 3 chunking strategies × 4 retrieval methods = 12 persisted
+  `evaluation_runs`) and actually re-run against real Postgres — see
+  `eval/results/retrieval_evaluation.json` and `docs/EVALUATION.md` for
+  the genuine (non-fabricated) numbers: all three chunking strategies
+  produce identical retrieval metrics on the eval fixture, an honest
+  artifact of the fixture's documents each being short enough to become
+  exactly one chunk under any of the three chunkers — not a claim the
+  chunkers are equivalent in general.
+- **Acceptance criteria:** met — see evidence above.
+- **Dependencies/risks:** None realized. Purely additive — the
+  production pipeline's default strategy is unchanged
+  (`StructureAwareChunker` stays the only strategy
+  `document_service.process_document()` uses); `RecursiveChunker` is
+  evaluation-comparison-only, same status as `FixedSizeChunker`.
+- **Effort/priority:** Small-medium, as estimated. **Priority 7**
+  (explicitly last — lowest user-facing value of the seven).
+- **Next slice:** None — this item is done. The sprint's only remaining
+  scope is item 8 (production deployment), which is a human decision,
+  not an implementation gap.
 
 ## 8. Production deployment
 

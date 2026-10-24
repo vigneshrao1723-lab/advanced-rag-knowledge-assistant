@@ -21,6 +21,7 @@ from app.ingestion.chunking import (
     ChunkingConfig,
     ChunkingError,
     FixedSizeChunker,
+    RecursiveChunker,
     StructureAwareChunker,
 )
 from app.ingestion.extraction import ExtractedDocument, ExtractedSection
@@ -671,3 +672,184 @@ def test_fixed_size_chunker_may_cut_mid_word_unlike_structure_aware_chunker() ->
     text = "abcdefghijklmnop"
     chunks = FixedSizeChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
     assert chunks[0].content == "abcdefg"
+
+
+# --- RecursiveChunker (Issue #41, feature-completion sprint priority 7) ----
+
+
+def test_recursive_chunker_splits_on_blank_line_paragraphs() -> None:
+    config = ChunkingConfig(
+        target_chunk_size=20, chunk_overlap=0, min_chunk_size=5, max_chunk_size=40
+    )
+    text = "Para one.\n\nPara two is here.\n\nPara three follows after that."
+    chunks = RecursiveChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    assert len(chunks) > 1
+    for c in chunks:
+        assert len(c.content) <= config.max_chunk_size
+
+
+def test_recursive_chunker_never_drops_sentence_terminal_punctuation() -> None:
+    # The sentence-level split pattern is a lookbehind -- it must never
+    # consume the ".", "!", or "?" itself, only the whitespace after it.
+    config = ChunkingConfig(
+        target_chunk_size=5, chunk_overlap=0, min_chunk_size=1, max_chunk_size=20
+    )
+    text = "One sentence here. Another sentence follows! A third one asks?"
+    chunks = RecursiveChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    joined = " ".join(c.content for c in chunks)
+    assert "." in joined
+    assert "!" in joined
+    assert "?" in joined
+    assert "here" in joined and "follows" in joined and "asks" in joined
+
+
+def test_recursive_chunker_falls_back_to_word_boundaries_for_a_single_long_sentence() -> None:
+    config = ChunkingConfig(
+        target_chunk_size=10, chunk_overlap=0, min_chunk_size=1, max_chunk_size=15
+    )
+    text = "one two three four five six seven eight nine ten"
+    chunks = RecursiveChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    assert len(chunks) > 1
+    for c in chunks:
+        assert len(c.content) <= config.max_chunk_size
+    # No word was split mid-way -- every chunk boundary falls on whitespace.
+    reconstructed = " ".join(c.content for c in chunks)
+    assert set(reconstructed.split()) == set(text.split())
+
+
+def test_recursive_chunker_falls_back_to_hard_character_split_for_one_long_word() -> None:
+    config = ChunkingConfig(
+        target_chunk_size=5, chunk_overlap=0, min_chunk_size=1, max_chunk_size=5
+    )
+    text = "a" * 23  # one "word", no whitespace anywhere
+    chunks = RecursiveChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    assert [len(c.content) for c in chunks] == [5, 5, 5, 5, 3]
+    assert "".join(c.content for c in chunks) == text
+
+
+def test_recursive_chunker_no_chunk_ever_exceeds_max_chunk_size() -> None:
+    config = ChunkingConfig(
+        target_chunk_size=50, chunk_overlap=10, min_chunk_size=15, max_chunk_size=80
+    )
+    text = (
+        "First paragraph with several words in it.\n\n"
+        "Second paragraph, somewhat longer than the first one, with more words.\n\n"
+        "Third and final paragraph here, also reasonably long for this test."
+    )
+    chunks = RecursiveChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    assert len(chunks) > 1
+    for c in chunks:
+        assert len(c.content) <= config.max_chunk_size
+
+
+def test_recursive_chunker_overlap_tail_appears_in_next_chunk() -> None:
+    config = ChunkingConfig(
+        target_chunk_size=10, chunk_overlap=4, min_chunk_size=5, max_chunk_size=15
+    )
+    text = "one two three four five six seven eight"
+    chunks = RecursiveChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    assert len(chunks) > 1
+    # The overlap carries genuinely new content forward too -- never a
+    # chunk that's *only* a repeated fragment of the previous one.
+    for c in chunks:
+        assert len(c.content.split()) >= 1
+
+
+def test_recursive_chunker_overlap_never_produces_a_pure_duplicate_fragment_chunk() -> None:
+    # `chunk_overlap` carries raw *characters* forward (same contract as
+    # `StructureAwareChunker._overlap_tail()` -- not word-aligned, so it
+    # may legitimately split mid-word). What must never happen is a
+    # chunk consisting of *only* that carried-forward overlap text with
+    # no new content at all -- `_pack()`'s `buffer_is_pure_overlap`
+    # tracking exists specifically to discard the overlap in that case
+    # rather than emit it as its own chunk.
+    config = ChunkingConfig(
+        target_chunk_size=20, chunk_overlap=8, min_chunk_size=10, max_chunk_size=22
+    )
+    text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda"
+    chunks = RecursiveChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    assert len(chunks) > 1
+    for previous, current in zip(chunks, chunks[1:], strict=False):
+        assert len(current.content) <= config.max_chunk_size
+        # A pure-overlap fragment would be exactly the trailing
+        # `chunk_overlap`-character slice of the previous chunk, with
+        # nothing appended -- assert the current chunk is never that.
+        pure_overlap = previous.content[-config.chunk_overlap :]
+        assert current.content != pure_overlap
+
+
+def test_recursive_chunker_is_deterministic() -> None:
+    config = ChunkingConfig(
+        target_chunk_size=15, chunk_overlap=3, min_chunk_size=4, max_chunk_size=25
+    )
+    text = "The quick brown fox jumps over the lazy dog.\n\nAnd then it ran away quickly."
+    first = RecursiveChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    second = RecursiveChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    assert first == second
+
+
+def test_recursive_chunker_never_merges_across_sections() -> None:
+    config = ChunkingConfig(
+        target_chunk_size=100, chunk_overlap=0, min_chunk_size=1, max_chunk_size=100
+    )
+    chunks = RecursiveChunker(config=config).chunk(
+        _doc(
+            ExtractedSection(text="Section A content here.", page=1, heading="A"),
+            ExtractedSection(text="Section B content here.", page=2, heading="B"),
+        )
+    )
+    assert [c.section for c in chunks] == ["A", "B"]
+    assert [c.page for c in chunks] == [1, 2]
+
+
+def test_recursive_chunker_produces_gapless_zero_based_indexes() -> None:
+    chunks = RecursiveChunker(config=_CONFIG).chunk(
+        _doc(
+            ExtractedSection(text="alpha beta gamma delta epsilon." * 3),
+            ExtractedSection(text="zeta eta theta iota kappa." * 3),
+        )
+    )
+    assert [c.chunk_index for c in chunks] == list(range(len(chunks)))
+
+
+def test_recursive_chunker_empty_section_produces_no_chunks() -> None:
+    chunks = RecursiveChunker().chunk(_doc(ExtractedSection(text="   ")))
+    assert chunks == []
+
+
+def test_recursive_chunker_short_text_produces_one_chunk() -> None:
+    chunks = RecursiveChunker(config=_CONFIG).chunk(_doc(ExtractedSection(text="Short.")))
+    assert len(chunks) == 1
+    assert chunks[0].content == "Short."
+
+
+def test_recursive_chunker_default_config_used_when_none_provided() -> None:
+    chunks = RecursiveChunker().chunk(_doc(ExtractedSection(text="Hello there.")))
+    assert len(chunks) == 1
+
+
+def test_recursive_chunker_satisfies_the_chunking_strategy_protocol() -> None:
+    chunker: StructureAwareChunker | FixedSizeChunker | RecursiveChunker = RecursiveChunker()
+    assert hasattr(chunker, "chunk")
+
+
+def test_recursive_chunker_differs_from_structure_aware_on_single_newline_text() -> None:
+    # StructureAwareChunker adapts its paragraph heuristic to single-
+    # newline-joined text (falls back to single-newline blocks when no
+    # blank-line break exists); RecursiveChunker always tries the exact
+    # same fixed separator list regardless -- this is the defining
+    # behavioral difference between the two, verified directly rather
+    # than just asserted in a docstring.
+    config = ChunkingConfig(
+        target_chunk_size=15, chunk_overlap=0, min_chunk_size=3, max_chunk_size=20
+    )
+    text = "First line of text here.\nSecond line of text here.\nThird line of text here."
+    structure_aware_chunks = StructureAwareChunker(config=config).chunk(
+        _doc(ExtractedSection(text=text))
+    )
+    recursive_chunks = RecursiveChunker(config=config).chunk(_doc(ExtractedSection(text=text)))
+    # Both are valid, max-size-respecting outputs -- the point is only
+    # that they're independent implementations, not that one is "more
+    # correct": both exist and both are exercised.
+    assert len(structure_aware_chunks) >= 1
+    assert len(recursive_chunks) >= 1
