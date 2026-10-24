@@ -10,10 +10,16 @@ with invented history of either kind.
 
 ## [Unreleased — working tree]
 
-### 2026-10-24 — Recursive chunking strategy (feature-completion sprint, Issue #41, priority 7 of 7) (in progress)
+## [Unreleased — committed]
 
-*(Branch `feat/recursive-chunking`, cut from `main` at `f1426bc`. Not
-yet committed as of this entry.)*
+### 2026-10-24 — `feat: add recursive chunking strategy (Issue #41, priority 7 of 7)` (#49), merged as `4a17a38`
+
+*(Branch `feat/recursive-chunking`, cut from `main` at `f1426bc`.
+Verified green on GitHub Actions CI (backend lint/typecheck/tests,
+frontend lint/typecheck/tests/build, Docker build check, Playwright
+E2E) and **merged into `main` as squash commit `4a17a38`**. This is
+the last of the feature-completion sprint's seven items — see the
+sprint-wide summary below.)*
 
 - Implements `RecursiveChunker` (`backend/app/ingestion/chunking.py`),
   the sprint's final item: a third, comparison-only chunking strategy
@@ -54,8 +60,12 @@ yet committed as of this entry.)*
   `PROJECT_STATE.md` to record recursive chunking as `COMPLETE` with
   evidence, and to mark the feature-completion sprint's full 7-item
   scope as implemented.
-
-## [Unreleased — committed]
+- **Feature-completion sprint (Issue #41) complete.** All 7 items
+  (Collections #43, Standalone search #44, Full document viewer #45,
+  Answer regeneration #46, Document management #47, Command palette
+  #48, Recursive chunking #49) are merged into `main`. The only
+  remaining scope is the production hosting decision, deliberately
+  left to the owner per `CLAUDE.md` §4 — not an implementation gap.
 
 ### 2026-10-24 — `feat: add command palette (Issue #41, priority 6 of 7)` (#48), merged as `f1426bc`
 

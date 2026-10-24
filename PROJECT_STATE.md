@@ -1,7 +1,7 @@
 # PROJECT_STATE.md
 
-**Last updated:** 2026-10-23  
-**Current phase:** 72-hour release sprint — complete. The frontend design pass (PR #38, merged on top of PR #37's CI fixes) is now in `main`: shared indigo/slate design tokens, vertically centered auth screens, a real documents drag-and-drop dropzone, a fully redesigned chat experience (sidebar, bubbles, citations, feedback, playback, a mobile composer-wrap fix), dashboard quick actions with real counts, and settings/workspace polish — including a real post-merge fix (the Active Sessions list was showing the raw User-Agent string instead of a human-readable device label). `main`/`origin/main` are at the commit recorded in the "Immediate priorities" section below.
+**Last updated:** 2026-10-24  
+**Current phase:** Feature-completion sprint (Issue #41) — complete. All 7 items (Collections, Standalone search, full document viewer, answer regeneration, document management, command palette, recursive chunking) are merged into `main`. Before this, the 72-hour release sprint (PRs #37/#38: shared indigo/slate design tokens, vertically centered auth screens, documents drag-and-drop dropzone, redesigned chat experience, dashboard quick actions, settings/workspace polish) had already shipped. `main`/`origin/main` are at `4a17a38` (PR #49, merged 2026-10-24).
 
 This is the authoritative living snapshot. The current repository contents and latest test runs take precedence over old counts in this file. The current main baseline, re-verified fresh after every merge: backend 812 passed + 1 intentional skip, frontend 113/113, Playwright 21/21, with ruff/mypy/eslint/TypeScript/build checks clean.
 
