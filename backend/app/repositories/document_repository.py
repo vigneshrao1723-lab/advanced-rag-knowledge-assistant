@@ -53,7 +53,10 @@ def list_for_workspace(
     if status is not None:
         query = query.where(Document.status == status)
     if filename_query:
-        query = query.where(Document.filename.ilike(f"%{filename_query}%"))
+        # `autoescape` makes "%", "_" (and the escape character itself) in
+        # the user's text match literally instead of acting as LIKE
+        # wildcards -- `q=%` previously matched every document.
+        query = query.where(Document.filename.icontains(filename_query, autoescape=True))
     return list(db.execute(query.order_by(Document.created_at.desc())).scalars())
 
 
