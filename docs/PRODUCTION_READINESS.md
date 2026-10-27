@@ -26,12 +26,14 @@ listed in "What remains unverified" below.
   two independent users/workspaces — a document, a conversation, and
   the workspace resource itself are all `404` (non-leaking) when a
   second user's workspace tries to reach the first's.
-- **Migrations**: Alembic is at head (`0009`), applies cleanly on a
+- **Migrations**: Alembic is at head (`0010`), applies cleanly on a
   fresh database (the backend entrypoint runs `alembic upgrade head`
   automatically on container start), and every individual migration in
   this project's history has been verified reversible
   (`downgrade`/`upgrade` round-tripped against the real database) at
-  the time it was added.
+  the time it was added. Re-verified in the 2026-10-27 release audit: the
+  full chain `upgrade head` → `downgrade base` → `upgrade head` ran
+  cleanly against a scratch database (17 public tables afterwards).
 - **`.env.example`**: re-confirmed this pass to load cleanly as a
   literal `.env` with no edits (a dedicated regression test,
   `backend/tests/test_config.py::test_env_example_loads_cleanly_as_a_literal_env_file`,
@@ -49,8 +51,8 @@ listed in "What remains unverified" below.
   aggregators (CloudWatch Logs, Google Cloud Logging, Loki, etc.) can
   ingest directly from container stdout with no extra shipping agent.
 - **CI**: 4 required GitHub Actions jobs (backend, frontend, Playwright
-  E2E, Docker build) green on every merged PR — most recently #37, #38,
-  #39.
+  E2E, Docker build) green on every merged PR (most recently #49 and the
+  2026-10-27 audit fix PR — see `CHANGELOG.md`).
 - **Local-dev document persistence**: `backend`'s storage root
   (`/app/data/documents`) is now a named Docker volume
   (`backend_documents`, matching `db_data`'s existing pattern), with the
@@ -61,6 +63,95 @@ listed in "What remains unverified" below.
   --force-recreate backend`: the file and its exact content survived.
   This is still a local-dev convenience only, not a production storage
   solution — see "No object storage" below, which remains a real gap.
+
+## Release audit, 2026-10-27 (what was actually exercised)
+
+Run against a freshly built, disposable Docker Compose project
+(`-p ragaudit`, fresh volumes, disposable accounts) at `main` @ `52985a9`,
+then re-run on the fix branch. Nothing was deployed anywhere. Evidence is
+scripted HTTP against the real containers, a headless-Chromium run of the
+real UI, and the full test suites:
+
+- **Auth**: register/login/logout, refresh rotation + replayed-token
+  rejection, CSRF (missing/wrong header → 403), cookie-only auth (a `Bearer`
+  header alone does not authenticate), full password recovery through real
+  SMTP → Mailpit (enumeration-resistant, single-use token, pre-reset refresh
+  revoked, old password rejected), brute-force → 429, spoofed
+  `X-Forwarded-For` ignored by default, no password/JWT in backend logs.
+- **Workspaces/authorization**: roles (OWNER/MEMBER/VIEWER), last-owner
+  protection, ~40 non-member and cross-workspace requests (every endpoint,
+  including a document/chunk/conversation/message ID from workspace A used
+  through workspace B's own path) → 404; VIEWER mutation attempts → 403;
+  denied attempts are audited.
+- **Documents**: PDF/DOCX/TXT/MD/CSV upload → READY; bad extension, wrong
+  magic bytes, bad MIME, 50 MB+ (413), duplicate (409), malformed PDF
+  (FAILED with reason); traversal filename never reaches the storage key;
+  stored files survive backend container recreation (6/6 SHA-256 identical);
+  rename/filter/download (byte-identical)/delete (row, chunks, citations,
+  collection link, stored file all removed; chat text untouched).
+- **RAG**: search ranks the right document first for every type; answers are
+  grounded with citations that resolve to real chunks; regenerate keeps the
+  message id, clears feedback, replaces citations without stale rows;
+  prompt-injection text in a document is only quoted as inert evidence.
+- **Voice** (local providers): TTS → WAV → STT round-trip works through the
+  voice endpoint (transcript accuracy is poor, as documented in ADR 0008);
+  garbage/oversize audio → 4xx.
+- **Operations**: DB stopped → `/health/ready` 503 while `/health` stays 200,
+  no stack trace in the API error, recovers by itself when the DB returns;
+  production mode refuses `EMAIL_PROVIDER=console`, sets `Secure` cookies,
+  enforces the CORS allowlist.
+- **Tests**: backend 825 passed + 2 skipped in the image (one intentional
+  full-checkout skip, one fixture-validity module that skips without
+  `eval/`), `ruff`/`mypy` clean; frontend lint/tsc/113 vitest/build clean;
+  Playwright 21/21; headless-Chromium run of the Issue #41 UI (collections,
+  search page, document rename/download/delete, citation → viewer with the
+  cited chunk highlighted, regenerate, command palette incl. `Ctrl+K` while a
+  text field is focused, no horizontal overflow at 375 px) 29/30, the one
+  "failure" being the expected pre-login `GET /users/me` 401.
+
+### Defects found and fixed (PR #51, Issue #50)
+
+1. Downloading a document whose filename has non-Latin-1 characters (CJK,
+   emoji — even an upload named `データ.txt`) returned HTTP 500.
+2. The document filename filter treated `%`/`_` as SQL LIKE wildcards.
+
+### Verified limitations found and NOT fixed (need an owner decision)
+
+1. **No relevance gate before generation.** Off-topic questions still get a
+   "Based on the available documents…" answer with citations (3/3
+   unanswerable eval queries; also reproduced live). `docs/EVALUATION.md`
+   "Larger fixture" has the measurements and why a similarity threshold
+   doesn't work with the local hashing embedder. Previous docs implied the
+   no-evidence answer covers this; it only fires for an empty workspace.
+2. **Redis outage can stall the whole API.** With the Redis *hostname*
+   unresolvable (container stopped), every rate-limited request took ~4 s
+   and `GET /health` itself took 3.4 s while a request was stalled: the
+   sync Redis call (DNS resolution is not covered by the 50 ms socket
+   timeouts) runs on the event loop. The in-process fallback does engage
+   afterwards. Mitigations: run without `REDIS_URL` on a single instance,
+   or fix with a circuit breaker / threadpool call (changes ADR 0006's
+   failure policy → needs ADR review).
+3. **Lexical search is near non-functional for natural-language questions**
+   (AND semantics: 0 results for 14 of 16 eval questions), so hybrid
+   behaves as dense-only.
+4. **No security response headers** (`X-Content-Type-Options`,
+   `X-Frame-Options`/`frame-ancestors`, `Referrer-Policy`, HSTS, CSP) from
+   either service; HSTS/TLS belong to the host/proxy, the rest are a small
+   `next.config.ts` `headers()` + middleware change (not made; a CSP needs
+   care with Next.js inline scripts, and `Permissions-Policy` must keep
+   `microphone` for voice).
+5. **`/docs` and `/openapi.json` are public in production mode** (fine for
+   a portfolio demo; decide deliberately).
+6. **Empty (0-byte) uploads are accepted** and then end `FAILED` with a
+   reason at processing time — honest but wasteful; low severity.
+7. **429 responses carry no `Retry-After` header.**
+8. `infra/compose/docker-compose.yml` publishes Postgres (5432), Redis
+   (6379) and Mailpit on all host interfaces with the default `ragpass`
+   password — correct for local dev, **unsafe on a public host**. A
+   production compose/runtime config must not reuse it as-is.
+9. Voice/STT peak memory and behavior under load were not profiled; idle
+   container memory was measured (backend ≈123 MiB, frontend ≈57 MiB,
+   Postgres ≈43 MiB, Redis ≈6 MiB).
 
 ## What remains unverified (genuinely untested in this project)
 
@@ -154,54 +245,115 @@ listed in "What remains unverified" below.
    `TRUSTED_PROXY_CIDRS` is set wrong). This is documented
    (`ADR 0005`/`ADR 0006` §9a) but unexercised against a real target.
 
-## Two or three suitable hosting approaches (trade-offs, not a decision)
+## Hosting options compared (research, not a decision)
 
-These are evidence-based options to inform the human decision this
-document exists to support — not a recommendation to proceed with any
-of them. Approximate cost language reflects each provider's own
-published pricing as of this project's existing knowledge; always
-re-check current pricing before deciding, since this changes
-frequently and this document cannot verify it live.
+Prices were read from each provider's own page on **2026-10-27**. Several
+pages carry no "last updated" date; treat every figure as "as of that
+fetch" and re-check before paying. INR figures assume **₹95 per USD** —
+the latest RBI reference rate found for USD/INR was 94.5975 on 30-Jun-2026
+(no October 2026 rate could be verified), so INR is an estimate that moves
+with the exchange rate. Taxes (GST), payment-card FX fees and a domain name
+are **not** included; domain price was not researched (**unknown**). Nothing
+here has been provisioned, purchased or deployed.
 
-1. **A single small VM running Docker Compose as-is** (e.g. a $5–20/mo
-   VPS — DigitalOcean Droplet, Hetzner, a small AWS Lightsail/EC2
-   instance). **Lowest effort, closest to what's actually verified** —
-   the exact `docker compose up --build` flow already proven locally
-   would run largely unchanged. Trade-offs: no horizontal scaling, no
-   managed backups, the operator becomes responsible for OS patching,
-   TLS termination, and backup scheduling. Best fit if the goal is "get
-   this running on the public internet quickly" rather than
-   production-grade resilience.
-2. **Managed Postgres + managed Redis + a container platform for the
-   two app images** (e.g. AWS RDS for Postgres with the `pgvector`
-   extension enabled + AWS ElastiCache for Redis + ECS Fargate or App
-   Runner for backend/frontend; or the equivalent on GCP — Cloud SQL +
-   Memorystore + Cloud Run; or a PaaS like Render/Railway/Fly.io, which
-   bundle managed Postgres and often a Redis add-on). **Addresses the
-   backup/durability and scale-out gaps above directly** — managed
-   Postgres gives real automated backups/point-in-time-restore, managed
-   Redis makes the rate limiter's distributed-coordination property
-   actually meaningful across multiple instances. Trade-offs: real
-   recurring cost (roughly $15–60+/mo for the smallest managed-Postgres
-   + managed-Redis tiers, scaling with usage), and `StorageProvider`
-   still needs a real object-storage implementation (S3/GCS) added
-   before documents survive a redeploy — this is new code, not just
-   configuration, and is explicitly out of scope to build without a
-   provider decision first.
-3. **A fully managed container platform (Fly.io, Render, Railway) with
-   their bundled Postgres+pgvector and Redis add-ons.** Middle ground
-   between options 1 and 2: less operational burden than a bare VM
-   (managed TLS, managed restarts, often one-command deploys from this
-   repo's existing Dockerfiles), real managed-Postgres backups, often
-   cheaper than a full hyperscaler setup at this project's current
-   scale. Trade-offs: less control than a hyperscaler, and the same
-   object-storage gap as option 2 — `StorageProvider` still needs a
-   real implementation before documents are durable.
+**Hetzner was excluded**: its own cloud pages list every Cost-Optimized and
+Regular Performance plan as currently unavailable for new orders.
 
-**None of these can be selected by this agent.** Per `CLAUDE.md` §4,
-this is a genuine product/infrastructure decision — cost, account
-ownership, data-residency/compliance requirements, and who operates it
-all matter and are the project owner's call.
+**Constraint that applies to every option — same-site cookies.** Auth uses
+HttpOnly cookies with `SameSite=Lax` and a double-submit CSRF cookie
+(ADR 0005). The browser must see frontend and API as the *same site*. Two
+different provider-assigned hostnames (e.g. `x.onrender.com` and
+`y.onrender.com`) are very likely different sites (whether a given
+provider domain is on the Public Suffix List was not verified), which would
+silently break login. Use either one hostname with path routing
+(`/api/*` → backend, everything else → frontend) or two subdomains of a
+domain you own (and set `COOKIE_DOMAIN`, `CORS_ALLOWED_ORIGINS`,
+`FRONTEND_URL`, `NEXT_PUBLIC_API_URL` accordingly). Either way, **buying a
+domain is effectively required**.
+
+### Option A — One small VPS running the existing Compose stack (DigitalOcean Droplet)
+
+| Item | Detail |
+|---|---|
+| Hosting | 1 Droplet; Caddy (or nginx) in front: auto-TLS, single hostname, `/api/*` → backend:8000, rest → frontend:3000. Production compose file with **no published db/redis ports**. |
+| Postgres + pgvector | `pgvector/pgvector:pg16` container on the same VM (already verified). **No managed PITR.** |
+| Redis | Omit (`REDIS_URL` unset): the in-process limiter is correct for one process and avoids the Redis-outage stall above. |
+| Object storage | Not needed for a single VM: documents live on the VM disk (named volume), included in Droplet backups. A S3-compatible `StorageProvider` (new code) is only needed to scale out; Cloudflare R2 is the candidate (free tier 10 GB-month storage, 1 M Class A / 10 M Class B ops per month, zero egress; $0.015/GB-month beyond; Cloudflare R2 pricing page, 2026-10-27). |
+| SMTP | Amazon SES: $0.10 per 1,000 emails (SES pricing page, 2026-10-27); needs a verified domain and moving out of the sandbox (not verified here). Brevo's free-tier limits could not be read (page returned no pricing) → **unknown**. |
+| Secrets | `.env` on the VM, `chmod 600`, never in git; generate `SECRET_KEY` with `openssl rand -hex 32`. No secrets manager. |
+| Backups/restore/rollback | Droplet weekly backups cost 20% of the Droplet price (DO page). Droplet backups are crash-consistent disk images, not a database-aware dump → add a nightly `pg_dump` shipped off-site (e.g. R2) and **rehearse a restore**. Rollback = `docker compose up` the previous image tag + `alembic downgrade` to the matching revision (all 10 migrations verified reversible). |
+| Monitoring/alerts | None built in beyond provider CPU/disk graphs; add an external uptime check on `/api/v1/health/ready` and ship JSON logs from `docker logs`. No `/metrics` endpoint exists. |
+| Cost (est.) | 1 GiB/1 vCPU Droplet $6.00 (idle stack ≈230 MiB measured, peak unmeasured → tight); **2 GiB/1 vCPU $12.00 recommended**. +20% weekly backups = **$14.40/mo ≈ ₹1,370/mo** (or $7.20 ≈ ₹685 with the 1 GiB size). Plus domain (unknown), plus SES pennies. |
+| Operational complexity | Highest: OS patching, firewall (only 22/80/443), TLS renewals, backups, log rotation are yours. |
+| Migration effort | **Lowest**: no application code changes; write a production compose file + Caddyfile + backup script. |
+| Limitations | Single point of failure; no horizontal scale; deploys cause brief downtime; DB restore is only as good as the dumps you rehearse. |
+
+### Option B — Render (managed PaaS: 2 web services + managed Postgres + persistent disk)
+
+| Item | Detail |
+|---|---|
+| Hosting | Backend and frontend as Docker web services (Dockerfiles already exist). Single instance each because a persistent disk (below) pins the backend to one instance. |
+| Postgres + pgvector | Render Postgres; `pgvector` supported (Render docs: "support a wide variety of popular extensions (`pgvector`, `postgis`, …)"; enable with `CREATE EXTENSION vector;`). PITR listed: 3 days on Hobby, 7 days on Pro and above (workspace-plan prices not researched → unknown). |
+| Redis | Omit for one instance, or Render Key Value: Free 25 MB (no persistence), 256 MB $10/mo. |
+| Object storage | Render persistent disk $0.25/GB/month mounted at `/app/data/documents` → `LocalStorage` works unchanged (disk requires a paid web service — not verified on the pricing page). R2/S3 provider only needed to scale out. |
+| SMTP | As Option A (SES or another SMTP relay). |
+| Secrets | Render environment variables / secret files (encrypted at rest by the platform — not verified here). |
+| Backups/restore/rollback | Managed PITR (above); app rollback via redeploying a previous deploy/commit; `alembic downgrade` still manual. The backend entrypoint runs migrations at every container start — fine for one instance. |
+| Monitoring/alerts | Platform logs/metrics and health-check-based restarts (point the health check at `/api/v1/health/ready`); alert channels not researched. |
+| Cost (est.) | Backend 1 CPU/2 GB **$25** (0.5 CPU/512 MB at $7 is cheaper but likely too small for an unprofiled voice/PDF path) + frontend 0.5 CPU/512 MB **$7** + Postgres 1 GB **$19** (256 MB at $6 is too small for pgvector indexes of any size) + 5 GB disk **$1.25** = **$52.25/mo ≈ ₹4,960/mo**; a bare-minimum variant ($7+$7+$19+$1.25 = $34.25 ≈ ₹3,250/mo) is possible but unsized. Plus domain (unknown). Free-plan limits (spin-down, free Postgres expiry) were **not verifiable** from the pricing page. |
+| Operational complexity | Low: no OS, TLS or proxy to run. |
+| Migration effort | Low–medium: `render.yaml`/dashboard setup, env vars, custom domain wiring for same-site cookies, disk mount. No app code changes. |
+| Limitations | Single instance (disk), disk-attached deploys are not zero-downtime, ~3.5× Option A's cost. |
+
+### Option C — Fly.io machines + Neon (serverless Postgres) [+ Upstash Redis]
+
+| Item | Detail |
+|---|---|
+| Hosting | Two Fly Machines (backend, frontend) + one Fly volume. shared-cpu-1x: 256 MB $2.19, 512 MB $3.69, 1 GB $6.70/mo; the page lists no 2 GB shared-cpu-1x (shared-cpu-2x 2 GB $13.39); RAM above preset $6.00/GB (Fly pricing page, 2026-10-27, undated). New organisations have no free tier. |
+| Postgres + pgvector | **Neon**: Free = $0, 1 GB storage/project, 100 CU-hours, **scale-to-zero after 5 min that cannot be disabled on Free**, 6-hour restore window; pgvector supported on all plans. Launch: usage-priced ($0.35/GB-month, $0.106/CU-hour, up to 7-day restore). (Fly's own Managed Postgres starts at $38/mo, pgvector not mentioned → not considered.) |
+| Redis | Omit, or Upstash: Free 250 MB / 500 K commands per month; Fixed 250 MB $10/mo (Upstash pricing page, 2026-10-27). |
+| Object storage | Fly volume ($0.15/GB-month, snapshots $0.08/GB-month, first 10 GB free) with `LocalStorage` on one machine; R2 for scale-out as above. |
+| SMTP | As Option A. |
+| Secrets | `fly secrets` (platform feature; not researched in detail). |
+| Backups/restore/rollback | Neon restore window above (free: 6 h only); Fly volume snapshots; `fly deploy` previous image to roll back. |
+| Monitoring/alerts | Fly metrics/logs; alerting not researched. |
+| Cost (est.) | Backend 1 GB $6.70 + frontend 512 MB $3.69 + 1–5 GB volume $0.15–0.75 + Neon Free $0 = **≈ $10.5–11.2/mo ≈ ₹1,000–1,060/mo** + egress ($0.12/GB for India, $0.02/GB NA/EU) + domain (unknown). **Neon compute for always-on use is unknown/unbounded**: `/api/v1/health/ready` does a DB round-trip, so platform health checks would keep a Free database awake and could exhaust the 100 CU-hour allowance (minimum CU size not verified). |
+| Operational complexity | Medium: three vendors, CLI-driven deploys, free-tier quirks. |
+| Migration effort | Medium: `fly.toml`s, Neon connection string; cold-start behavior (first query after suspend, pool reconnects) is **untested** against this app. |
+| Limitations | Scale-to-zero latency and connection resets untested; free-tier restore window is only 6 h; most moving parts. |
+
+### Recommendation (for a student portfolio project)
+
+**Option A (single Droplet, Compose + Caddy), 2 GiB size.** Rationale:
+lowest cost (≈₹1,370/mo against ≈₹4,960 for Render), **zero application code
+changes**, the exact stack that was verified end to end, and a single
+hostname with path routing makes the cookie/CORS/CSRF model work without
+extra moving parts. It deliberately drops Redis (one process), which also
+removes the Redis-outage stall finding. Accept and document its
+weaknesses: you run backups and patching. Mandatory before going live:
+production compose without published DB/Redis ports and with a real DB
+password, `ENVIRONMENT=production`, nightly off-site `pg_dump` **with a
+rehearsed restore**, firewall, an external uptime check, and the security
+headers item above. Choose Option B instead if you would rather pay roughly
+₹3,500 more per month to not operate a server and to get managed PITR;
+Option C is cheapest on paper but has the most unverified behavior.
+
+Availability of the chosen Droplet size/region from India and the
+card/payment route for a USD-billed provider were **not verified**; whether
+student credits apply to DigitalOcean was **not researched**. This is a
+recommendation only: per `CLAUDE.md` §4 the choice, the account, the spend
+and the domain are the owner's decision.
+
+Sources (all fetched 2026-10-27): [Render pricing](https://render.com/pricing.md) ·
+[Render extensions](https://render.com/docs/postgresql-extensions) ·
+[Fly.io pricing](https://docs.fly.io/about/pricing) ·
+[Neon pricing](https://neon.com/pricing) ·
+[Upstash Redis pricing](https://upstash.com/pricing/redis.md) ·
+[DigitalOcean Droplets](https://www.digitalocean.com/pricing/droplets) ·
+[Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/) ·
+[Amazon SES pricing](https://aws.amazon.com/ses/pricing/) ·
+[Hetzner Cloud](https://www.hetzner.com/cloud/regular-performance/) ·
+USD/INR from the RBI reference-rate archive (as listed by search results; 30-Jun-2026 value).
 
 ## Exact human decisions and credentials needed before deployment
 
@@ -282,6 +434,13 @@ Use this regardless of which hosting approach is chosen:
 - [ ] A rollback procedure decided and documented (at minimum: how to
       redeploy the previous container image and, if needed, downgrade
       the database to the matching migration).
+- [ ] A domain bought and DNS configured so frontend and API are the same
+      site (see "Constraint that applies to every option").
+- [ ] A production compose/runtime config that does **not** publish
+      Postgres/Redis/Mailpit ports and does not use the `ragpass` default.
+- [ ] Security response headers added (see audit limitation 4).
+- [ ] Decision recorded on the relevance-gate and Redis-outage findings
+      (audit limitations 1–2) before real users depend on answers.
 
 ## Related documents
 

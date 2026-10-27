@@ -12,6 +12,45 @@ with invented history of either kind.
 
 ## [Unreleased — committed]
 
+### 2026-10-27 — final release audit (Issue #50): `fix: non-Latin-1 download filenames…` (#51), merged as `6a6e44e`; evaluation fixture + docs (#52)
+
+*(Audit run from a clean `main` @ `52985a9` against a freshly built,
+disposable Docker Compose project; nothing deployed. #51 was verified green
+on all 4 required CI checks and squash-merged as `6a6e44e`. #52 is this
+evaluation/docs follow-up, opened from `main` @ `6a6e44e`; its merge commit
+is recorded in Git history, not duplicated here.)*
+
+- **Fixed (#51):** `GET .../documents/{id}/download` returned HTTP 500 for
+  any filename with a non-Latin-1 character (e.g. an upload named
+  `データ.txt`) because the name went straight into `Content-Disposition`.
+  ASCII names keep the exact old header; others get an ASCII fallback plus
+  RFC 6266 `filename*=UTF-8''…`; the sanitizer also strips all ASCII control
+  characters and backslash. The `?q=` filename filter now treats `%`/`_`
+  literally (`icontains(autoescape=True)`; `q=%` used to match everything).
+  7 regression tests, which failed before the fix.
+- **Added (#52):** `evidence_coverage_at_k` metric (6 tests); a larger
+  synthetic evaluation fixture (`eval/datasets/retrieval_fixture_large.py`:
+  8 multi-section documents, near-duplicate distractor pairs, 19 queries
+  incl. multi-fact, boundary-spanning and unanswerable) with a
+  `--fixture large` mode in `eval/scripts/run_retrieval_evaluation.py`
+  (default `small` verified metric-for-metric identical to the committed
+  results), fixture-validity tests (10, need a full checkout), and the real
+  results in `eval/results/retrieval_evaluation_large.json` (12 more
+  persisted `evaluation_runs` in the disposable audit database only).
+- **Verified, not changed:** the full list of limitations found (no
+  relevance gate, Redis-outage event-loop stall, lexical AND-semantics,
+  missing security headers, …) is in `docs/PRODUCTION_READINESS.md` "Release
+  audit". `docs/PRODUCTION_READINESS.md` also gained a sourced three-option
+  hosting comparison with INR estimates (research only).
+- **Doc corrections:** Alembic head is `0010` (docs said `0009`/`0008`);
+  Playwright is 21/21 (one row said 20/20); the "honest no-evidence answer"
+  claim now states it only fires when retrieval returns nothing.
+- **Verification:** backend 825 passed + 2 skipped in the rebuilt image,
+  `ruff`/`mypy` clean; frontend lint/tsc/113 vitest/build clean; Playwright
+  21/21; ~240 scripted HTTP checks and a 30-check headless-browser run
+  against the live stack (all passing except the findings above); migration
+  `upgrade head → downgrade base → upgrade head` clean.
+
 ### 2026-10-24 — `feat: add recursive chunking strategy (Issue #41, priority 7 of 7)` (#49), merged as `4a17a38`
 
 *(Branch `feat/recursive-chunking`, cut from `main` at `f1426bc`.

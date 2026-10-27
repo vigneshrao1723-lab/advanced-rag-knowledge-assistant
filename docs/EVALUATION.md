@@ -95,7 +95,8 @@ experiment history via `evaluation_runs`/`evaluation_results`.**
   fixture — each fixture document is short enough to become exactly one
   chunk under any of the three chunkers, so chunking strategy has no
   differentiating effect at this fixture's scale; a real difference
-  would only emerge on longer, multi-chunk documents):
+  would only emerge on longer, multi-chunk documents — see "Larger fixture"
+  below for the first such run):
 
   | Retrieval method | Recall@3 | Precision@3 | MRR | nDCG@3 | Hit Rate@3 |
   |---|---|---|---|---|---|
@@ -123,6 +124,111 @@ experiment history via `evaluation_runs`/`evaluation_results`.**
   — they are not a claim of production-scale retrieval quality**, which
   would need a larger, more realistic corpus and a real embedding
   model, per "Rule: never fabricate results" below.
+
+## Larger fixture (pre-release audit, 2026-10-27)
+
+The original fixture above has six documents that are each exactly one
+chunk, so all three chunking strategies produce identical chunks and the
+comparison cannot tell them apart. **That result must not be read as "the
+strategies are equivalent."** A second, larger fixture was added to make
+differences observable:
+`eval/datasets/retrieval_fixture_large.py`, run with
+`cd backend && uv run python ../eval/scripts/run_retrieval_evaluation.py --fixture large`,
+writing `eval/results/retrieval_evaluation_large.json` (source of truth for
+every number in this section; 12 more `evaluation_runs` persisted).
+
+What it contains: 8 synthetic multi-section documents (24–27 chunks
+depending on strategy; most documents are 2–4 chunks, so "long" is
+relative), two near-duplicate **distractor** pairs (Borealis vs. Aldrin
+runbooks, X200 vs. X100 manuals), and 19 queries — 6 direct, 4
+distractor-sensitive, 3 multi-fact (answer needs two chunks), 3
+**boundary-spanning**, and 3 **unanswerable**. Relevance is judged by
+verbatim *evidence phrases* that must appear inside a retrieved chunk
+(`evidence_coverage@3`, `app/evaluation/metrics.py`), so the same judgments
+score every chunking strategy; a phrase a chunker cut in half counts as not
+covered. `recall@3` over chunk IDs is deliberately not used here (overlap
+duplicates would count as misses).
+
+Real results (real Postgres 16 + pgvector, `local-hashing` embeddings,
+`LexicalOverlapReranker`, `local-extractive` generation, `top_k=3`; no
+external language model or embedding model was used anywhere):
+
+| Chunking strategy (chunks) | Retrieval method | Evidence coverage@3 | Hit Rate@3 | MRR | nDCG@3 | Precision@3 |
+|---|---|---|---|---|---|---|
+| Structure-aware (24) | Dense only | 0.91 | 0.94 | 0.91 | 0.89 | 0.35 |
+| Structure-aware (24) | Lexical only | 0.125 | 0.125 | 0.125 | 0.125 | 0.125 |
+| Structure-aware (24) | Hybrid (no rerank) | 0.91 | 0.94 | 0.91 | 0.89 | 0.35 |
+| Structure-aware (24) | Hybrid + reranked | 0.97 | 1.00 | 1.00 | 0.97 | 0.38 |
+| Fixed-size (27) | Dense only | 0.72 | 0.75 | 0.72 | 0.70 | 0.29 |
+| Fixed-size (27) | Lexical only | 0.125 | 0.125 | 0.125 | 0.125 | 0.125 |
+| Fixed-size (27) | Hybrid (no rerank) | 0.72 | 0.75 | 0.72 | 0.70 | 0.29 |
+| Fixed-size (27) | Hybrid + reranked | 0.78 | 0.81 | 0.81 | 0.78 | 0.31 |
+| Recursive (24) | Dense only | 0.91 | 0.94 | 0.91 | 0.89 | 0.35 |
+| Recursive (24) | Lexical only | 0.125 | 0.125 | 0.125 | 0.125 | 0.125 |
+| Recursive (24) | Hybrid (no rerank) | 0.91 | 0.94 | 0.91 | 0.89 | 0.35 |
+| Recursive (24) | Hybrid + reranked | 0.97 | 1.00 | 1.00 | 0.97 | 0.38 |
+
+Evidence coverage@3 by query category, hybrid + reranked:
+
+| Chunking strategy | direct | distractor | multi_fact | boundary |
+|---|---|---|---|---|
+| Structure-aware | 1.00 | 1.00 | 0.83 | 1.00 |
+| Fixed-size | 1.00 | 1.00 | 0.83 | 0.00 |
+| Recursive | 1.00 | 1.00 | 0.83 | 1.00 |
+
+How to read this honestly:
+
+- **The whole structure-aware/recursive vs. fixed-size gap is the three
+  boundary queries (coverage 0.00 vs. 1.00).** The fixture is *engineered*
+  so each boundary sentence straddles `FixedSizeChunker`'s first window edge
+  (`backend/tests/test_eval_large_fixture.py` asserts this, so the property
+  cannot silently rot). The result demonstrates the mechanism — a chunker
+  with no boundary preference can sever the answer — it is not a measurement
+  of how often that happens on real documents. On all non-boundary
+  categories the three strategies are identical.
+- **Structure-aware and recursive remain indistinguishable** on this
+  fixture (same 24 chunks' worth of evidence retrieved). Nothing here shows
+  one is better than the other.
+- **Lexical search returned zero chunks for 14 of the 16 answerable
+  queries.** `lexical_search()` uses `plainto_tsquery`, which ANDs every
+  non-stopword term, so one query word absent from a chunk (e.g. "many",
+  "receive") yields no match. Consequently hybrid ≡ dense in every row
+  above: with natural-language questions the lexical leg currently
+  contributes nothing to the fusion. (On the small fixture lexical looked
+  merely "weaker", 0.71; here it is close to non-functional.) A
+  `websearch_to_tsquery`/OR-with-ranking change is a candidate improvement;
+  it was not made in this audit.
+- **The reranker helps modestly** (0.91 → 0.97 coverage, structure-aware),
+  mostly by promoting the right near-duplicate when the query names the
+  product (Jaccard overlap on tokens like "X200", "Borealis").
+- **Multi-fact coverage is 0.83 (5 of 6 phrases) for all strategies**: the
+  top-3 cannot always hold both required chunks.
+- **Unanswerable queries are not refused.** For the 3 unanswerable queries,
+  dense/hybrid/hybrid+reranked each still return 3 chunks (lexical returns
+  0), and the production path (`hybrid_search()` defaults →
+  `generate_answer()`) produced a normal "Based on the available
+  documents" answer with **5 citations for 3 of 3** queries — never the
+  fixed no-evidence answer. There is no relevance threshold anywhere in
+  retrieval or generation; the no-evidence answer only occurs when the
+  workspace has no READY chunks at all. With `local-hashing` embeddings the
+  similarity of off-topic queries is driven by stopword overlap (measured:
+  an off-topic "meaning of life" query scored 0.316, equal to the
+  legitimate "mayor of Quenby" query), so no single similarity cutoff
+  separates them; a content-word-overlap gate or a real embedding model
+  plus a calibrated threshold would be needed. This is a documented
+  limitation and an owner decision, not a fix made in this audit.
+- **Groundedness/citation metrics are circular for this provider.**
+  `is_extractive_answer_grounded` is `true` by construction for
+  `LocalGroundedExtractiveProvider` (it only quotes evidence); it says
+  nothing about a real language model, whose faithfulness, answer
+  relevance, and prompt-injection resistance remain **unmeasured**.
+  Prompt-injection behavior was tested only against the inert extractive
+  provider (the injected text is quoted as evidence and nothing acts on it,
+  verified live and in `backend/tests/test_prompt_injection.py`).
+
+Everything above is a property of a ~19-query synthetic corpus and this
+project's local deterministic providers. It is not evidence of quality on
+real documents or with a real embedding model/LLM.
 
 ## Retrieval metrics
 

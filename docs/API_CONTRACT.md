@@ -169,7 +169,7 @@ embedding vector once `EMBEDDED` is reached.
 
 | Endpoint | Min. role | Body / Query | Response |
 |---|---|---|---|
-| `GET /api/v1/workspaces/{workspace_id}/documents` | VIEWER | query: `status` (a `DocumentStatus` value), `q` (filename substring, case-insensitive) — both optional | `200` `list[DocumentRead]`, newest first |
+| `GET /api/v1/workspaces/{workspace_id}/documents` | VIEWER | query: `status` (a `DocumentStatus` value), `q` (filename substring, case-insensitive; `%` and `_` match literally, not as wildcards) — both optional | `200` `list[DocumentRead]`, newest first |
 | `GET /api/v1/workspaces/{workspace_id}/documents/{document_id}` | VIEWER | none | `200` `DocumentRead`, or `404` |
 | `POST /api/v1/workspaces/{workspace_id}/documents` | MEMBER | `multipart/form-data`, one field: `file` | `201` `DocumentRead`, or `400`/`409`/`413`/`429`/`500` (see below) |
 | `POST /api/v1/workspaces/{workspace_id}/documents/{document_id}/process` | MEMBER | none | `200` `DocumentRead`, or `404`/`409`/`429`/`500` (see below) |
@@ -202,11 +202,16 @@ pointing at a file that's already gone.
 **Download** (Issue #41) returns the original uploaded bytes exactly
 as stored, never re-derived from extracted/cleaned text (which, per
 this module's own design, isn't persisted between ingestion stages).
-The `filename` sent in `Content-Disposition` is sanitized (CR/LF and
-`"` stripped) before being placed in the header value, since it's
-user-controlled display text, not trusted input — the first endpoint
-in this API that puts a user-supplied string directly into a response
-header.
+The `filename` sent in `Content-Disposition` is sanitized (every ASCII
+control character, `"` and `\` stripped) before being placed in the header
+value, since it's user-controlled display text, not trusted input — the
+first endpoint in this API that puts a user-supplied string directly into
+a response header. An ASCII-only name is sent as `attachment;
+filename="<name>"`; a name with any non-ASCII character is sent as
+`attachment; filename="<ASCII fallback, "_" per non-ASCII char>";
+filename*=UTF-8''<percent-encoded UTF-8>` (RFC 6266/5987) — header values
+are latin-1 encoded, and before the 2026-10-27 audit fix such names
+returned `500`.
 
 `DocumentRead`: `{id, filename, mime_type, size_bytes, checksum_sha256, status, page_count, failure_reason, created_at, updated_at}` — never `storage_key` (internal only). Both `GET` endpoints follow the same non-leaking `404` pattern as every other workspace-scoped lookup (a missing document or one belonging to another workspace is indistinguishable).
 

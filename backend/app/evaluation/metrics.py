@@ -100,6 +100,33 @@ def hit_rate_at_k[T](retrieved: Sequence[T], relevant: set[T], k: int) -> float:
     return 1.0 if any(item in relevant for item in top_k) else 0.0
 
 
+def _normalize_text(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def evidence_coverage_at_k(
+    retrieved_texts: Sequence[str], evidence_phrases: Sequence[str], k: int
+) -> float:
+    """Fraction of `evidence_phrases` found, verbatim (whitespace- and
+    case-insensitive), inside at least one of the top-K retrieved chunk
+    texts. Chunk-boundary-agnostic by design: the same query can be
+    scored against different chunking strategies without hand-labelling
+    each strategy's chunks, and a phrase that a chunker cut in half
+    (so no single retrieved chunk contains it) correctly counts as *not*
+    covered -- which is exactly the failure a boundary-spanning
+    evaluation query exists to expose. `0.0` if there are no phrases or
+    `k <= 0` (nothing to cover is never "vacuously perfect")."""
+    if not evidence_phrases or k <= 0:
+        return 0.0
+    haystacks = [_normalize_text(text) for text in retrieved_texts[:k]]
+    covered = sum(
+        1
+        for phrase in evidence_phrases
+        if any(_normalize_text(phrase) in haystack for haystack in haystacks)
+    )
+    return covered / len(evidence_phrases)
+
+
 # --- Generation / citation groundedness checks -------------------------
 #
 # docs/EVALUATION.md's "faithfulness"/"answer relevance"/"context
@@ -175,6 +202,7 @@ def is_extractive_answer_grounded(
 __all__ = [
     "citation_completeness",
     "citation_correctness",
+    "evidence_coverage_at_k",
     "extract_cited_markers",
     "hit_rate_at_k",
     "is_extractive_answer_grounded",

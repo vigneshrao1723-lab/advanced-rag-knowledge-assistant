@@ -18,6 +18,14 @@ the application itself) and the backend's own dependencies. Run from
 the repository root:
 
     cd backend && uv run python ../eval/scripts/run_retrieval_evaluation.py
+    cd backend && uv run python ../eval/scripts/run_retrieval_evaluation.py --fixture large
+
+`--fixture small` (the default) is the original six-single-chunk-document
+set and writes `eval/results/retrieval_evaluation.json`. `--fixture large`
+is the pre-release multi-section/distractor/boundary-spanning set
+(`eval/datasets/retrieval_fixture_large.py`, chunk-level relevance via
+verbatim evidence phrases) and writes
+`eval/results/retrieval_evaluation_large.json`.
 
 Writes `eval/results/retrieval_evaluation.json` (overwritten each run —
 per docs/EVALUATION.md, this file is the only legitimate source of
@@ -38,9 +46,11 @@ workspace cleanup (see `app/models/evaluation_run.py`).
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -50,12 +60,14 @@ _BACKEND_DIR = _REPO_ROOT / "backend"
 sys.path.insert(0, str(_BACKEND_DIR))
 sys.path.insert(0, str(_REPO_ROOT))
 
-from eval.datasets.retrieval_fixture import DOCUMENTS, QUERIES  # noqa: E402
+from eval.datasets import retrieval_fixture as small_fixture  # noqa: E402
+from eval.datasets import retrieval_fixture_large as large_fixture  # noqa: E402
 
 from app.core.db import SessionLocal  # noqa: E402
 from app.evaluation.metrics import (  # noqa: E402
     citation_completeness,
     citation_correctness,
+    evidence_coverage_at_k,
     hit_rate_at_k,
     is_extractive_answer_grounded,
     mrr,
@@ -89,6 +101,36 @@ from app.retrieval.service import hybrid_search  # noqa: E402
 from app.retrieval.types import RetrievalCandidate  # noqa: E402
 
 _TOP_K = 3
+
+
+@dataclass(frozen=True)
+class _FixtureSet:
+    name: str
+    documents: tuple[Any, ...]
+    queries: tuple[Any, ...]
+    results_filename: str
+
+
+_FIXTURE_SETS: dict[str, _FixtureSet] = {
+    "small": _FixtureSet(
+        "small",
+        small_fixture.DOCUMENTS,
+        small_fixture.QUERIES,
+        "retrieval_evaluation.json",
+    ),
+    "large": _FixtureSet(
+        "large",
+        large_fixture.DOCUMENTS,
+        large_fixture.QUERIES,
+        "retrieval_evaluation_large.json",
+    ),
+}
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
 _RETRIEVAL_METHODS = ("dense", "lexical", "hybrid", "hybrid_reranked")
 _CHUNKING_STRATEGIES: dict[str, ChunkingStrategy] = {
     "structure_aware": chunking.StructureAwareChunker(),
@@ -102,19 +144,25 @@ def _ingest_fixture_documents(
     workspace_id: uuid.UUID,
     embedding_provider: EmbeddingProvider,
     chunker: ChunkingStrategy,
-) -> dict[str, list[uuid.UUID]]:
+    documents: tuple[Any, ...],
+) -> dict[str, list[tuple[uuid.UUID, str]]]:
     """Runs the same pure pipeline stages `process_document()` uses
     (cleaning, chunking, embedding) directly against fixture text —
     skipping upload/extraction, since there's no real file here, not
     the stages actually being evaluated."""
-    document_key_to_chunk_ids: dict[str, list[uuid.UUID]] = {}
+    document_key_to_chunks: dict[str, list[tuple[uuid.UUID, str]]] = {}
 
-    for fixture_doc in DOCUMENTS:
+    for fixture_doc in documents:
+        # The large fixture has multi-section documents (`sections`); the
+        # small one is a single section of plain `content`.
+        sections = getattr(fixture_doc, "sections", None) or (
+            (None, fixture_doc.content),
+        )
         document = Document(
             workspace_id=workspace_id,
             filename=fixture_doc.filename,
             mime_type="text/plain",
-            size_bytes=len(fixture_doc.content.encode("utf-8")),
+            size_bytes=len("\n".join(text for _, text in sections).encode("utf-8")),
             checksum_sha256=uuid.uuid4().hex,
             storage_key=f"{workspace_id}/{uuid.uuid4()}.txt",
             status=DocumentStatus.READY,
@@ -123,7 +171,10 @@ def _ingest_fixture_documents(
         db.flush()
 
         extracted = ExtractedDocument(
-            sections=[ExtractedSection(text=fixture_doc.content, page=None, heading=None)],
+            sections=[
+                ExtractedSection(text=text, page=None, heading=heading)
+                for heading, text in sections
+            ],
             page_count=None,
         )
         cleaned = clean_extracted_document(extracted)
@@ -139,10 +190,10 @@ def _ingest_fixture_documents(
             model=embedding_provider.model_name,
             dimension=embedding_provider.dimension,
         )
-        document_key_to_chunk_ids[fixture_doc.key] = [row.id for row in rows]
+        document_key_to_chunks[fixture_doc.key] = [(row.id, row.content) for row in rows]
 
     db.commit()
-    return document_key_to_chunk_ids
+    return document_key_to_chunks
 
 
 def _retrieve(
@@ -192,13 +243,26 @@ def _run_retrieval_evaluation(
     workspace_id: uuid.UUID,
     embedding_provider: EmbeddingProvider,
     reranker: Reranker,
-    chunk_ids_by_key: dict[str, list[uuid.UUID]],
+    chunks_by_key: dict[str, list[tuple[uuid.UUID, str]]],
+    queries: tuple[Any, ...],
 ) -> list[dict[str, Any]]:
     per_query: list[dict[str, Any]] = []
-    for fixture_query in QUERIES:
+    for fixture_query in queries:
+        # Chunk-level relevance by verbatim evidence phrase (large
+        # fixture) vs. document-level relevance (small fixture).
+        evidence_phrases: tuple[str, ...] | None = getattr(fixture_query, "evidence_phrases", None)
+        if evidence_phrases is not None and not evidence_phrases:
+            continue  # unanswerable -- scored separately, nothing to retrieve
         relevant_chunk_ids: set[uuid.UUID] = set()
-        for key in fixture_query.relevant_document_keys:
-            relevant_chunk_ids.update(chunk_ids_by_key[key])
+        if evidence_phrases is not None:
+            phrases = [_normalize(phrase) for phrase in evidence_phrases]
+            for chunks in chunks_by_key.values():
+                for chunk_id, content in chunks:
+                    if any(phrase in _normalize(content) for phrase in phrases):
+                        relevant_chunk_ids.add(chunk_id)
+        else:
+            for key in fixture_query.relevant_document_keys:
+                relevant_chunk_ids.update(chunk_id for chunk_id, _ in chunks_by_key[key])
 
         results = _retrieve(
             method,
@@ -211,18 +275,27 @@ def _run_retrieval_evaluation(
         )
         retrieved_ids = [candidate.chunk_id for candidate in results]
 
-        per_query.append(
-            {
-                "query": fixture_query.query,
-                "relevant_document_keys": sorted(fixture_query.relevant_document_keys),
-                "retrieved_count": len(retrieved_ids),
-                f"recall@{_TOP_K}": recall_at_k(retrieved_ids, relevant_chunk_ids, _TOP_K),
-                f"precision@{_TOP_K}": precision_at_k(retrieved_ids, relevant_chunk_ids, _TOP_K),
-                "mrr": mrr(retrieved_ids, relevant_chunk_ids),
-                f"ndcg@{_TOP_K}": ndcg_at_k(retrieved_ids, relevant_chunk_ids, _TOP_K),
-                f"hit_rate@{_TOP_K}": hit_rate_at_k(retrieved_ids, relevant_chunk_ids, _TOP_K),
-            }
-        )
+        row: dict[str, Any] = {
+            "query": fixture_query.query,
+            "retrieved_count": len(retrieved_ids),
+            f"precision@{_TOP_K}": precision_at_k(retrieved_ids, relevant_chunk_ids, _TOP_K),
+            "mrr": mrr(retrieved_ids, relevant_chunk_ids),
+            f"ndcg@{_TOP_K}": ndcg_at_k(retrieved_ids, relevant_chunk_ids, _TOP_K),
+            f"hit_rate@{_TOP_K}": hit_rate_at_k(retrieved_ids, relevant_chunk_ids, _TOP_K),
+        }
+        if evidence_phrases is not None:
+            # Chunk-level relevance: `recall@k` over chunk IDs would count
+            # overlap-duplicated chunks as separate misses, so coverage of
+            # the evidence phrases is the recall-like metric instead.
+            row["category"] = fixture_query.category
+            row["evidence_phrases"] = list(evidence_phrases)
+            row[f"evidence_coverage@{_TOP_K}"] = evidence_coverage_at_k(
+                [candidate.content for candidate in results], evidence_phrases, _TOP_K
+            )
+        else:
+            row["relevant_document_keys"] = sorted(fixture_query.relevant_document_keys)
+            row[f"recall@{_TOP_K}"] = recall_at_k(retrieved_ids, relevant_chunk_ids, _TOP_K)
+        per_query.append(row)
     return per_query
 
 
@@ -231,14 +304,93 @@ def _average(per_query: list[dict[str, Any]], metric_key: str) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
+_METRIC_KEYS = (
+    f"recall@{_TOP_K}",
+    f"evidence_coverage@{_TOP_K}",
+    f"precision@{_TOP_K}",
+    "mrr",
+    f"ndcg@{_TOP_K}",
+    f"hit_rate@{_TOP_K}",
+)
+
+
 def _averages(per_query: list[dict[str, Any]]) -> dict[str, float]:
     return {
-        f"recall@{_TOP_K}": _average(per_query, f"recall@{_TOP_K}"),
-        f"precision@{_TOP_K}": _average(per_query, f"precision@{_TOP_K}"),
-        "mrr": _average(per_query, "mrr"),
-        f"ndcg@{_TOP_K}": _average(per_query, f"ndcg@{_TOP_K}"),
-        f"hit_rate@{_TOP_K}": _average(per_query, f"hit_rate@{_TOP_K}"),
+        key: _average(per_query, key) for key in _METRIC_KEYS if per_query and key in per_query[0]
     }
+
+
+def _averages_by_category(per_query: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    categories = sorted({row["category"] for row in per_query if "category" in row})
+    return {
+        category: _averages([row for row in per_query if row.get("category") == category])
+        for category in categories
+    }
+
+
+def _run_unanswerable_evaluation(
+    method: str,
+    db: Any,
+    workspace_id: uuid.UUID,
+    embedding_provider: EmbeddingProvider,
+    reranker: Reranker,
+    queries: tuple[Any, ...],
+) -> list[dict[str, Any]]:
+    """For queries with no supporting evidence anywhere in the corpus:
+    how many chunks does this retrieval method still return? Nothing here
+    is "relevant", so no relevance metric applies -- this just records
+    the (non-)abstention behavior honestly."""
+    rows: list[dict[str, Any]] = []
+    for fixture_query in queries:
+        if getattr(fixture_query, "evidence_phrases", None) != ():
+            continue
+        results = _retrieve(
+            method,
+            db,
+            workspace_id=workspace_id,
+            query_text=fixture_query.query,
+            embedding_provider=embedding_provider,
+            reranker=reranker,
+            top_k=_TOP_K,
+        )
+        rows.append({"query": fixture_query.query, "retrieved_count": len(results)})
+    return rows
+
+
+def _run_unanswerable_generation_evaluation(
+    db: Any,
+    workspace_id: uuid.UUID,
+    embedding_provider: EmbeddingProvider,
+    reranker: Reranker,
+    llm_provider: Any,
+    queries: tuple[Any, ...],
+) -> list[dict[str, Any]]:
+    """Runs the *production* path (`hybrid_search()` defaults, as
+    `conversation_service` calls it, then `generate_answer()`) on
+    unanswerable queries and records whether the system abstained."""
+    rows: list[dict[str, Any]] = []
+    for fixture_query in queries:
+        if getattr(fixture_query, "evidence_phrases", None) != ():
+            continue
+        results = hybrid_search(
+            db,
+            workspace_id=workspace_id,
+            query_text=fixture_query.query,
+            embedding_provider=embedding_provider,
+            reranker=reranker,
+            record_event=False,
+        )
+        answer, context = generate_answer(
+            query=fixture_query.query, candidates=results, llm_provider=llm_provider
+        )
+        rows.append(
+            {
+                "query": fixture_query.query,
+                "answer_is_no_evidence_answer": answer == NO_EVIDENCE_ANSWER,
+                "citation_count": len(context.blocks),
+            }
+        )
+    return rows
 
 
 def _run_generation_evaluation(
@@ -247,6 +399,7 @@ def _run_generation_evaluation(
     embedding_provider: EmbeddingProvider,
     reranker: Reranker,
     llm_provider: Any,
+    queries: tuple[Any, ...],
 ) -> list[dict[str, Any]]:
     """Exercises generation on two representative fixture queries,
     against the real (hybrid+reranked) production retrieval
@@ -254,7 +407,7 @@ def _run_generation_evaluation(
     groundedness/citation metrics (see app/evaluation/metrics.py's
     module docstring for why faithfulness/answer-relevance are not
     fabricated as numeric scores here)."""
-    sample_queries = QUERIES[:2]
+    sample_queries = queries[:2]
     per_query: list[dict[str, Any]] = []
     for fixture_query in sample_queries:
         results = hybrid_search(
@@ -299,21 +452,35 @@ def _run_for_chunking_strategy(
     embedding_provider: EmbeddingProvider,
     reranker: Reranker,
     llm_provider: Any,
+    fixture: _FixtureSet,
 ) -> dict[str, Any]:
     workspace = Workspace(name=f"eval-{strategy_name}-{uuid.uuid4().hex[:8]}")
     db.add(workspace)
     db.flush()
 
     try:
-        chunk_ids_by_key = _ingest_fixture_documents(db, workspace.id, embedding_provider, chunker)
+        chunks_by_key = _ingest_fixture_documents(
+            db, workspace.id, embedding_provider, chunker, fixture.documents
+        )
+        chunk_count = sum(len(chunks) for chunks in chunks_by_key.values())
 
         methods: dict[str, Any] = {}
         for method in _RETRIEVAL_METHODS:
             per_query = _run_retrieval_evaluation(
-                method, db, workspace.id, embedding_provider, reranker, chunk_ids_by_key
+                method,
+                db,
+                workspace.id,
+                embedding_provider,
+                reranker,
+                chunks_by_key,
+                fixture.queries,
             )
             db.commit()
             averages = _averages(per_query)
+            by_category = _averages_by_category(per_query)
+            unanswerable = _run_unanswerable_evaluation(
+                method, db, workspace.id, embedding_provider, reranker, fixture.queries
+            )
 
             run = evaluation_run_repository.create(
                 db,
@@ -323,14 +490,18 @@ def _run_for_chunking_strategy(
                 retrieval_method=method,
                 top_k=_TOP_K,
                 llm_provider=llm_provider.model_name,
-                document_count=len(DOCUMENTS),
-                query_count=len(QUERIES),
+                document_count=len(fixture.documents),
+                query_count=len(per_query),
                 reranker=type(reranker).__name__ if method == "hybrid_reranked" else None,
             )
             evaluation_result_repository.bulk_create(db, evaluation_run_id=run.id, metrics=averages)
             db.commit()
 
             methods[method] = {"per_query": per_query, "averages": averages}
+            if by_category:
+                methods[method]["averages_by_category"] = by_category
+            if unanswerable:
+                methods[method]["unanswerable"] = unanswerable
 
         generation_rows = None
         if strategy_name == "structure_aware":
@@ -340,10 +511,21 @@ def _run_for_chunking_strategy(
             # combination, which would only multiply LLM calls without
             # adding comparison value this fixture set is designed for.
             generation_rows = _run_generation_evaluation(
-                db, workspace.id, embedding_provider, reranker, llm_provider
+                db, workspace.id, embedding_provider, reranker, llm_provider, fixture.queries
             )
 
-        return {"methods": methods, "generation": generation_rows}
+        result: dict[str, Any] = {
+            "chunk_count": chunk_count,
+            "methods": methods,
+            "generation": generation_rows,
+        }
+        if strategy_name == "structure_aware":
+            unanswerable_generation = _run_unanswerable_generation_evaluation(
+                db, workspace.id, embedding_provider, reranker, llm_provider, fixture.queries
+            )
+            if unanswerable_generation:
+                result["unanswerable_generation"] = unanswerable_generation
+        return result
     finally:
         db.rollback()
         db.delete(workspace)
@@ -351,6 +533,10 @@ def _run_for_chunking_strategy(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0] if __doc__ else None)
+    parser.add_argument("--fixture", choices=sorted(_FIXTURE_SETS), default="small")
+    fixture = _FIXTURE_SETS[parser.parse_args().fixture]
+
     db = SessionLocal()
     embedding_provider = get_embedding_provider()
     reranker = get_reranker()
@@ -363,8 +549,9 @@ def main() -> None:
             "reranker": type(reranker).__name__,
             "llm_provider": llm_provider.model_name,
             "top_k": _TOP_K,
-            "document_count": len(DOCUMENTS),
-            "query_count": len(QUERIES),
+            "fixture": fixture.name,
+            "document_count": len(fixture.documents),
+            "query_count": len(fixture.queries),
             "retrieval_methods_compared": list(_RETRIEVAL_METHODS),
             "chunking_strategies_compared": list(_CHUNKING_STRATEGIES),
         },
@@ -379,11 +566,12 @@ def main() -> None:
             embedding_provider=embedding_provider,
             reranker=reranker,
             llm_provider=llm_provider,
+            fixture=fixture,
         )
 
     db.close()
 
-    results_path = _REPO_ROOT / "eval" / "results" / "retrieval_evaluation.json"
+    results_path = _REPO_ROOT / "eval" / "results" / fixture.results_filename
     results_path.parent.mkdir(parents=True, exist_ok=True)
     results_path.write_text(json.dumps(report, indent=2, default=str) + "\n")
 

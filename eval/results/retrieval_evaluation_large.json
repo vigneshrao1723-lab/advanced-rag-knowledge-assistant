@@ -1,0 +1,3267 @@
+{
+  "generated_at": "2026-10-27T05:31:26.742324+00:00",
+  "configuration": {
+    "embedding_provider": "local-hashing",
+    "reranker": "LexicalOverlapReranker",
+    "llm_provider": "local-extractive",
+    "top_k": 3,
+    "fixture": "large",
+    "document_count": 8,
+    "query_count": 19,
+    "retrieval_methods_compared": [
+      "dense",
+      "lexical",
+      "hybrid",
+      "hybrid_reranked"
+    ],
+    "chunking_strategies_compared": [
+      "structure_aware",
+      "fixed_size",
+      "recursive"
+    ]
+  },
+  "chunking_strategies": {
+    "structure_aware": {
+      "chunk_count": 24,
+      "methods": {
+        "dense": {
+          "per_query": [
+            {
+              "query": "How many days of annual leave does a full-time employee receive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "twenty four days of annual leave"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How often must production credentials be rotated?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "rotated every ninety days"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How quickly are approved expense claims paid after submission?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 0.5,
+              "ndcg@3": 0.6309297535714575,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "paid within ten working days of submission"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the daily meal allowance for business travel?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reimbursed up to seventy five dollars per day"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "Within how many hours must a lost laptop be reported to the service desk?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reported to the service desk within four hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How many signatures do large supplier invoices need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "need two signatures"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last on a single charge?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long is the X100 limited warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X100 is covered by a one year limited warranty"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis production deployments run?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Who approves an Aldrin rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "An Aldrin rollback needs approval from the platform manager"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the annual leave allowance and who must approve extended remote work?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "twenty four days of annual leave",
+                "written approval from the regional director"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis deployments run and who approves a Borealis rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 0.9197207891481876,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC",
+                "A Borealis rollback needs approval from the release captain"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last and how long is the X200 warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 0.6131471927654584,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours",
+                "three year limited warranty"
+              ],
+              "evidence_coverage@3": 0.5
+            },
+            {
+              "query": "How long are customer support transcripts kept under the Calloway data retention schedule?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "The Calloway data retention schedule requires that customer support transcripts are kept for exactly eighteen months, after which the compliance office must confirm deletion in writing and the storage team must purge every backup copy within a further thirty days."
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What approvals does a Hartwell procurement above forty thousand dollars need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Any Hartwell procurement above forty thousand dollars must be supported by three competitive quotations, reviewed by the sourcing committee, and countersigned by the chief financial officer before a purchase order is issued to the selected supplier."
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How far in advance must overseas travel be booked under the Lindqvist policy?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Overseas travel under the Lindqvist policy must be booked at least twenty one days in advance through the approved agency, and the traveller must file a written itinerary with the safety desk before departure so that emergency contacts can be verified."
+              ],
+              "evidence_coverage@3": 1.0
+            }
+          ],
+          "averages": {
+            "evidence_coverage@3": 0.90625,
+            "precision@3": 0.35416666666666663,
+            "mrr": 0.90625,
+            "ndcg@3": 0.8852373584678189,
+            "hit_rate@3": 0.9375
+          },
+          "averages_by_category": {
+            "boundary": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "direct": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.27777777777777773,
+              "mrr": 0.75,
+              "ndcg@3": 0.7718216255952429,
+              "hit_rate@3": 0.8333333333333334
+            },
+            "distractor": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "multi_fact": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.5555555555555555,
+              "mrr": 1.0,
+              "ndcg@3": 0.8442893273045486,
+              "hit_rate@3": 1.0
+            }
+          },
+          "unanswerable": [
+            {
+              "query": "What is the capital of Atlantis?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "Who won the 1987 chess championship in Reykjavik?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "What is the airspeed velocity of an unladen swallow?",
+              "retrieved_count": 3
+            }
+          ]
+        },
+        "lexical": {
+          "per_query": [
+            {
+              "query": "How many days of annual leave does a full-time employee receive?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "twenty four days of annual leave"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How often must production credentials be rotated?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "rotated every ninety days"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How quickly are approved expense claims paid after submission?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "paid within ten working days of submission"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "What is the daily meal allowance for business travel?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reimbursed up to seventy five dollars per day"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "Within how many hours must a lost laptop be reported to the service desk?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reported to the service desk within four hours"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How many signatures do large supplier invoices need?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "need two signatures"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How long does the X200 battery last on a single charge?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How long is the X100 limited warranty?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X100 is covered by a one year limited warranty"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "When do Borealis production deployments run?",
+              "retrieved_count": 1,
+              "precision@3": 1.0,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Who approves an Aldrin rollback?",
+              "retrieved_count": 1,
+              "precision@3": 1.0,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "An Aldrin rollback needs approval from the platform manager"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the annual leave allowance and who must approve extended remote work?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "twenty four days of annual leave",
+                "written approval from the regional director"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "When do Borealis deployments run and who approves a Borealis rollback?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC",
+                "A Borealis rollback needs approval from the release captain"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How long does the X200 battery last and how long is the X200 warranty?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours",
+                "three year limited warranty"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How long are customer support transcripts kept under the Calloway data retention schedule?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "The Calloway data retention schedule requires that customer support transcripts are kept for exactly eighteen months, after which the compliance office must confirm deletion in writing and the storage team must purge every backup copy within a further thirty days."
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "What approvals does a Hartwell procurement above forty thousand dollars need?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Any Hartwell procurement above forty thousand dollars must be supported by three competitive quotations, reviewed by the sourcing committee, and countersigned by the chief financial officer before a purchase order is issued to the selected supplier."
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How far in advance must overseas travel be booked under the Lindqvist policy?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Overseas travel under the Lindqvist policy must be booked at least twenty one days in advance through the approved agency, and the traveller must file a written itinerary with the safety desk before departure so that emergency contacts can be verified."
+              ],
+              "evidence_coverage@3": 0.0
+            }
+          ],
+          "averages": {
+            "evidence_coverage@3": 0.125,
+            "precision@3": 0.125,
+            "mrr": 0.125,
+            "ndcg@3": 0.125,
+            "hit_rate@3": 0.125
+          },
+          "averages_by_category": {
+            "boundary": {
+              "evidence_coverage@3": 0.0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0
+            },
+            "direct": {
+              "evidence_coverage@3": 0.0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0
+            },
+            "distractor": {
+              "evidence_coverage@3": 0.5,
+              "precision@3": 0.5,
+              "mrr": 0.5,
+              "ndcg@3": 0.5,
+              "hit_rate@3": 0.5
+            },
+            "multi_fact": {
+              "evidence_coverage@3": 0.0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0
+            }
+          },
+          "unanswerable": [
+            {
+              "query": "What is the capital of Atlantis?",
+              "retrieved_count": 0
+            },
+            {
+              "query": "Who won the 1987 chess championship in Reykjavik?",
+              "retrieved_count": 0
+            },
+            {
+              "query": "What is the airspeed velocity of an unladen swallow?",
+              "retrieved_count": 0
+            }
+          ]
+        },
+        "hybrid": {
+          "per_query": [
+            {
+              "query": "How many days of annual leave does a full-time employee receive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "twenty four days of annual leave"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How often must production credentials be rotated?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "rotated every ninety days"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How quickly are approved expense claims paid after submission?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 0.5,
+              "ndcg@3": 0.6309297535714575,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "paid within ten working days of submission"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the daily meal allowance for business travel?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reimbursed up to seventy five dollars per day"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "Within how many hours must a lost laptop be reported to the service desk?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reported to the service desk within four hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How many signatures do large supplier invoices need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "need two signatures"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last on a single charge?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long is the X100 limited warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X100 is covered by a one year limited warranty"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis production deployments run?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Who approves an Aldrin rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "An Aldrin rollback needs approval from the platform manager"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the annual leave allowance and who must approve extended remote work?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "twenty four days of annual leave",
+                "written approval from the regional director"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis deployments run and who approves a Borealis rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 0.9197207891481876,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC",
+                "A Borealis rollback needs approval from the release captain"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last and how long is the X200 warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 0.6131471927654584,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours",
+                "three year limited warranty"
+              ],
+              "evidence_coverage@3": 0.5
+            },
+            {
+              "query": "How long are customer support transcripts kept under the Calloway data retention schedule?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "The Calloway data retention schedule requires that customer support transcripts are kept for exactly eighteen months, after which the compliance office must confirm deletion in writing and the storage team must purge every backup copy within a further thirty days."
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What approvals does a Hartwell procurement above forty thousand dollars need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Any Hartwell procurement above forty thousand dollars must be supported by three competitive quotations, reviewed by the sourcing committee, and countersigned by the chief financial officer before a purchase order is issued to the selected supplier."
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How far in advance must overseas travel be booked under the Lindqvist policy?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Overseas travel under the Lindqvist policy must be booked at least twenty one days in advance through the approved agency, and the traveller must file a written itinerary with the safety desk before departure so that emergency contacts can be verified."
+              ],
+              "evidence_coverage@3": 1.0
+            }
+          ],
+          "averages": {
+            "evidence_coverage@3": 0.90625,
+            "precision@3": 0.35416666666666663,
+            "mrr": 0.90625,
+            "ndcg@3": 0.8852373584678189,
+            "hit_rate@3": 0.9375
+          },
+          "averages_by_category": {
+            "boundary": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "direct": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.27777777777777773,
+              "mrr": 0.75,
+              "ndcg@3": 0.7718216255952429,
+              "hit_rate@3": 0.8333333333333334
+            },
+            "distractor": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "multi_fact": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.5555555555555555,
+              "mrr": 1.0,
+              "ndcg@3": 0.8442893273045486,
+              "hit_rate@3": 1.0
+            }
+          },
+          "unanswerable": [
+            {
+              "query": "What is the capital of Atlantis?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "Who won the 1987 chess championship in Reykjavik?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "What is the airspeed velocity of an unladen swallow?",
+              "retrieved_count": 3
+            }
+          ]
+        },
+        "hybrid_reranked": {
+          "per_query": [
+            {
+              "query": "How many days of annual leave does a full-time employee receive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "twenty four days of annual leave"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How often must production credentials be rotated?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "rotated every ninety days"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How quickly are approved expense claims paid after submission?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "paid within ten working days of submission"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the daily meal allowance for business travel?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reimbursed up to seventy five dollars per day"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Within how many hours must a lost laptop be reported to the service desk?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reported to the service desk within four hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How many signatures do large supplier invoices need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "need two signatures"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last on a single charge?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long is the X100 limited warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X100 is covered by a one year limited warranty"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis production deployments run?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Who approves an Aldrin rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "An Aldrin rollback needs approval from the platform manager"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the annual leave allowance and who must approve extended remote work?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "twenty four days of annual leave",
+                "written approval from the regional director"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis deployments run and who approves a Borealis rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 0.9197207891481876,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC",
+                "A Borealis rollback needs approval from the release captain"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last and how long is the X200 warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 0.6131471927654584,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours",
+                "three year limited warranty"
+              ],
+              "evidence_coverage@3": 0.5
+            },
+            {
+              "query": "How long are customer support transcripts kept under the Calloway data retention schedule?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "The Calloway data retention schedule requires that customer support transcripts are kept for exactly eighteen months, after which the compliance office must confirm deletion in writing and the storage team must purge every backup copy within a further thirty days."
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What approvals does a Hartwell procurement above forty thousand dollars need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Any Hartwell procurement above forty thousand dollars must be supported by three competitive quotations, reviewed by the sourcing committee, and countersigned by the chief financial officer before a purchase order is issued to the selected supplier."
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How far in advance must overseas travel be booked under the Lindqvist policy?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Overseas travel under the Lindqvist policy must be booked at least twenty one days in advance through the approved agency, and the traveller must file a written itinerary with the safety desk before departure so that emergency contacts can be verified."
+              ],
+              "evidence_coverage@3": 1.0
+            }
+          ],
+          "averages": {
+            "evidence_coverage@3": 0.96875,
+            "precision@3": 0.375,
+            "mrr": 1.0,
+            "ndcg@3": 0.9708042488696029,
+            "hit_rate@3": 1.0
+          },
+          "averages_by_category": {
+            "boundary": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "direct": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "distractor": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "multi_fact": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.5555555555555555,
+              "mrr": 1.0,
+              "ndcg@3": 0.8442893273045486,
+              "hit_rate@3": 1.0
+            }
+          },
+          "unanswerable": [
+            {
+              "query": "What is the capital of Atlantis?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "Who won the 1987 chess championship in Reykjavik?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "What is the airspeed velocity of an unladen swallow?",
+              "retrieved_count": 3
+            }
+          ]
+        }
+      },
+      "generation": [
+        {
+          "query": "How many days of annual leave does a full-time employee receive?",
+          "answer_preview": "Based on the available documents:\n\n[1] Teams are expected to keep records of leave decisions so that reviewers can follo",
+          "citation_completeness": 1.0,
+          "citation_correctness": 1.0,
+          "is_extractive_answer_grounded": true
+        },
+        {
+          "query": "How often must production credentials be rotated?",
+          "answer_preview": "Based on the available documents:\n\n[1] Teams are expected to keep records of password decisions so that reviewers can fo",
+          "citation_completeness": 1.0,
+          "citation_correctness": 1.0,
+          "is_extractive_answer_grounded": true
+        }
+      ],
+      "unanswerable_generation": [
+        {
+          "query": "What is the capital of Atlantis?",
+          "answer_is_no_evidence_answer": false,
+          "citation_count": 5
+        },
+        {
+          "query": "Who won the 1987 chess championship in Reykjavik?",
+          "answer_is_no_evidence_answer": false,
+          "citation_count": 5
+        },
+        {
+          "query": "What is the airspeed velocity of an unladen swallow?",
+          "answer_is_no_evidence_answer": false,
+          "citation_count": 5
+        }
+      ]
+    },
+    "fixed_size": {
+      "chunk_count": 27,
+      "methods": {
+        "dense": {
+          "per_query": [
+            {
+              "query": "How many days of annual leave does a full-time employee receive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "twenty four days of annual leave"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How often must production credentials be rotated?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "rotated every ninety days"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How quickly are approved expense claims paid after submission?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 0.5,
+              "ndcg@3": 0.6309297535714575,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "paid within ten working days of submission"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the daily meal allowance for business travel?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reimbursed up to seventy five dollars per day"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "Within how many hours must a lost laptop be reported to the service desk?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reported to the service desk within four hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How many signatures do large supplier invoices need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "need two signatures"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last on a single charge?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long is the X100 limited warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X100 is covered by a one year limited warranty"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis production deployments run?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Who approves an Aldrin rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "An Aldrin rollback needs approval from the platform manager"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the annual leave allowance and who must approve extended remote work?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "twenty four days of annual leave",
+                "written approval from the regional director"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis deployments run and who approves a Borealis rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 0.9197207891481876,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC",
+                "A Borealis rollback needs approval from the release captain"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last and how long is the X200 warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 0.6131471927654584,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours",
+                "three year limited warranty"
+              ],
+              "evidence_coverage@3": 0.5
+            },
+            {
+              "query": "How long are customer support transcripts kept under the Calloway data retention schedule?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "The Calloway data retention schedule requires that customer support transcripts are kept for exactly eighteen months, after which the compliance office must confirm deletion in writing and the storage team must purge every backup copy within a further thirty days."
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "What approvals does a Hartwell procurement above forty thousand dollars need?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Any Hartwell procurement above forty thousand dollars must be supported by three competitive quotations, reviewed by the sourcing committee, and countersigned by the chief financial officer before a purchase order is issued to the selected supplier."
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How far in advance must overseas travel be booked under the Lindqvist policy?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Overseas travel under the Lindqvist policy must be booked at least twenty one days in advance through the approved agency, and the traveller must file a written itinerary with the safety desk before departure so that emergency contacts can be verified."
+              ],
+              "evidence_coverage@3": 0.0
+            }
+          ],
+          "averages": {
+            "evidence_coverage@3": 0.71875,
+            "precision@3": 0.29166666666666663,
+            "mrr": 0.71875,
+            "ndcg@3": 0.6977373584678189,
+            "hit_rate@3": 0.75
+          },
+          "averages_by_category": {
+            "boundary": {
+              "evidence_coverage@3": 0.0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0
+            },
+            "direct": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.27777777777777773,
+              "mrr": 0.75,
+              "ndcg@3": 0.7718216255952429,
+              "hit_rate@3": 0.8333333333333334
+            },
+            "distractor": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "multi_fact": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.5555555555555555,
+              "mrr": 1.0,
+              "ndcg@3": 0.8442893273045486,
+              "hit_rate@3": 1.0
+            }
+          },
+          "unanswerable": [
+            {
+              "query": "What is the capital of Atlantis?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "Who won the 1987 chess championship in Reykjavik?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "What is the airspeed velocity of an unladen swallow?",
+              "retrieved_count": 3
+            }
+          ]
+        },
+        "lexical": {
+          "per_query": [
+            {
+              "query": "How many days of annual leave does a full-time employee receive?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "twenty four days of annual leave"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How often must production credentials be rotated?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "rotated every ninety days"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How quickly are approved expense claims paid after submission?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "paid within ten working days of submission"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "What is the daily meal allowance for business travel?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reimbursed up to seventy five dollars per day"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "Within how many hours must a lost laptop be reported to the service desk?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reported to the service desk within four hours"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How many signatures do large supplier invoices need?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "need two signatures"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How long does the X200 battery last on a single charge?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How long is the X100 limited warranty?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X100 is covered by a one year limited warranty"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "When do Borealis production deployments run?",
+              "retrieved_count": 1,
+              "precision@3": 1.0,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Who approves an Aldrin rollback?",
+              "retrieved_count": 1,
+              "precision@3": 1.0,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "An Aldrin rollback needs approval from the platform manager"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the annual leave allowance and who must approve extended remote work?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "twenty four days of annual leave",
+                "written approval from the regional director"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "When do Borealis deployments run and who approves a Borealis rollback?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC",
+                "A Borealis rollback needs approval from the release captain"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How long does the X200 battery last and how long is the X200 warranty?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours",
+                "three year limited warranty"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How long are customer support transcripts kept under the Calloway data retention schedule?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "The Calloway data retention schedule requires that customer support transcripts are kept for exactly eighteen months, after which the compliance office must confirm deletion in writing and the storage team must purge every backup copy within a further thirty days."
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "What approvals does a Hartwell procurement above forty thousand dollars need?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Any Hartwell procurement above forty thousand dollars must be supported by three competitive quotations, reviewed by the sourcing committee, and countersigned by the chief financial officer before a purchase order is issued to the selected supplier."
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How far in advance must overseas travel be booked under the Lindqvist policy?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Overseas travel under the Lindqvist policy must be booked at least twenty one days in advance through the approved agency, and the traveller must file a written itinerary with the safety desk before departure so that emergency contacts can be verified."
+              ],
+              "evidence_coverage@3": 0.0
+            }
+          ],
+          "averages": {
+            "evidence_coverage@3": 0.125,
+            "precision@3": 0.125,
+            "mrr": 0.125,
+            "ndcg@3": 0.125,
+            "hit_rate@3": 0.125
+          },
+          "averages_by_category": {
+            "boundary": {
+              "evidence_coverage@3": 0.0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0
+            },
+            "direct": {
+              "evidence_coverage@3": 0.0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0
+            },
+            "distractor": {
+              "evidence_coverage@3": 0.5,
+              "precision@3": 0.5,
+              "mrr": 0.5,
+              "ndcg@3": 0.5,
+              "hit_rate@3": 0.5
+            },
+            "multi_fact": {
+              "evidence_coverage@3": 0.0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0
+            }
+          },
+          "unanswerable": [
+            {
+              "query": "What is the capital of Atlantis?",
+              "retrieved_count": 0
+            },
+            {
+              "query": "Who won the 1987 chess championship in Reykjavik?",
+              "retrieved_count": 0
+            },
+            {
+              "query": "What is the airspeed velocity of an unladen swallow?",
+              "retrieved_count": 0
+            }
+          ]
+        },
+        "hybrid": {
+          "per_query": [
+            {
+              "query": "How many days of annual leave does a full-time employee receive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "twenty four days of annual leave"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How often must production credentials be rotated?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "rotated every ninety days"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How quickly are approved expense claims paid after submission?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 0.5,
+              "ndcg@3": 0.6309297535714575,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "paid within ten working days of submission"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the daily meal allowance for business travel?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reimbursed up to seventy five dollars per day"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "Within how many hours must a lost laptop be reported to the service desk?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reported to the service desk within four hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How many signatures do large supplier invoices need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "need two signatures"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last on a single charge?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long is the X100 limited warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X100 is covered by a one year limited warranty"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis production deployments run?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Who approves an Aldrin rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "An Aldrin rollback needs approval from the platform manager"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the annual leave allowance and who must approve extended remote work?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "twenty four days of annual leave",
+                "written approval from the regional director"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis deployments run and who approves a Borealis rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 0.9197207891481876,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC",
+                "A Borealis rollback needs approval from the release captain"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last and how long is the X200 warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 0.6131471927654584,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours",
+                "three year limited warranty"
+              ],
+              "evidence_coverage@3": 0.5
+            },
+            {
+              "query": "How long are customer support transcripts kept under the Calloway data retention schedule?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "The Calloway data retention schedule requires that customer support transcripts are kept for exactly eighteen months, after which the compliance office must confirm deletion in writing and the storage team must purge every backup copy within a further thirty days."
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "What approvals does a Hartwell procurement above forty thousand dollars need?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Any Hartwell procurement above forty thousand dollars must be supported by three competitive quotations, reviewed by the sourcing committee, and countersigned by the chief financial officer before a purchase order is issued to the selected supplier."
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How far in advance must overseas travel be booked under the Lindqvist policy?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Overseas travel under the Lindqvist policy must be booked at least twenty one days in advance through the approved agency, and the traveller must file a written itinerary with the safety desk before departure so that emergency contacts can be verified."
+              ],
+              "evidence_coverage@3": 0.0
+            }
+          ],
+          "averages": {
+            "evidence_coverage@3": 0.71875,
+            "precision@3": 0.29166666666666663,
+            "mrr": 0.71875,
+            "ndcg@3": 0.6977373584678189,
+            "hit_rate@3": 0.75
+          },
+          "averages_by_category": {
+            "boundary": {
+              "evidence_coverage@3": 0.0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0
+            },
+            "direct": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.27777777777777773,
+              "mrr": 0.75,
+              "ndcg@3": 0.7718216255952429,
+              "hit_rate@3": 0.8333333333333334
+            },
+            "distractor": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "multi_fact": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.5555555555555555,
+              "mrr": 1.0,
+              "ndcg@3": 0.8442893273045486,
+              "hit_rate@3": 1.0
+            }
+          },
+          "unanswerable": [
+            {
+              "query": "What is the capital of Atlantis?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "Who won the 1987 chess championship in Reykjavik?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "What is the airspeed velocity of an unladen swallow?",
+              "retrieved_count": 3
+            }
+          ]
+        },
+        "hybrid_reranked": {
+          "per_query": [
+            {
+              "query": "How many days of annual leave does a full-time employee receive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "twenty four days of annual leave"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How often must production credentials be rotated?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "rotated every ninety days"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How quickly are approved expense claims paid after submission?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "paid within ten working days of submission"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the daily meal allowance for business travel?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reimbursed up to seventy five dollars per day"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Within how many hours must a lost laptop be reported to the service desk?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reported to the service desk within four hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How many signatures do large supplier invoices need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "need two signatures"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last on a single charge?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long is the X100 limited warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X100 is covered by a one year limited warranty"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis production deployments run?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Who approves an Aldrin rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "An Aldrin rollback needs approval from the platform manager"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the annual leave allowance and who must approve extended remote work?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "twenty four days of annual leave",
+                "written approval from the regional director"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis deployments run and who approves a Borealis rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 0.9197207891481876,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC",
+                "A Borealis rollback needs approval from the release captain"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last and how long is the X200 warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 0.6131471927654584,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours",
+                "three year limited warranty"
+              ],
+              "evidence_coverage@3": 0.5
+            },
+            {
+              "query": "How long are customer support transcripts kept under the Calloway data retention schedule?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "The Calloway data retention schedule requires that customer support transcripts are kept for exactly eighteen months, after which the compliance office must confirm deletion in writing and the storage team must purge every backup copy within a further thirty days."
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "What approvals does a Hartwell procurement above forty thousand dollars need?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Any Hartwell procurement above forty thousand dollars must be supported by three competitive quotations, reviewed by the sourcing committee, and countersigned by the chief financial officer before a purchase order is issued to the selected supplier."
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How far in advance must overseas travel be booked under the Lindqvist policy?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Overseas travel under the Lindqvist policy must be booked at least twenty one days in advance through the approved agency, and the traveller must file a written itinerary with the safety desk before departure so that emergency contacts can be verified."
+              ],
+              "evidence_coverage@3": 0.0
+            }
+          ],
+          "averages": {
+            "evidence_coverage@3": 0.78125,
+            "precision@3": 0.3125,
+            "mrr": 0.8125,
+            "ndcg@3": 0.7833042488696029,
+            "hit_rate@3": 0.8125
+          },
+          "averages_by_category": {
+            "boundary": {
+              "evidence_coverage@3": 0.0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0
+            },
+            "direct": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "distractor": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "multi_fact": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.5555555555555555,
+              "mrr": 1.0,
+              "ndcg@3": 0.8442893273045486,
+              "hit_rate@3": 1.0
+            }
+          },
+          "unanswerable": [
+            {
+              "query": "What is the capital of Atlantis?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "Who won the 1987 chess championship in Reykjavik?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "What is the airspeed velocity of an unladen swallow?",
+              "retrieved_count": 3
+            }
+          ]
+        }
+      },
+      "generation": null
+    },
+    "recursive": {
+      "chunk_count": 24,
+      "methods": {
+        "dense": {
+          "per_query": [
+            {
+              "query": "How many days of annual leave does a full-time employee receive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "twenty four days of annual leave"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How often must production credentials be rotated?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "rotated every ninety days"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How quickly are approved expense claims paid after submission?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 0.5,
+              "ndcg@3": 0.6309297535714575,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "paid within ten working days of submission"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the daily meal allowance for business travel?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reimbursed up to seventy five dollars per day"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "Within how many hours must a lost laptop be reported to the service desk?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reported to the service desk within four hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How many signatures do large supplier invoices need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "need two signatures"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last on a single charge?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long is the X100 limited warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X100 is covered by a one year limited warranty"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis production deployments run?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Who approves an Aldrin rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "An Aldrin rollback needs approval from the platform manager"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the annual leave allowance and who must approve extended remote work?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "twenty four days of annual leave",
+                "written approval from the regional director"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis deployments run and who approves a Borealis rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 0.9197207891481876,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC",
+                "A Borealis rollback needs approval from the release captain"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last and how long is the X200 warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 0.6131471927654584,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours",
+                "three year limited warranty"
+              ],
+              "evidence_coverage@3": 0.5
+            },
+            {
+              "query": "How long are customer support transcripts kept under the Calloway data retention schedule?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "The Calloway data retention schedule requires that customer support transcripts are kept for exactly eighteen months, after which the compliance office must confirm deletion in writing and the storage team must purge every backup copy within a further thirty days."
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What approvals does a Hartwell procurement above forty thousand dollars need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Any Hartwell procurement above forty thousand dollars must be supported by three competitive quotations, reviewed by the sourcing committee, and countersigned by the chief financial officer before a purchase order is issued to the selected supplier."
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How far in advance must overseas travel be booked under the Lindqvist policy?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Overseas travel under the Lindqvist policy must be booked at least twenty one days in advance through the approved agency, and the traveller must file a written itinerary with the safety desk before departure so that emergency contacts can be verified."
+              ],
+              "evidence_coverage@3": 1.0
+            }
+          ],
+          "averages": {
+            "evidence_coverage@3": 0.90625,
+            "precision@3": 0.35416666666666663,
+            "mrr": 0.90625,
+            "ndcg@3": 0.8852373584678189,
+            "hit_rate@3": 0.9375
+          },
+          "averages_by_category": {
+            "boundary": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "direct": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.27777777777777773,
+              "mrr": 0.75,
+              "ndcg@3": 0.7718216255952429,
+              "hit_rate@3": 0.8333333333333334
+            },
+            "distractor": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "multi_fact": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.5555555555555555,
+              "mrr": 1.0,
+              "ndcg@3": 0.8442893273045486,
+              "hit_rate@3": 1.0
+            }
+          },
+          "unanswerable": [
+            {
+              "query": "What is the capital of Atlantis?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "Who won the 1987 chess championship in Reykjavik?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "What is the airspeed velocity of an unladen swallow?",
+              "retrieved_count": 3
+            }
+          ]
+        },
+        "lexical": {
+          "per_query": [
+            {
+              "query": "How many days of annual leave does a full-time employee receive?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "twenty four days of annual leave"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How often must production credentials be rotated?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "rotated every ninety days"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How quickly are approved expense claims paid after submission?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "paid within ten working days of submission"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "What is the daily meal allowance for business travel?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reimbursed up to seventy five dollars per day"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "Within how many hours must a lost laptop be reported to the service desk?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reported to the service desk within four hours"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How many signatures do large supplier invoices need?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "need two signatures"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How long does the X200 battery last on a single charge?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How long is the X100 limited warranty?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X100 is covered by a one year limited warranty"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "When do Borealis production deployments run?",
+              "retrieved_count": 1,
+              "precision@3": 1.0,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Who approves an Aldrin rollback?",
+              "retrieved_count": 1,
+              "precision@3": 1.0,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "An Aldrin rollback needs approval from the platform manager"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the annual leave allowance and who must approve extended remote work?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "twenty four days of annual leave",
+                "written approval from the regional director"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "When do Borealis deployments run and who approves a Borealis rollback?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC",
+                "A Borealis rollback needs approval from the release captain"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How long does the X200 battery last and how long is the X200 warranty?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours",
+                "three year limited warranty"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How long are customer support transcripts kept under the Calloway data retention schedule?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "The Calloway data retention schedule requires that customer support transcripts are kept for exactly eighteen months, after which the compliance office must confirm deletion in writing and the storage team must purge every backup copy within a further thirty days."
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "What approvals does a Hartwell procurement above forty thousand dollars need?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Any Hartwell procurement above forty thousand dollars must be supported by three competitive quotations, reviewed by the sourcing committee, and countersigned by the chief financial officer before a purchase order is issued to the selected supplier."
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "How far in advance must overseas travel be booked under the Lindqvist policy?",
+              "retrieved_count": 0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Overseas travel under the Lindqvist policy must be booked at least twenty one days in advance through the approved agency, and the traveller must file a written itinerary with the safety desk before departure so that emergency contacts can be verified."
+              ],
+              "evidence_coverage@3": 0.0
+            }
+          ],
+          "averages": {
+            "evidence_coverage@3": 0.125,
+            "precision@3": 0.125,
+            "mrr": 0.125,
+            "ndcg@3": 0.125,
+            "hit_rate@3": 0.125
+          },
+          "averages_by_category": {
+            "boundary": {
+              "evidence_coverage@3": 0.0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0
+            },
+            "direct": {
+              "evidence_coverage@3": 0.0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0
+            },
+            "distractor": {
+              "evidence_coverage@3": 0.5,
+              "precision@3": 0.5,
+              "mrr": 0.5,
+              "ndcg@3": 0.5,
+              "hit_rate@3": 0.5
+            },
+            "multi_fact": {
+              "evidence_coverage@3": 0.0,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0
+            }
+          },
+          "unanswerable": [
+            {
+              "query": "What is the capital of Atlantis?",
+              "retrieved_count": 0
+            },
+            {
+              "query": "Who won the 1987 chess championship in Reykjavik?",
+              "retrieved_count": 0
+            },
+            {
+              "query": "What is the airspeed velocity of an unladen swallow?",
+              "retrieved_count": 0
+            }
+          ]
+        },
+        "hybrid": {
+          "per_query": [
+            {
+              "query": "How many days of annual leave does a full-time employee receive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "twenty four days of annual leave"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How often must production credentials be rotated?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "rotated every ninety days"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How quickly are approved expense claims paid after submission?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 0.5,
+              "ndcg@3": 0.6309297535714575,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "paid within ten working days of submission"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the daily meal allowance for business travel?",
+              "retrieved_count": 3,
+              "precision@3": 0.0,
+              "mrr": 0.0,
+              "ndcg@3": 0.0,
+              "hit_rate@3": 0.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reimbursed up to seventy five dollars per day"
+              ],
+              "evidence_coverage@3": 0.0
+            },
+            {
+              "query": "Within how many hours must a lost laptop be reported to the service desk?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reported to the service desk within four hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How many signatures do large supplier invoices need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "need two signatures"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last on a single charge?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long is the X100 limited warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X100 is covered by a one year limited warranty"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis production deployments run?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Who approves an Aldrin rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "An Aldrin rollback needs approval from the platform manager"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the annual leave allowance and who must approve extended remote work?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "twenty four days of annual leave",
+                "written approval from the regional director"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis deployments run and who approves a Borealis rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 0.9197207891481876,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC",
+                "A Borealis rollback needs approval from the release captain"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last and how long is the X200 warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 0.6131471927654584,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours",
+                "three year limited warranty"
+              ],
+              "evidence_coverage@3": 0.5
+            },
+            {
+              "query": "How long are customer support transcripts kept under the Calloway data retention schedule?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "The Calloway data retention schedule requires that customer support transcripts are kept for exactly eighteen months, after which the compliance office must confirm deletion in writing and the storage team must purge every backup copy within a further thirty days."
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What approvals does a Hartwell procurement above forty thousand dollars need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Any Hartwell procurement above forty thousand dollars must be supported by three competitive quotations, reviewed by the sourcing committee, and countersigned by the chief financial officer before a purchase order is issued to the selected supplier."
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How far in advance must overseas travel be booked under the Lindqvist policy?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Overseas travel under the Lindqvist policy must be booked at least twenty one days in advance through the approved agency, and the traveller must file a written itinerary with the safety desk before departure so that emergency contacts can be verified."
+              ],
+              "evidence_coverage@3": 1.0
+            }
+          ],
+          "averages": {
+            "evidence_coverage@3": 0.90625,
+            "precision@3": 0.35416666666666663,
+            "mrr": 0.90625,
+            "ndcg@3": 0.8852373584678189,
+            "hit_rate@3": 0.9375
+          },
+          "averages_by_category": {
+            "boundary": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "direct": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.27777777777777773,
+              "mrr": 0.75,
+              "ndcg@3": 0.7718216255952429,
+              "hit_rate@3": 0.8333333333333334
+            },
+            "distractor": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "multi_fact": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.5555555555555555,
+              "mrr": 1.0,
+              "ndcg@3": 0.8442893273045486,
+              "hit_rate@3": 1.0
+            }
+          },
+          "unanswerable": [
+            {
+              "query": "What is the capital of Atlantis?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "Who won the 1987 chess championship in Reykjavik?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "What is the airspeed velocity of an unladen swallow?",
+              "retrieved_count": 3
+            }
+          ]
+        },
+        "hybrid_reranked": {
+          "per_query": [
+            {
+              "query": "How many days of annual leave does a full-time employee receive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "twenty four days of annual leave"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How often must production credentials be rotated?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "rotated every ninety days"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How quickly are approved expense claims paid after submission?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "paid within ten working days of submission"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the daily meal allowance for business travel?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reimbursed up to seventy five dollars per day"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Within how many hours must a lost laptop be reported to the service desk?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "reported to the service desk within four hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How many signatures do large supplier invoices need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "direct",
+              "evidence_phrases": [
+                "need two signatures"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last on a single charge?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long is the X100 limited warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "The X100 is covered by a one year limited warranty"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis production deployments run?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "Who approves an Aldrin rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "distractor",
+              "evidence_phrases": [
+                "An Aldrin rollback needs approval from the platform manager"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What is the annual leave allowance and who must approve extended remote work?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "twenty four days of annual leave",
+                "written approval from the regional director"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "When do Borealis deployments run and who approves a Borealis rollback?",
+              "retrieved_count": 3,
+              "precision@3": 0.6666666666666666,
+              "mrr": 1.0,
+              "ndcg@3": 0.9197207891481876,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "Borealis production deployments run every Tuesday at 02:00 UTC",
+                "A Borealis rollback needs approval from the release captain"
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How long does the X200 battery last and how long is the X200 warranty?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 0.6131471927654584,
+              "hit_rate@3": 1.0,
+              "category": "multi_fact",
+              "evidence_phrases": [
+                "The X200 battery lasts thirty six hours",
+                "three year limited warranty"
+              ],
+              "evidence_coverage@3": 0.5
+            },
+            {
+              "query": "How long are customer support transcripts kept under the Calloway data retention schedule?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "The Calloway data retention schedule requires that customer support transcripts are kept for exactly eighteen months, after which the compliance office must confirm deletion in writing and the storage team must purge every backup copy within a further thirty days."
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "What approvals does a Hartwell procurement above forty thousand dollars need?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Any Hartwell procurement above forty thousand dollars must be supported by three competitive quotations, reviewed by the sourcing committee, and countersigned by the chief financial officer before a purchase order is issued to the selected supplier."
+              ],
+              "evidence_coverage@3": 1.0
+            },
+            {
+              "query": "How far in advance must overseas travel be booked under the Lindqvist policy?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
+              "category": "boundary",
+              "evidence_phrases": [
+                "Overseas travel under the Lindqvist policy must be booked at least twenty one days in advance through the approved agency, and the traveller must file a written itinerary with the safety desk before departure so that emergency contacts can be verified."
+              ],
+              "evidence_coverage@3": 1.0
+            }
+          ],
+          "averages": {
+            "evidence_coverage@3": 0.96875,
+            "precision@3": 0.375,
+            "mrr": 1.0,
+            "ndcg@3": 0.9708042488696029,
+            "hit_rate@3": 1.0
+          },
+          "averages_by_category": {
+            "boundary": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "direct": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "distractor": {
+              "evidence_coverage@3": 1.0,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0
+            },
+            "multi_fact": {
+              "evidence_coverage@3": 0.8333333333333334,
+              "precision@3": 0.5555555555555555,
+              "mrr": 1.0,
+              "ndcg@3": 0.8442893273045486,
+              "hit_rate@3": 1.0
+            }
+          },
+          "unanswerable": [
+            {
+              "query": "What is the capital of Atlantis?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "Who won the 1987 chess championship in Reykjavik?",
+              "retrieved_count": 3
+            },
+            {
+              "query": "What is the airspeed velocity of an unladen swallow?",
+              "retrieved_count": 3
+            }
+          ]
+        }
+      },
+      "generation": null
+    }
+  }
+}

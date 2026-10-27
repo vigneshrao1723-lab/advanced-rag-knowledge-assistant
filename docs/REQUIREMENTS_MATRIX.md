@@ -345,6 +345,14 @@ exists but the user-facing workflow is not complete end-to-end.
   artifact of the fixture's documents each being short enough to become
   exactly one chunk under any of the three chunkers — not a claim the
   chunkers are equivalent in general.
+  **Follow-up (2026-10-27 release audit):** a larger fixture
+  (`eval/datasets/retrieval_fixture_large.py`, run with `--fixture large`,
+  results in `eval/results/retrieval_evaluation_large.json`) was added so
+  the strategies *can* differ. On its three engineered boundary-spanning
+  queries fixed-size scored evidence coverage 0.00 vs. 1.00 for
+  structure-aware and recursive; on every other category the three are
+  identical, and structure-aware vs. recursive are still indistinguishable.
+  See `docs/EVALUATION.md` "Larger fixture" for the tables and caveats.
 - **Acceptance criteria:** met — see evidence above.
 - **Dependencies/risks:** None realized. Purely additive — the
   production pipeline's default strategy is unchanged

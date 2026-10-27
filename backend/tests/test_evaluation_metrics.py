@@ -10,6 +10,7 @@ import pytest
 from app.evaluation.metrics import (
     citation_completeness,
     citation_correctness,
+    evidence_coverage_at_k,
     extract_cited_markers,
     hit_rate_at_k,
     is_extractive_answer_grounded,
@@ -235,3 +236,40 @@ def test_extractive_answer_not_grounded_if_content_added() -> None:
     assert not is_extractive_answer_grounded(
         tampered, context_text, no_evidence_answer="no evidence available"
     )
+
+
+# --- evidence_coverage_at_k ---------------------------------------------
+
+
+def test_evidence_coverage_all_phrases_found_across_chunks() -> None:
+    chunks = ["alpha beta gamma", "delta epsilon"]
+    assert evidence_coverage_at_k(chunks, ["beta gamma", "delta"], k=2) == 1.0
+
+
+def test_evidence_coverage_is_partial_when_one_phrase_is_missing() -> None:
+    chunks = ["alpha beta gamma", "delta epsilon"]
+    assert evidence_coverage_at_k(chunks, ["beta", "zeta"], k=2) == 0.5
+
+
+def test_evidence_coverage_only_looks_at_the_top_k_chunks() -> None:
+    chunks = ["irrelevant", "also irrelevant", "the answer is here"]
+    assert evidence_coverage_at_k(chunks, ["the answer is here"], k=2) == 0.0
+    assert evidence_coverage_at_k(chunks, ["the answer is here"], k=3) == 1.0
+
+
+def test_evidence_coverage_phrase_split_across_two_chunks_is_not_covered() -> None:
+    # The boundary-spanning case: a chunker cut the sentence in half, so
+    # neither retrieved chunk contains it -- even though both are retrieved.
+    chunks = ["The retention period is eighteen", "months for all transcripts."]
+    assert evidence_coverage_at_k(chunks, ["The retention period is eighteen months"], k=2) == 0.0
+
+
+def test_evidence_coverage_ignores_case_and_whitespace_differences() -> None:
+    chunks = ["Rotated  every\nNinety days"]
+    assert evidence_coverage_at_k(chunks, ["rotated every ninety DAYS"], k=1) == 1.0
+
+
+def test_evidence_coverage_with_no_phrases_or_non_positive_k_is_zero() -> None:
+    assert evidence_coverage_at_k(["anything"], [], k=3) == 0.0
+    assert evidence_coverage_at_k(["anything"], ["anything"], k=0) == 0.0
+    assert evidence_coverage_at_k([], ["anything"], k=3) == 0.0
