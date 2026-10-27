@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from urllib.parse import quote
 
 import redis
 from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile, status
@@ -211,23 +212,34 @@ async def delete_document(
     )
 
 
-_UNSAFE_HEADER_CHARS = re.compile(r'[\r\n"]')
+# CR/LF and every other ASCII control character (header/response-splitting),
+# the double quote and the backslash (which would let a crafted filename
+# break out of, or escape the closing quote of, the quoted `filename="..."`
+# parameter).
+_UNSAFE_HEADER_CHARS = re.compile(r'[\x00-\x1f\x7f"\\]')
 
 
-def _content_disposition_filename(filename: str) -> str:
-    """Sanitizes a user-supplied filename for safe use inside an HTTP
-    header value -- `filename` is display-only, user-controlled input
-    (docs/SECURITY.md "Upload & document safety": never used as a
-    storage path, but never previously needed to be safe as a *header
-    value* either, since this is the first endpoint that puts it in
-    one). Strips CR/LF (header/response-splitting) and double quotes
-    (which would otherwise let a crafted filename break out of the
-    quoted `filename="..."` parameter); ASCII-only RFC 6266 encoding for
-    anything outside it is intentionally not attempted here, as a
-    stripped-but-still-readable fallback name is an acceptable
-    simplification for this feature's scope.
+def _content_disposition(filename: str) -> str:
+    """Builds a safe `Content-Disposition: attachment` value for a
+    user-supplied filename (docs/SECURITY.md "Upload & document safety":
+    never used as a storage path, but it is echoed into a header here).
+
+    HTTP header values are latin-1 encoded by the ASGI layer, so a
+    filename with any character outside latin-1 (CJK, emoji, ...) used
+    verbatim raised `UnicodeEncodeError` -> 500. An ASCII-only name keeps
+    the plain `filename="..."` form unchanged; otherwise an ASCII
+    fallback (`_` for each non-ASCII character) is emitted alongside the
+    RFC 6266 / RFC 5987 `filename*=UTF-8''<percent-encoded>` form, which
+    every current browser prefers.
     """
-    return _UNSAFE_HEADER_CHARS.sub("", filename) or "download"
+    sanitized = _UNSAFE_HEADER_CHARS.sub("", filename) or "download"
+    if sanitized.isascii():
+        return f'attachment; filename="{sanitized}"'
+    fallback = "".join(char if char.isascii() else "_" for char in sanitized)
+    # `errors="replace"` keeps a lone surrogate (valid in a Python str,
+    # not in UTF-8) from raising here.
+    encoded = quote(sanitized, safe="", encoding="utf-8", errors="replace")
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"
 
 
 @router.get(
@@ -248,9 +260,8 @@ async def download_document(
         user_id=ctx.user.id,
         ip_address=client_ip(request),
     )
-    safe_filename = _content_disposition_filename(document.filename)
     return Response(
         content=content,
         media_type=document.mime_type,
-        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
+        headers={"Content-Disposition": _content_disposition(document.filename)},
     )

@@ -401,3 +401,86 @@ def test_list_documents_searches_by_filename(client: TestClient) -> None:
     assert response.status_code == 200, response.text
     filenames = {d["filename"] for d in response.json()}
     assert filenames == {"refund-policy.txt"}
+
+
+def test_list_documents_filename_search_treats_like_wildcards_literally(
+    client: TestClient,
+) -> None:
+    # Found by the pre-release audit: `q=%` / `q=_` were interpolated into
+    # an ILIKE pattern unescaped, so they matched every document instead
+    # of only filenames that literally contain "%" / "_".
+    _register(client)
+    workspace = _create_workspace(client)
+    _upload(client, workspace["id"], filename="plain.txt", content=b"plain content")
+    _upload(client, workspace["id"], filename="100%_done.txt", content=b"percent content")
+
+    for query, expected in (("%", {"100%_done.txt"}), ("_", {"100%_done.txt"})):
+        response = client.get(
+            f"/api/v1/workspaces/{workspace['id']}/documents", params={"q": query}
+        )
+        assert response.status_code == 200, response.text
+        assert {d["filename"] for d in response.json()} == expected, query
+
+    # A pattern that is only a wildcard when unescaped must match nothing.
+    response = client.get(
+        f"/api/v1/workspaces/{workspace['id']}/documents", params={"q": "pl_in"}
+    )
+    assert response.json() == []
+
+
+def test_download_with_a_non_latin1_filename_succeeds(client: TestClient) -> None:
+    # Found by the pre-release audit: HTTP header values are latin-1
+    # encoded, so a rename to (or upload of) a CJK/emoji filename made
+    # `GET .../download` raise UnicodeEncodeError -> 500.
+    _register(client)
+    workspace = _create_workspace(client)
+    document = _upload(client, workspace["id"], content=_TXT_BYTES)
+    unicode_filename = "报告 résumé 🚀.txt"
+    assert _rename(client, workspace["id"], document["id"], unicode_filename).status_code == 200
+
+    response = _download(client, workspace["id"], document["id"])
+
+    assert response.status_code == 200, response.text
+    assert response.content == _TXT_BYTES
+    content_disposition = response.headers["content-disposition"]
+    assert content_disposition.startswith("attachment; filename=")
+    # ASCII fallback for old clients + RFC 6266/5987 UTF-8 form for new ones.
+    assert "filename*=UTF-8''" in content_disposition
+    assert (
+        "filename*=UTF-8''%E6%8A%A5%E5%91%8A%20r%C3%A9sum%C3%A9%20%F0%9F%9A%80.txt"
+        in content_disposition
+    )
+    fallback = content_disposition.split('filename="', 1)[1].split('"', 1)[0]
+    assert fallback.isascii()
+    assert fallback.endswith(".txt")
+
+
+def test_download_of_an_uploaded_unicode_filename_succeeds(client: TestClient) -> None:
+    _register(client)
+    workspace = _create_workspace(client)
+    document = _upload(client, workspace["id"], filename="データ.txt", content=_TXT_BYTES)
+
+    response = _download(client, workspace["id"], document["id"])
+
+    assert response.status_code == 200, response.text
+    assert response.content == _TXT_BYTES
+    assert "filename*=UTF-8''%E3%83%87%E3%83%BC%E3%82%BF.txt" in response.headers[
+        "content-disposition"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("report.txt", 'attachment; filename="report.txt"'),
+        ('a"b\\c\x00d\x7f.txt', 'attachment; filename="abcd.txt"'),
+        ("", 'attachment; filename="download"'),
+        ('"\r\n"', 'attachment; filename="download"'),
+    ],
+)
+def test_content_disposition_for_ascii_filenames_is_unchanged_and_safe(
+    filename: str, expected: str
+) -> None:
+    from app.api.v1.documents import _content_disposition
+
+    assert _content_disposition(filename) == expected
