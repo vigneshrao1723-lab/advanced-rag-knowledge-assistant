@@ -935,3 +935,63 @@ title), never by the position it happened to land at — position is
 never guaranteed stable when two rows can share a sort key, and this
 project's own shared-transaction test fixture guarantees exactly that
 collision for same-request-adjacent rows.
+
+---
+
+## 2026-10-27 — Unicode filename turned a document download into a 500
+
+**Symptom:** `GET /workspaces/{id}/documents/{id}/download` returned
+`500 internal_error` for a document uploaded as `データ.txt` (or renamed to
+anything containing CJK/emoji). Every ASCII filename worked.
+
+**Root cause:** `Content-Disposition` was built from the stored filename and
+handed to Starlette, which encodes header values as latin-1; any character
+above U+00FF raised `UnicodeEncodeError` inside response construction. The
+helper's own docstring said non-ASCII handling was "intentionally not
+attempted" with "a stripped-but-still-readable fallback", but the code only
+stripped CR/LF/quote — it never stripped or encoded non-latin-1 characters.
+The existing test only covered the CR/LF/quote injection case, so the gap
+was invisible.
+
+**Failed attempts:** None needed — reproduced directly (live and in a
+failing test) once the audit tried a non-ASCII upload. The tempting wrong
+fix is `filename.encode("ascii", "ignore")`, which silently turns
+`報告.pdf` into `.pdf`.
+
+**Fix:** ASCII names keep the exact old header; other names get an ASCII
+fallback (`_` per non-ASCII character) plus RFC 6266 `filename*=UTF-8''…`.
+Sanitizer widened to all ASCII control characters and backslash.
+
+**Verification:** 7 new tests (failed before, pass after); live curl and a
+headless-Chromium download that kept the original unicode filename and the
+byte-identical content.
+
+**Prevention:** the test now asserts the exact percent-encoded header for a
+CJK+emoji name. General rule: any user text echoed into a response header
+needs a non-ASCII test case, not only an injection test case.
+
+## 2026-10-27 — mypy in CI checks `tests/`, so a test importing a repo-root package fails CI
+
+**Symptom:** locally `pytest` passed for a new test that did
+`from eval.datasets.retrieval_fixture_large import ...`, but
+`mypy .` (the literal CI command, which also type-checks `tests/`) failed
+with `import-not-found`.
+
+**Root cause:** `eval/` lives at the repository root, outside `backend/`
+where mypy runs (`mypy_path = "."`); the test made it importable at runtime
+with a `sys.path` insert, which mypy cannot see.
+
+**Failed attempts:** Running only `ruff` and the single test file — both
+green — hid it; `mypy` was run in a `&&` chain whose earlier output was cut
+off, so the failure looked like a pass until the chain was inspected.
+
+**Fix:** load the fixture by file path with `importlib.util.
+spec_from_file_location` (registered in `sys.modules` so dataclasses
+resolve), typed as `Any`, skipping the module when `eval/` is absent (the
+Docker image).
+
+**Verification:** `ruff`, `mypy` (163 files) and the 10 tests pass; the
+module reports as skipped inside the image.
+
+**Prevention:** run the exact CI commands (`ruff check .`, `mypy .`)
+separately and read each result before committing.

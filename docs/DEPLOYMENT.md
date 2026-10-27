@@ -44,7 +44,7 @@ voice, evaluation — runs end-to-end against this local stack; see
 - Verified repeatedly (see `HANDOFF.md` for the full verification log
   across every Issue #1–#7 slice): both images build; the stack starts;
   the pgvector extension is enabled in the running database; Alembic
-  applies all migrations (`0001` through `0008` as of Issue #7) against
+  applies all migrations (`0001` through `0010` as of the 2026-10-27 audit) against
   the real container; the backend's liveness/readiness endpoints
   respond correctly with a real DB round-trip; the frontend serves and
   can reach the backend across origins (CORS); the full product flow —
@@ -129,7 +129,13 @@ need a real value once a non-local frontend origin exists.
 
 ## Target deployment environment
 
-Not yet decided. The application is now functional end-to-end (Issues
+Not yet decided. A sourced three-way comparison (single VPS, Render,
+Fly.io + Neon) with INR cost estimates and a recommendation is in
+[`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md) "Hosting options
+compared" — research only; nothing has been provisioned. Note that
+`infra/compose/docker-compose.yml` publishes Postgres/Redis/Mailpit ports
+on all interfaces with a default DB password: it is a local-dev file and
+must not be used as-is on a public host. The application is now functional end-to-end (Issues
 #1–#7), so this is no longer "not yet a near-term concern" in the sense
 the original wording meant — it is a deliberate scope boundary instead:
 choosing a real cloud host/hosting model is a genuine infrastructure/
