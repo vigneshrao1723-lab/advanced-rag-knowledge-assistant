@@ -2,6 +2,7 @@ import { getApiBaseUrl } from "@/lib/config";
 import { getCsrfToken } from "@/lib/csrf";
 import {
   AuthResponseSchema,
+  CapabilitiesSchema,
   CollectionListSchema,
   CollectionSchema,
   CollectionWithDocumentsSchema,
@@ -24,6 +25,7 @@ import {
   WorkspaceListSchema,
   WorkspaceSchema,
   type AuthResponse,
+  type Capabilities,
   type Collection,
   type CollectionWithDocuments,
   type Conversation,
@@ -469,6 +471,11 @@ export async function listMessages(workspaceId: string, conversationId: string):
     "GET"
   );
   return MessageListSchema.parse(await response.json());
+}
+
+export async function getCapabilities(): Promise<Capabilities> {
+  const response = await apiRequest("/api/v1/system/capabilities", "GET");
+  return CapabilitiesSchema.parse(await response.json());
 }
 
 export async function postMessage(

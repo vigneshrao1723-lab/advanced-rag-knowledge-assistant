@@ -235,6 +235,24 @@ export const MessageSchema = z.object({
 export type Message = z.infer<typeof MessageSchema>;
 export const MessageListSchema = z.array(MessageSchema);
 
+// --- System capabilities (ADR 0009) ---
+// Mirrors backend/app/schemas/system.py.
+
+export const CapabilityStatusSchema = z.object({
+  provider: z.string(),
+  model: z.string().nullable(),
+  status: z.string(),
+  message: z.string(),
+});
+export type CapabilityStatus = z.infer<typeof CapabilityStatusSchema>;
+
+export const CapabilitiesSchema = z.object({
+  llm: CapabilityStatusSchema,
+  stt: CapabilityStatusSchema,
+  tts: CapabilityStatusSchema,
+});
+export type Capabilities = z.infer<typeof CapabilitiesSchema>;
+
 // --- Voice (Issue #6) ---
 // Mirrors backend/app/schemas/conversation.py's VoiceMessageRead.
 

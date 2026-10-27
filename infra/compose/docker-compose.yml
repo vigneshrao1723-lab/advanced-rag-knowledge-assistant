@@ -51,6 +51,26 @@ services:
       timeout: 5s
       retries: 10
 
+  # Free, local answer-generation model (ADR 0009, docs/AI_SETUP.md). Opt-in
+  # via the `llm` profile so a plain `docker compose up` never downloads
+  # anything; infra/scripts/setup-local-llm.sh starts it and pulls a model.
+  # CPU by default; add docker-compose.gpu.yml for an NVIDIA GPU.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["llm"]
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   backend:
     build:
       context: ../../backend
@@ -75,6 +95,15 @@ services:
       # (ADR 0006 §13) — this dependency is a container-startup-ordering
       # convenience for local dev only, not a runtime requirement.
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      # Answer generation (ADR 0009). Defaults to the local Ollama service
+      # (`--profile llm`, see docs/AI_SETUP.md). If the model is not running
+      # the chat says so; it never falls back to pasting raw excerpts. Set
+      # LLM_PROVIDER=extractive only for offline demos/tests.
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai_compatible}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434/v1}
+      LLM_MODEL: ${LLM_MODEL:-rag-assistant}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-180}
     volumes:
       # Local-dev persistence for uploaded documents (StorageProvider's
       # "local" implementation, app/core/config.py's storage_local_root,
@@ -120,3 +149,4 @@ services:
 volumes:
   db_data:
   backend_documents:
+  ollama_models:

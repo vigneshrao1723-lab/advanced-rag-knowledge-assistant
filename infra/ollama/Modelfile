@@ -1,0 +1,8 @@
+# Derived from the base model by infra/scripts/setup-local-llm.sh.
+# Ollama's OpenAI-compatible API cannot set the context window per request
+# (https://docs.ollama.com/openai), so it is baked into a derived model.
+# 8192 tokens comfortably holds the evidence block (LLM_CONTEXT_MAX_CHARS),
+# conversation history and the answer; the KV cache for a 3B model at this
+# size is small enough for a 4 GB GPU.
+FROM qwen2.5:3b-instruct
+PARAMETER num_ctx 8192

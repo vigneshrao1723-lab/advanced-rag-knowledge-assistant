@@ -99,8 +99,17 @@ def update_content(
     return message
 
 
+def delete(db: Session, *, message: Message) -> None:
+    """Removes one message row (its citations cascade). Used to withdraw a
+    user message whose answer could not be generated, so a failed attempt
+    leaves no orphan question in the history."""
+    db.delete(message)
+    db.flush()
+
+
 __all__ = [
     "create",
+    "delete",
     "get_by_id_for_conversation",
     "get_preceding_user_message",
     "list_for_conversation",
