@@ -22,6 +22,7 @@ import wave
 
 import pytest
 
+from app.core.config import get_settings
 from app.voice.stt_provider import (
     PocketSphinxSpeechToTextProvider,
     SpeechToTextError,
@@ -54,7 +55,13 @@ def _silent_wav_bytes(*, duration_seconds: float = 0.05, frame_rate: int = 16000
 # --- speech-to-text --------------------------------------------------------
 
 
-def test_get_speech_to_text_provider_returns_pocketsphinx() -> None:
+def test_get_speech_to_text_provider_returns_pocketsphinx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Hermetic: the ambient environment may select another provider (Docker
+    # Compose selects faster-whisper); the legacy value must still map here.
+    legacy = get_settings().model_copy(update={"speech_to_text_provider": "local"})
+    monkeypatch.setattr("app.voice.stt_provider.get_settings", lambda: legacy)
     provider = get_speech_to_text_provider()
     assert isinstance(provider, PocketSphinxSpeechToTextProvider)
     assert provider.provider_name == "pocketsphinx"

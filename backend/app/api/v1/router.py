@@ -11,6 +11,7 @@ from app.api.v1.documents import router as documents_router
 from app.api.v1.health import router as health_router
 from app.api.v1.search import router as search_router
 from app.api.v1.system import router as system_router
+from app.api.v1.transcriptions import router as transcriptions_router
 from app.api.v1.users import router as users_router
 from app.api.v1.workspaces import router as workspaces_router
 
@@ -24,3 +25,4 @@ api_v1_router.include_router(collections_router)
 api_v1_router.include_router(conversations_router)
 api_v1_router.include_router(search_router)
 api_v1_router.include_router(system_router)
+api_v1_router.include_router(transcriptions_router)

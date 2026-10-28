@@ -31,6 +31,7 @@ vi.mock("@/lib/api-client", async () => {
     listMessages: vi.fn(),
     postMessage: vi.fn(),
     postVoiceMessage: vi.fn(),
+    transcribeAudio: vi.fn(),
     getDocumentChunk: vi.fn(),
     setMessageFeedback: vi.fn(),
     regenerateMessage: vi.fn(),
@@ -45,12 +46,18 @@ vi.mock("@/lib/api-client", async () => {
 });
 
 const mockStartVoiceRecording = vi.fn();
-vi.mock("@/lib/voice-recorder", () => ({
-  startVoiceRecording: () => mockStartVoiceRecording(),
-}));
+vi.mock("@/lib/voice-recorder", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/voice-recorder")>("@/lib/voice-recorder");
+  return {
+    ...actual,
+    startVoiceRecording: () => mockStartVoiceRecording(),
+    listAudioInputs: () => Promise.resolve([]),
+  };
+});
 
 import * as api from "@/lib/api-client";
 import ChatPage from "@/app/chat/page";
+import { VoiceCaptureError } from "@/lib/voice-recorder";
 
 const OWNER_USER = { id: "owner-1", email: "owner@example.com", created_at: "2026-01-01T00:00:00Z" };
 const WORKSPACE = { id: "w1", name: "Acme", created_at: "", updated_at: "", my_role: "OWNER" as const };
@@ -235,7 +242,7 @@ describe("ChatPage", () => {
     expect(await screen.findByText(/select or create a workspace/i)).toBeInTheDocument();
   });
 
-  it("records, stops, and posts a voice message, appending the transcript and answer", async () => {
+  function setupConversation() {
     mockAuthenticated();
     mockWorkspace();
     vi.mocked(api.listConversations).mockResolvedValue([
@@ -243,50 +250,166 @@ describe("ChatPage", () => {
     ]);
     vi.mocked(api.listDocuments).mockResolvedValue([]);
     vi.mocked(api.listMessages).mockResolvedValue([]);
-    const recorderStop = vi.fn().mockResolvedValue(new Blob(["audio"], { type: "audio/wav" }));
+  }
+
+  const RECORDING = { blob: new Blob(["audio"], { type: "audio/wav" }), durationSeconds: 2, peak: 0.4 };
+
+  it("dictates: the transcript lands in the editable box and is NOT sent until the user presses Ask", async () => {
+    setupConversation();
+    const recorderStop = vi.fn().mockResolvedValue(RECORDING);
     mockStartVoiceRecording.mockResolvedValue({ stop: recorderStop, cancel: vi.fn() });
-    vi.mocked(api.postVoiceMessage).mockResolvedValue({
-      transcript: "what is the refund policy",
-      message: {
-        id: "m2",
-        role: "ASSISTANT",
-        content: "Refunds within 30 days.",
-        created_at: "",
-        citations: [],
-        feedback: null,
-      },
+    vi.mocked(api.transcribeAudio).mockResolvedValue({
+      transcript: "explain program number five",
+      language: "en",
+      duration_seconds: 2,
+      provider: "faster_whisper",
+      model: "whisper-small",
+    });
+    vi.mocked(api.postMessage).mockResolvedValue({
+      id: "m2",
+      role: "ASSISTANT",
+      content: "Program 5 explained.",
+      created_at: "",
+      citations: [],
+      feedback: null,
     });
     const user = userEvent.setup();
 
     render(<ChatPage />);
     await screen.findByText(/ask a question to get started/i);
-    await user.click(screen.getByRole("button", { name: /ask by voice/i }));
+    await user.click(screen.getByRole("button", { name: /voice input/i }));
 
-    await waitFor(() => expect(mockStartVoiceRecording).toHaveBeenCalled());
+    expect(await screen.findByText(/listening… speak now/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^ask$/i })).toBeDisabled(); // no sending mid-recording
     await user.click(screen.getByRole("button", { name: /stop recording/i }));
 
-    await waitFor(() => expect(recorderStop).toHaveBeenCalled());
-    await waitFor(() => expect(api.postVoiceMessage).toHaveBeenCalledWith("w1", "c1", expect.any(Blob)));
-    expect(await screen.findByText(/what is the refund policy/i)).toBeInTheDocument();
-    expect(await screen.findByText(/refunds within 30 days/i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(api.transcribeAudio).toHaveBeenCalledWith("w1", RECORDING.blob, {
+        language: "auto",
+        signal: expect.any(AbortSignal),
+      })
+    );
+    const input = screen.getByLabelText("Ask a question") as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("explain program number five"));
+    expect(screen.getByText(/review what was heard/i)).toBeInTheDocument();
+    expect(api.postMessage).not.toHaveBeenCalled(); // not asked yet
+
+    // The user corrects the transcript, then asks.
+    await user.clear(input);
+    await user.type(input, "Explain program number 5");
+    expect(screen.queryByText(/review what was heard/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^ask$/i }));
+
+    await waitFor(() => expect(api.postMessage).toHaveBeenCalledWith("w1", "c1", "Explain program number 5"));
+    expect(await screen.findByText(/program 5 explained/i)).toBeInTheDocument();
   });
 
-  it("shows an error when microphone access is denied", async () => {
-    mockAuthenticated();
-    mockWorkspace();
-    vi.mocked(api.listConversations).mockResolvedValue([
-      { id: "c1", title: null, created_at: "", updated_at: "" },
-    ]);
-    vi.mocked(api.listDocuments).mockResolvedValue([]);
-    vi.mocked(api.listMessages).mockResolvedValue([]);
-    mockStartVoiceRecording.mockRejectedValue(new Error("denied"));
+  it("never submits an empty transcription: it explains and leaves the box empty", async () => {
+    setupConversation();
+    mockStartVoiceRecording.mockResolvedValue({ stop: vi.fn().mockResolvedValue(RECORDING), cancel: vi.fn() });
+    vi.mocked(api.transcribeAudio).mockResolvedValue({
+      transcript: "   ",
+      language: null,
+      duration_seconds: 1,
+      provider: "faster_whisper",
+      model: "whisper-small",
+    });
     const user = userEvent.setup();
 
     render(<ChatPage />);
     await screen.findByText(/ask a question to get started/i);
-    await user.click(screen.getByRole("button", { name: /ask by voice/i }));
+    await user.click(screen.getByRole("button", { name: /voice input/i }));
+    await user.click(await screen.findByRole("button", { name: /stop recording/i }));
 
-    expect(await screen.findByText(/could not access the microphone/i)).toBeInTheDocument();
+    expect(await screen.findByText(/couldn't make out any words/i)).toBeInTheDocument();
+    expect((screen.getByLabelText("Ask a question") as HTMLInputElement).value).toBe("");
+    expect(api.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("shows the server's message when the speech model is not installed", async () => {
+    setupConversation();
+    mockStartVoiceRecording.mockResolvedValue({ stop: vi.fn().mockResolvedValue(RECORDING), cancel: vi.fn() });
+    vi.mocked(api.transcribeAudio).mockRejectedValue(
+      new api.ApiError(503, "The speech model 'small' is not installed. Run infra/scripts/setup-local-stt.sh once.")
+    );
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText(/ask a question to get started/i);
+    await user.click(screen.getByRole("button", { name: /voice input/i }));
+    await user.click(await screen.findByRole("button", { name: /stop recording/i }));
+
+    expect(await screen.findByText(/setup-local-stt\.sh/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /voice input/i })).toBeEnabled(); // can try again
+  });
+
+  it("explains a blocked microphone", async () => {
+    setupConversation();
+    mockStartVoiceRecording.mockRejectedValue(new VoiceCaptureError("permission_denied"));
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText(/ask a question to get started/i);
+    await user.click(screen.getByRole("button", { name: /voice input/i }));
+
+    expect(await screen.findByText(/microphone access was blocked/i)).toBeInTheDocument();
+  });
+
+  it("shows capture problems from stopping (silent recording) without calling the server", async () => {
+    setupConversation();
+    mockStartVoiceRecording.mockResolvedValue({
+      stop: vi.fn().mockRejectedValue(new VoiceCaptureError("silent")),
+      cancel: vi.fn(),
+    });
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText(/ask a question to get started/i);
+    await user.click(screen.getByRole("button", { name: /voice input/i }));
+    await user.click(await screen.findByRole("button", { name: /stop recording/i }));
+
+    expect(await screen.findByText(/no sound was captured/i)).toBeInTheDocument();
+    expect(api.transcribeAudio).not.toHaveBeenCalled();
+  });
+
+  it("cancel releases the microphone and sends nothing", async () => {
+    setupConversation();
+    const cancel = vi.fn();
+    mockStartVoiceRecording.mockResolvedValue({ stop: vi.fn(), cancel });
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText(/ask a question to get started/i);
+    await user.click(screen.getByRole("button", { name: /voice input/i }));
+    await user.click(await screen.findByRole("button", { name: /^cancel$/i }));
+
+    expect(cancel).toHaveBeenCalled();
+    expect(api.transcribeAudio).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /voice input/i })).toBeEnabled();
+  });
+
+  it("ignores a transcript that arrives after the user cancelled (no stale text)", async () => {
+    setupConversation();
+    mockStartVoiceRecording.mockResolvedValue({ stop: vi.fn().mockResolvedValue(RECORDING), cancel: vi.fn() });
+    let finish: (value: Awaited<ReturnType<typeof api.transcribeAudio>>) => void = () => undefined;
+    vi.mocked(api.transcribeAudio).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText(/ask a question to get started/i);
+    await user.click(screen.getByRole("button", { name: /voice input/i }));
+    await user.click(await screen.findByRole("button", { name: /stop recording/i }));
+    await screen.findByText(/transcribing your speech/i);
+    await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    finish({ transcript: "late text", language: "en", duration_seconds: 1, provider: "p", model: "m" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect((screen.getByLabelText("Ask a question") as HTMLInputElement).value).toBe("");
   });
 
   it("plays and stops an assistant message's synthesized audio", async () => {

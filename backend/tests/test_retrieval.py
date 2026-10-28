@@ -282,6 +282,35 @@ def test_lexical_search_matches_when_only_some_query_words_are_present(
     assert len(results) == 2  # the vacation-request chunk also qualifies; cafeteria does not
 
 
+def test_tied_results_come_back_in_a_stable_reading_order(db_session: DbSession) -> None:
+    # Regression: tied lexical ranks were returned in arbitrary order, so the
+    # same question could be answered from differently-ordered evidence.
+    workspace = _make_workspace(db_session)
+    document = _make_document(db_session, workspace=workspace)
+    ids_by_index: dict[int, uuid.UUID] = {}
+    for index in (3, 0, 2, 1):  # inserted out of order on purpose
+        chunk = _make_chunk(
+            db_session,
+            workspace=workspace,
+            document=document,
+            chunk_index=index,
+            content="Customers may return items within thirty days.",
+        )
+        ids_by_index[index] = chunk.id
+    expected = [ids_by_index[i] for i in (0, 1, 2, 3)]  # identical text -> reading order
+    [query_vector] = _PROVIDER.embed_batch(["Customers may return items within thirty days."])
+
+    for _ in range(5):
+        lexical = lexical_search(
+            db_session, workspace_id=workspace.id, query_text="return items", top_k=10
+        )
+        dense = dense_search(
+            db_session, workspace_id=workspace.id, query_embedding=query_vector, top_k=10
+        )
+        assert [r.chunk_id for r in lexical] == expected
+        assert [r.chunk_id for r in dense] == expected
+
+
 def test_lexical_search_no_match_returns_empty(db_session: DbSession) -> None:
     workspace = _make_workspace(db_session)
     document = _make_document(db_session, workspace=workspace)

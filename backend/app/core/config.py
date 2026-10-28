@@ -215,7 +215,14 @@ class Settings(BaseSettings):
     # audio (bounded reads), matching `max_upload_size_bytes`'s own
     # pattern — audio input is untrusted input like any other upload
     # (docs/SECURITY.md).
-    speech_to_text_provider: Literal["local"] = "local"
+    # "local" is the original value and means PocketSphinx (kept so existing
+    # .env files keep working). Prefer "faster_whisper": a local neural model
+    # (free, offline, far more accurate -- ADR 0010). "openai_compatible"
+    # sends the *audio* to a /audio/transcriptions server you configure
+    # (STT_BASE_URL); only do that with a provider you trust.
+    speech_to_text_provider: Literal[
+        "local", "pocketsphinx", "faster_whisper", "openai_compatible"
+    ] = "local"
     text_to_speech_provider: Literal["local"] = "local"
     max_voice_audio_size_bytes: int = 10 * 1024 * 1024
 
@@ -252,6 +259,21 @@ class Settings(BaseSettings):
         if self.llm_history_turns < 0:
             raise ValueError("llm_history_turns must be >= 0.")
         return self
+
+    # Speech-to-text (ADR 0010). The model is never downloaded implicitly
+    # during a request: install it with infra/scripts/setup-local-stt.sh.
+    stt_model: str = "small"  # faster-whisper size: tiny/base/small/medium, or a local path
+    stt_language: str | None = None  # None = auto-detect; e.g. "en"
+    stt_device: str = "cpu"
+    stt_compute_type: str = "int8"
+    stt_cpu_threads: int = 4
+    stt_model_dir: str = "./data/models"
+    stt_initial_prompt: str = (
+        "A student asks questions about programming lab programs, source code, algorithms, "
+        "C, C++, Python, MPI, loops, arrays, functions and uploaded documents."
+    )
+    stt_base_url: str | None = None  # openai_compatible only
+    stt_timeout_seconds: float = 120.0
 
     # Reserved for future issues — not consumed by any code path yet.
     embedding_api_key: str | None = None

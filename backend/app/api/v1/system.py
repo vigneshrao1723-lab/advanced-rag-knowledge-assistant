@@ -10,7 +10,6 @@ from threading import Lock
 
 from fastapi import APIRouter, Depends
 
-from app.core.config import get_settings
 from app.core.dependencies import get_current_user
 from app.generation.llm_provider import (
     LLMProvider,
@@ -19,6 +18,7 @@ from app.generation.llm_provider import (
 )
 from app.models.user import User
 from app.schemas.system import CapabilitiesRead, CapabilityStatus
+from app.voice.stt_provider import SpeechToTextProvider, get_speech_to_text_provider
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -51,6 +51,13 @@ def _llm_status(provider: LLMProvider) -> CapabilityStatus:
     return result
 
 
+def _stt_status(provider: SpeechToTextProvider) -> CapabilityStatus:
+    status, message = provider.check_availability()
+    return CapabilityStatus(
+        provider=provider.provider_name, model=provider.model_name, status=status, message=message
+    )
+
+
 def _tts_status() -> CapabilityStatus:
     if shutil.which("espeak-ng") is None:
         return CapabilityStatus(
@@ -71,15 +78,10 @@ def _tts_status() -> CapabilityStatus:
 def get_capabilities(
     _user: User = Depends(get_current_user),
     provider: LLMProvider = Depends(get_llm_provider),
+    stt_provider: SpeechToTextProvider = Depends(get_speech_to_text_provider),
 ) -> CapabilitiesRead:
-    settings = get_settings()
     return CapabilitiesRead(
         llm=_llm_status(provider),
-        stt=CapabilityStatus(
-            provider=settings.speech_to_text_provider,
-            model="pocketsphinx",
-            status="ready",
-            message="Local speech recognition is ready.",
-        ),
+        stt=_stt_status(stt_provider),
         tts=_tts_status(),
     )

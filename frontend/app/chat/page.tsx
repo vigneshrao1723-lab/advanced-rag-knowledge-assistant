@@ -10,7 +10,6 @@ import {
   ExternalLink,
   FileText,
   Loader2,
-  Mic,
   MessageSquareText,
   Pencil,
   Play,
@@ -28,10 +27,11 @@ import { Markdown } from "@/components/markdown";
 import { ProtectedRoute } from "@/components/protected-route";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { VoiceInputButton, VoiceInputPanel } from "@/components/voice-input";
 import * as api from "@/lib/api-client";
 import { ApiError } from "@/lib/api-client";
 import type { Capabilities, Citation, Conversation, Document, Message } from "@/lib/schemas";
-import { startVoiceRecording, type VoiceRecorder } from "@/lib/voice-recorder";
+import { useVoiceInput } from "@/lib/use-voice-input";
 import { useWorkspace } from "@/lib/workspace-context";
 
 function ConversationRow({
@@ -586,10 +586,21 @@ function ConversationThread({
   const [question, setQuestion] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcriptHint, setTranscriptHint] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const recorderRef = useRef<VoiceRecorder | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const voice = useVoiceInput({
+    workspaceId,
+    onTranscript: (text) => {
+      // The transcript goes into the editable box - it is NOT sent. The user
+      // reviews/corrects it and presses Ask.
+      setQuestion(text);
+      setTranscriptHint(true);
+      setSendError(null);
+      inputRef.current?.focus();
+    },
+  });
+  const isVoiceBusy = voice.phase !== "idle";
 
   const loadMessages = useCallback(async () => {
     setIsLoading(true);
@@ -618,6 +629,7 @@ function ConversationThread({
     if (!content) return;
     setIsSending(true);
     setSendError(null);
+    setTranscriptHint(false);
     setQuestion("");
     setMessages((prev) => [
       ...prev,
@@ -646,51 +658,6 @@ function ConversationThread({
       // user asked, and reopening the conversation shows the persisted state.
     } finally {
       setIsSending(false);
-    }
-  }
-
-  async function handleRecordToggle() {
-    setSendError(null);
-    if (isRecording) {
-      // Interrupt/stop: clicking again while recording stops it and
-      // transcribes whatever was captured so far, rather than requiring
-      // a fixed recording duration.
-      setIsRecording(false);
-      setIsTranscribing(true);
-      try {
-        const audioBlob = await recorderRef.current?.stop();
-        recorderRef.current = null;
-        if (!audioBlob) return;
-        const { transcript, message: assistantMessage } = await api.postVoiceMessage(
-          workspaceId,
-          conversationId,
-          audioBlob
-        );
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `pending-${prev.length}`,
-            role: "USER",
-            content: transcript,
-            created_at: new Date().toISOString(),
-            citations: [],
-            feedback: null,
-          },
-          assistantMessage,
-        ]);
-      } catch (err) {
-        setSendError(err instanceof ApiError ? err.message : "Could not process that recording.");
-      } finally {
-        setIsTranscribing(false);
-      }
-      return;
-    }
-
-    try {
-      recorderRef.current = await startVoiceRecording();
-      setIsRecording(true);
-    } catch {
-      setSendError("Could not access the microphone.");
     }
   }
 
@@ -737,15 +704,19 @@ function ConversationThread({
             </label>
             <input
               id="chat-question"
+              ref={inputRef}
               value={question}
-              onChange={(e) => setQuestion(e.target.value)}
+              onChange={(e) => {
+                setQuestion(e.target.value);
+                setTranscriptHint(false);
+              }}
               placeholder="Ask a question…"
               disabled={isSending}
               className="border-input bg-background w-full rounded-lg border px-3.5 py-2.5 text-sm"
             />
           </div>
           <div className="flex shrink-0 gap-2">
-          <Button type="submit" disabled={isSending || !question.trim()}>
+          <Button type="submit" disabled={isSending || isVoiceBusy || !question.trim()}>
             {isSending ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             ) : (
@@ -753,21 +724,10 @@ function ConversationThread({
             )}
             {isSending ? "Asking…" : "Ask"}
           </Button>
-          <Button
-            type="button"
-            variant={isRecording ? "destructive" : "outline"}
-            disabled={isTranscribing}
-            onClick={handleRecordToggle}
-          >
-            {isTranscribing ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <Mic className="size-4" aria-hidden="true" />
-            )}
-            {isRecording ? "Stop recording" : isTranscribing ? "Transcribing…" : "Ask by voice"}
-          </Button>
+          <VoiceInputButton voice={voice} disabled={isSending} />
           </div>
         </form>
+        <VoiceInputPanel voice={voice} transcriptHint={transcriptHint} />
         {sendError && (
           <p className="text-destructive text-sm">{sendError}</p>
         )}

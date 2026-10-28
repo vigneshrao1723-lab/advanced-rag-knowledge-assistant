@@ -46,6 +46,33 @@ LLM_API_KEY=<only for hosted providers>
 conversation and the retrieved document passages, and may charge per use. This
 project never selects one for you.
 
+## Speech recognition (microphone)
+
+The microphone button records, transcribes on your computer, and puts the text in
+the question box so you can fix it before pressing **Ask**. It uses a free local
+model (Whisper "small") that you install once:
+
+```bash
+infra/scripts/setup-local-stt.sh                 # ~460 MB download (default: small)
+STT_MODEL=base infra/scripts/setup-local-stt.sh  # ~145 MB: faster, less accurate
+```
+
+Until it is installed, the microphone shows "The speech model is not installed";
+nothing downloads by itself. Choose the spoken language under *Voice settings*
+(auto-detect is the default; setting it explicitly helps with accents).
+Technical words from your own documents (program titles, file names) are given to
+the recogniser as hints.
+
+Optional hosted/self-hosted speech (**sends your recordings away**): set
+`SPEECH_TO_TEXT_PROVIDER=openai_compatible`, `STT_BASE_URL`, `STT_MODEL` and, if
+needed, `STT_API_KEY`.
+
+Measured (CPU, 12 threads, Whisper small int8): ≈ 3 s to transcribe a 4 s
+question (≈ 6 s for the very first one, which loads the model). Accuracy on
+synthetic espeak speech: "Explain program number five" → exactly right; "bubble
+sort" was misheard as "verbal sort" without the workspace hint and right with it.
+Real human voices and accents are not covered by any automated test.
+
 ## Settings
 
 `LLM_TIMEOUT_SECONDS` (180), `LLM_TEMPERATURE` (0.2), `LLM_MAX_OUTPUT_TOKENS`

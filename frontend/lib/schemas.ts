@@ -253,6 +253,18 @@ export const CapabilitiesSchema = z.object({
 });
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 
+// --- Transcription (ADR 0010) ---
+// Mirrors backend/app/schemas/transcription.py.
+
+export const TranscriptionSchema = z.object({
+  transcript: z.string(),
+  language: z.string().nullable(),
+  duration_seconds: z.number().nullable(),
+  provider: z.string(),
+  model: z.string(),
+});
+export type Transcription = z.infer<typeof TranscriptionSchema>;
+
 // --- Voice (Issue #6) ---
 // Mirrors backend/app/schemas/conversation.py's VoiceMessageRead.
 
