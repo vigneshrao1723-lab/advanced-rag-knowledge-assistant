@@ -1,10 +1,11 @@
 {
-  "generated_at": "2026-10-24T06:27:02.818080+00:00",
+  "generated_at": "2026-10-28T04:55:11.203224+00:00",
   "configuration": {
     "embedding_provider": "local-hashing",
     "reranker": "LexicalOverlapReranker",
     "llm_provider": "local-extractive",
     "top_k": 3,
+    "fixture": "small",
     "document_count": 6,
     "query_count": 7,
     "retrieval_methods_compared": [
@@ -21,92 +22,93 @@
   },
   "chunking_strategies": {
     "structure_aware": {
+      "chunk_count": 6,
       "methods": {
         "dense": {
           "per_query": [
             {
               "query": "What is the refund policy for returns?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How long does shipping take to arrive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "shipping_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Does the product warranty cover accidental damage?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "warranty_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Do you sell my personal account data to third parties?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "privacy_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How do I enable two factor authentication on my account?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "account_security"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "What is the battery life of the device?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "product_specs"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How many days do I have to return a purchased item for a refund?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             }
           ],
           "averages": {
@@ -121,182 +123,182 @@
           "per_query": [
             {
               "query": "What is the refund policy for returns?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 1,
-              "recall@3": 1.0,
               "precision@3": 1.0,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How long does shipping take to arrive?",
+              "retrieved_count": 1,
+              "precision@3": 1.0,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "shipping_policy"
               ],
-              "retrieved_count": 0,
-              "recall@3": 0.0,
-              "precision@3": 0.0,
-              "mrr": 0.0,
-              "ndcg@3": 0.0,
-              "hit_rate@3": 0.0
+              "recall@3": 1.0
             },
             {
               "query": "Does the product warranty cover accidental damage?",
+              "retrieved_count": 1,
+              "precision@3": 1.0,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "warranty_policy"
               ],
-              "retrieved_count": 1,
-              "recall@3": 1.0,
-              "precision@3": 1.0,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Do you sell my personal account data to third parties?",
+              "retrieved_count": 2,
+              "precision@3": 0.5,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "privacy_policy"
               ],
-              "retrieved_count": 1,
-              "recall@3": 1.0,
-              "precision@3": 1.0,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How do I enable two factor authentication on my account?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "account_security"
               ],
-              "retrieved_count": 1,
-              "recall@3": 1.0,
-              "precision@3": 1.0,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "What is the battery life of the device?",
-              "relevant_document_keys": [
-                "product_specs"
-              ],
               "retrieved_count": 1,
-              "recall@3": 1.0,
               "precision@3": 1.0,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "product_specs"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How many days do I have to return a purchased item for a refund?",
+              "retrieved_count": 2,
+              "precision@3": 0.5,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "refund_policy"
               ],
-              "retrieved_count": 0,
-              "recall@3": 0.0,
-              "precision@3": 0.0,
-              "mrr": 0.0,
-              "ndcg@3": 0.0,
-              "hit_rate@3": 0.0
+              "recall@3": 1.0
             }
           ],
           "averages": {
-            "recall@3": 0.7142857142857143,
-            "precision@3": 0.7142857142857143,
-            "mrr": 0.7142857142857143,
-            "ndcg@3": 0.7142857142857143,
-            "hit_rate@3": 0.7142857142857143
+            "recall@3": 1.0,
+            "precision@3": 0.7619047619047619,
+            "mrr": 1.0,
+            "ndcg@3": 1.0,
+            "hit_rate@3": 1.0
           }
         },
         "hybrid": {
           "per_query": [
             {
               "query": "What is the refund policy for returns?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How long does shipping take to arrive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "shipping_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Does the product warranty cover accidental damage?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "warranty_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Do you sell my personal account data to third parties?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "privacy_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How do I enable two factor authentication on my account?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "account_security"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "What is the battery life of the device?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "product_specs"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How many days do I have to return a purchased item for a refund?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             }
           ],
           "averages": {
@@ -311,87 +313,87 @@
           "per_query": [
             {
               "query": "What is the refund policy for returns?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How long does shipping take to arrive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "shipping_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Does the product warranty cover accidental damage?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "warranty_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Do you sell my personal account data to third parties?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "privacy_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How do I enable two factor authentication on my account?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "account_security"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "What is the battery life of the device?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "product_specs"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How many days do I have to return a purchased item for a refund?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             }
           ],
           "averages": {
@@ -421,92 +423,93 @@
       ]
     },
     "fixed_size": {
+      "chunk_count": 6,
       "methods": {
         "dense": {
           "per_query": [
             {
               "query": "What is the refund policy for returns?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How long does shipping take to arrive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "shipping_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Does the product warranty cover accidental damage?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "warranty_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Do you sell my personal account data to third parties?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "privacy_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How do I enable two factor authentication on my account?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "account_security"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "What is the battery life of the device?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "product_specs"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How many days do I have to return a purchased item for a refund?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             }
           ],
           "averages": {
@@ -521,182 +524,182 @@
           "per_query": [
             {
               "query": "What is the refund policy for returns?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 1,
-              "recall@3": 1.0,
               "precision@3": 1.0,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How long does shipping take to arrive?",
+              "retrieved_count": 1,
+              "precision@3": 1.0,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "shipping_policy"
               ],
-              "retrieved_count": 0,
-              "recall@3": 0.0,
-              "precision@3": 0.0,
-              "mrr": 0.0,
-              "ndcg@3": 0.0,
-              "hit_rate@3": 0.0
+              "recall@3": 1.0
             },
             {
               "query": "Does the product warranty cover accidental damage?",
+              "retrieved_count": 1,
+              "precision@3": 1.0,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "warranty_policy"
               ],
-              "retrieved_count": 1,
-              "recall@3": 1.0,
-              "precision@3": 1.0,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Do you sell my personal account data to third parties?",
+              "retrieved_count": 2,
+              "precision@3": 0.5,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "privacy_policy"
               ],
-              "retrieved_count": 1,
-              "recall@3": 1.0,
-              "precision@3": 1.0,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How do I enable two factor authentication on my account?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "account_security"
               ],
-              "retrieved_count": 1,
-              "recall@3": 1.0,
-              "precision@3": 1.0,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "What is the battery life of the device?",
-              "relevant_document_keys": [
-                "product_specs"
-              ],
               "retrieved_count": 1,
-              "recall@3": 1.0,
               "precision@3": 1.0,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "product_specs"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How many days do I have to return a purchased item for a refund?",
+              "retrieved_count": 2,
+              "precision@3": 0.5,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "refund_policy"
               ],
-              "retrieved_count": 0,
-              "recall@3": 0.0,
-              "precision@3": 0.0,
-              "mrr": 0.0,
-              "ndcg@3": 0.0,
-              "hit_rate@3": 0.0
+              "recall@3": 1.0
             }
           ],
           "averages": {
-            "recall@3": 0.7142857142857143,
-            "precision@3": 0.7142857142857143,
-            "mrr": 0.7142857142857143,
-            "ndcg@3": 0.7142857142857143,
-            "hit_rate@3": 0.7142857142857143
+            "recall@3": 1.0,
+            "precision@3": 0.7619047619047619,
+            "mrr": 1.0,
+            "ndcg@3": 1.0,
+            "hit_rate@3": 1.0
           }
         },
         "hybrid": {
           "per_query": [
             {
               "query": "What is the refund policy for returns?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How long does shipping take to arrive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "shipping_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Does the product warranty cover accidental damage?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "warranty_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Do you sell my personal account data to third parties?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "privacy_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How do I enable two factor authentication on my account?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "account_security"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "What is the battery life of the device?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "product_specs"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How many days do I have to return a purchased item for a refund?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             }
           ],
           "averages": {
@@ -711,87 +714,87 @@
           "per_query": [
             {
               "query": "What is the refund policy for returns?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How long does shipping take to arrive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "shipping_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Does the product warranty cover accidental damage?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "warranty_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Do you sell my personal account data to third parties?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "privacy_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How do I enable two factor authentication on my account?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "account_security"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "What is the battery life of the device?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "product_specs"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How many days do I have to return a purchased item for a refund?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             }
           ],
           "averages": {
@@ -806,92 +809,93 @@
       "generation": null
     },
     "recursive": {
+      "chunk_count": 6,
       "methods": {
         "dense": {
           "per_query": [
             {
               "query": "What is the refund policy for returns?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How long does shipping take to arrive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "shipping_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Does the product warranty cover accidental damage?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "warranty_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Do you sell my personal account data to third parties?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "privacy_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How do I enable two factor authentication on my account?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "account_security"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "What is the battery life of the device?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "product_specs"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How many days do I have to return a purchased item for a refund?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             }
           ],
           "averages": {
@@ -906,182 +910,182 @@
           "per_query": [
             {
               "query": "What is the refund policy for returns?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 1,
-              "recall@3": 1.0,
               "precision@3": 1.0,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How long does shipping take to arrive?",
+              "retrieved_count": 1,
+              "precision@3": 1.0,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "shipping_policy"
               ],
-              "retrieved_count": 0,
-              "recall@3": 0.0,
-              "precision@3": 0.0,
-              "mrr": 0.0,
-              "ndcg@3": 0.0,
-              "hit_rate@3": 0.0
+              "recall@3": 1.0
             },
             {
               "query": "Does the product warranty cover accidental damage?",
+              "retrieved_count": 1,
+              "precision@3": 1.0,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "warranty_policy"
               ],
-              "retrieved_count": 1,
-              "recall@3": 1.0,
-              "precision@3": 1.0,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Do you sell my personal account data to third parties?",
+              "retrieved_count": 2,
+              "precision@3": 0.5,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "privacy_policy"
               ],
-              "retrieved_count": 1,
-              "recall@3": 1.0,
-              "precision@3": 1.0,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How do I enable two factor authentication on my account?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "account_security"
               ],
-              "retrieved_count": 1,
-              "recall@3": 1.0,
-              "precision@3": 1.0,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "What is the battery life of the device?",
-              "relevant_document_keys": [
-                "product_specs"
-              ],
               "retrieved_count": 1,
-              "recall@3": 1.0,
               "precision@3": 1.0,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "product_specs"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How many days do I have to return a purchased item for a refund?",
+              "retrieved_count": 2,
+              "precision@3": 0.5,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "refund_policy"
               ],
-              "retrieved_count": 0,
-              "recall@3": 0.0,
-              "precision@3": 0.0,
-              "mrr": 0.0,
-              "ndcg@3": 0.0,
-              "hit_rate@3": 0.0
+              "recall@3": 1.0
             }
           ],
           "averages": {
-            "recall@3": 0.7142857142857143,
-            "precision@3": 0.7142857142857143,
-            "mrr": 0.7142857142857143,
-            "ndcg@3": 0.7142857142857143,
-            "hit_rate@3": 0.7142857142857143
+            "recall@3": 1.0,
+            "precision@3": 0.7619047619047619,
+            "mrr": 1.0,
+            "ndcg@3": 1.0,
+            "hit_rate@3": 1.0
           }
         },
         "hybrid": {
           "per_query": [
             {
               "query": "What is the refund policy for returns?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How long does shipping take to arrive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "shipping_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Does the product warranty cover accidental damage?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "warranty_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Do you sell my personal account data to third parties?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "privacy_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How do I enable two factor authentication on my account?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "account_security"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "What is the battery life of the device?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "product_specs"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How many days do I have to return a purchased item for a refund?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             }
           ],
           "averages": {
@@ -1096,87 +1100,87 @@
           "per_query": [
             {
               "query": "What is the refund policy for returns?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             },
             {
               "query": "How long does shipping take to arrive?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "shipping_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Does the product warranty cover accidental damage?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "warranty_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "Do you sell my personal account data to third parties?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "privacy_policy"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How do I enable two factor authentication on my account?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "account_security"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "What is the battery life of the device?",
+              "retrieved_count": 3,
+              "precision@3": 0.3333333333333333,
+              "mrr": 1.0,
+              "ndcg@3": 1.0,
+              "hit_rate@3": 1.0,
               "relevant_document_keys": [
                 "product_specs"
               ],
-              "retrieved_count": 3,
-              "recall@3": 1.0,
-              "precision@3": 0.3333333333333333,
-              "mrr": 1.0,
-              "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "recall@3": 1.0
             },
             {
               "query": "How many days do I have to return a purchased item for a refund?",
-              "relevant_document_keys": [
-                "refund_policy"
-              ],
               "retrieved_count": 3,
-              "recall@3": 1.0,
               "precision@3": 0.3333333333333333,
               "mrr": 1.0,
               "ndcg@3": 1.0,
-              "hit_rate@3": 1.0
+              "hit_rate@3": 1.0,
+              "relevant_document_keys": [
+                "refund_policy"
+              ],
+              "recall@3": 1.0
             }
           ],
           "averages": {

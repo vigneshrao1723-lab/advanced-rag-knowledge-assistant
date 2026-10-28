@@ -234,7 +234,7 @@ class Settings(BaseSettings):
     llm_model: str | None = None
     llm_api_key: str | None = None
     llm_timeout_seconds: float = 180.0
-    llm_temperature: float = 0.2
+    llm_temperature: float = 0.1
     llm_max_output_tokens: int = 1200
     # Character budget for the evidence block sent to a generative model
     # (the extractive provider keeps its own historical 4000-char budget).

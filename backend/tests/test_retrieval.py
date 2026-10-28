@@ -238,6 +238,50 @@ def test_lexical_search_finds_matching_chunk(db_session: DbSession) -> None:
     assert "refund" in results[0].content
 
 
+def test_lexical_search_matches_when_only_some_query_words_are_present(
+    db_session: DbSession,
+) -> None:
+    # Regression (release audit): plainto_tsquery ANDed every word, so a
+    # natural question containing one word the passage lacks ("many",
+    # "receive", "explain") matched nothing at all.
+    workspace = _make_workspace(db_session)
+    document = _make_document(db_session, workspace=workspace)
+    _make_chunk(
+        db_session,
+        workspace=workspace,
+        document=document,
+        chunk_index=0,
+        content="Employees accrue twenty four vacation days every year.",
+        embed=False,
+    )
+    _make_chunk(
+        db_session,
+        workspace=workspace,
+        document=document,
+        chunk_index=1,
+        content="Vacation requests are approved by the regional director.",
+        embed=False,
+    )
+    _make_chunk(
+        db_session,
+        workspace=workspace,
+        document=document,
+        chunk_index=2,
+        content="The cafeteria opens at eight.",
+        embed=False,
+    )
+
+    results = lexical_search(
+        db_session,
+        workspace_id=workspace.id,
+        query_text="How many vacation days do employees receive?",
+        top_k=10,
+    )
+
+    assert [r.content for r in results][0].startswith("Employees accrue")  # most words match
+    assert len(results) == 2  # the vacation-request chunk also qualifies; cafeteria does not
+
+
 def test_lexical_search_no_match_returns_empty(db_session: DbSession) -> None:
     workspace = _make_workspace(db_session)
     document = _make_document(db_session, workspace=workspace)

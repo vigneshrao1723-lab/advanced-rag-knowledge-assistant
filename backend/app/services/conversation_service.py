@@ -35,11 +35,12 @@ from app.models.message import Message, MessageFeedback, MessageRole
 from app.repositories import (
     citation_repository,
     conversation_repository,
+    document_chunk_repository,
     document_repository,
     message_repository,
 )
 from app.retrieval.reranker import Reranker
-from app.retrieval.service import hybrid_search
+from app.retrieval.resolve import resolve_question
 from app.retrieval.types import RetrievalCandidate
 from app.schemas.conversation import (
     CitationRead,
@@ -202,50 +203,101 @@ def _run_retrieval_and_generation(
     genuinely *concurrent* access from two threads at once, not this
     sequential hand-off-and-return pattern).
     """
-    candidates: list[RetrievalCandidate] = hybrid_search(
+    prior_messages = _messages_before(
+        db, conversation_id=conversation_id, before_id=user_message_id
+    )
+    history = _to_history(prior_messages)
+    resolution = resolve_question(
         db,
         workspace_id=workspace_id,
-        query_text=query,
+        query=query,
+        previous_user_questions=[m.content for m in prior_messages if m.role == MessageRole.USER],
+        prior_cited_chunks=_prior_cited_candidates(
+            db, workspace_id=workspace_id, prior_messages=prior_messages
+        ),
         embedding_provider=embedding_provider,
         reranker=reranker,
         conversation_id=conversation_id,
-        message_id=user_message_id,
+        user_message_id=user_message_id,
     )
+    if resolution.direct_reply is not None:
+        return resolution.direct_reply, BuiltContext(text="", blocks=[])
     documents = document_repository.list_by_ids_for_workspace(
         db,
         workspace_id=workspace_id,
-        document_ids=list({candidate.document_id for candidate in candidates}),
+        document_ids=list({candidate.document_id for candidate in resolution.candidates}),
     )
     return generate_answer(
         query=query,
-        candidates=candidates,
+        candidates=resolution.candidates,
         llm_provider=llm_provider,
-        history=_history_before(db, conversation_id=conversation_id, before_id=user_message_id),
+        history=history,
         source_labels={document.id: document.filename for document in documents},
+        cite_all=resolution.cite_all,
     )
 
 
-def _history_before(
+def _messages_before(
     db: Session, *, conversation_id: uuid.UUID, before_id: uuid.UUID
-) -> list[ChatTurn]:
-    """The conversation's earlier turns (oldest first), excluding the
-    message being answered and anything after it, capped at the configured
-    number of turns -- what lets a follow-up like "explain it line by
-    line" resolve against what was just discussed."""
-    limit = get_settings().llm_history_turns
-    if limit <= 0:
-        return []
-    earlier: list[ChatTurn] = []
+) -> list[Message]:
+    """The conversation's earlier messages (oldest first), excluding the
+    message being answered and anything after it."""
+    earlier: list[Message] = []
     for message in message_repository.list_for_conversation(db, conversation_id=conversation_id):
         if message.id == before_id:
             break
-        earlier.append(
-            ChatTurn(
-                role="user" if message.role == MessageRole.USER else "assistant",
-                content=message.content,
-            )
+        earlier.append(message)
+    return earlier
+
+
+def _to_history(messages: list[Message]) -> list[ChatTurn]:
+    """Capped at the configured number of turns -- what lets a follow-up
+    like "explain it line by line" resolve against what was just discussed."""
+    limit = get_settings().llm_history_turns
+    if limit <= 0:
+        return []
+    turns = [
+        ChatTurn(
+            role="user" if message.role == MessageRole.USER else "assistant",
+            content=message.content,
         )
-    return earlier[-limit:]
+        for message in messages
+    ]
+    return turns[-limit:]
+
+
+def _prior_cited_candidates(
+    db: Session, *, workspace_id: uuid.UUID, prior_messages: list[Message]
+) -> list[RetrievalCandidate]:
+    """The evidence the previous answer cited, as candidates, so a
+    follow-up is answered from the same passages."""
+    last_answer = next(
+        (m for m in reversed(prior_messages) if m.role == MessageRole.ASSISTANT), None
+    )
+    if last_answer is None:
+        return []
+    cited = citation_repository.list_for_messages(db, message_ids=[last_answer.id]).get(
+        last_answer.id, []
+    )
+    chunks = {
+        chunk.id: chunk
+        for chunk in document_chunk_repository.get_many_for_workspace(
+            db, workspace_id=workspace_id, chunk_ids=[c.chunk_id for c in cited]
+        )
+    }
+    return [
+        RetrievalCandidate(
+            chunk_id=chunk.id,
+            document_id=chunk.document_id,
+            workspace_id=chunk.workspace_id,
+            content=chunk.content,
+            page=chunk.page,
+            section=chunk.section,
+            score=0.5,
+        )
+        for citation in cited
+        if (chunk := chunks.get(citation.chunk_id)) is not None
+    ]
 
 
 def _llm_unavailable_http_error(exc: LLMUnavailableError) -> HTTPException:

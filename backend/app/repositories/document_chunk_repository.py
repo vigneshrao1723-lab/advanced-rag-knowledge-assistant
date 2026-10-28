@@ -67,6 +67,22 @@ def get_by_id_for_document(
     ).scalar_one_or_none()
 
 
+def get_many_for_workspace(
+    db: Session, *, workspace_id: uuid.UUID, chunk_ids: list[uuid.UUID]
+) -> list[DocumentChunk]:
+    """Workspace-scoped in the query itself; unknown or foreign IDs are
+    silently absent."""
+    if not chunk_ids:
+        return []
+    return list(
+        db.execute(
+            select(DocumentChunk).where(
+                DocumentChunk.workspace_id == workspace_id, DocumentChunk.id.in_(chunk_ids)
+            )
+        ).scalars()
+    )
+
+
 def get_by_document(db: Session, *, document_id: uuid.UUID) -> list[DocumentChunk]:
     """Ordered by `chunk_index` -- the caller-facing, deterministic
     ordering `chunking.py` itself guarantees, not insertion order."""
