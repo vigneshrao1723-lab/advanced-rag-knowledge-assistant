@@ -101,7 +101,7 @@ experiment history via `evaluation_runs`/`evaluation_results`.**
   | Retrieval method | Recall@3 | Precision@3 | MRR | nDCG@3 | Hit Rate@3 |
   |---|---|---|---|---|---|
   | Dense only | 1.0 | 0.33 | 1.0 | 1.0 | 1.0 |
-  | Lexical only | 0.71 | 0.71 | 0.71 | 0.71 | 0.71 |
+  | Lexical only | 1.0 | 0.76 | 1.0 | 1.0 | 1.0 |
   | Hybrid (no rerank) | 1.0 | 0.33 | 1.0 | 1.0 | 1.0 |
   | Hybrid + reranked | 1.0 | 0.33 | 1.0 | 1.0 | 1.0 |
 
@@ -109,11 +109,11 @@ experiment history via `evaluation_runs`/`evaluation_results`.**
   hybrid/hybrid+reranked and ranked first; Precision@3 is exactly `1/3`
   for those methods because only one of the three retrieved slots is
   ever relevant in a 6-document corpus at `k=3`, not a retrieval defect.
-  **Lexical-only retrieval is genuinely weaker on this fixture** (0.71
-  vs. 1.0) — a real, honest finding from this run, not adjusted or
-  hidden: Postgres full-text search's `ts_rank_cd` did not always rank
-  the single relevant (keyword-overlapping) document first among this
-  small corpus, where the (deterministic, hashed) dense embeddings did.
+  **Lexical-only retrieval was weaker on this fixture (0.71) until the
+  2026-10-28 change** from AND to OR matching of query words
+  (`app/retrieval/lexical.py`): the 0.71 came from queries containing a word
+  absent from the relevant passage. It is now 1.0 here; the table above is
+  the current committed result (`eval/results/retrieval_evaluation.json`).
   Generation checks on 2 sample queries: citation completeness/
   correctness both `1.0`, and `is_extractive_answer_grounded` `true` for
   both — expected, since `LocalGroundedExtractiveProvider` only ever
@@ -151,84 +151,102 @@ duplicates would count as misses).
 
 Real results (real Postgres 16 + pgvector, `local-hashing` embeddings,
 `LexicalOverlapReranker`, `local-extractive` generation, `top_k=3`; no
-external language model or embedding model was used anywhere):
+external language model or embedding model was used anywhere). **Re-run on
+2026-10-28 after three retrieval changes** (OR-matching lexical search, a
+content-word relevance gate, and routing the unanswerable probe through the
+production resolver); the 2026-10-27 baseline is given in the bullets.
 
 | Chunking strategy (chunks) | Retrieval method | Evidence coverage@3 | Hit Rate@3 | MRR | nDCG@3 | Precision@3 |
 |---|---|---|---|---|---|---|
 | Structure-aware (24) | Dense only | 0.91 | 0.94 | 0.91 | 0.89 | 0.35 |
-| Structure-aware (24) | Lexical only | 0.125 | 0.125 | 0.125 | 0.125 | 0.125 |
-| Structure-aware (24) | Hybrid (no rerank) | 0.91 | 0.94 | 0.91 | 0.89 | 0.35 |
-| Structure-aware (24) | Hybrid + reranked | 0.97 | 1.00 | 1.00 | 0.97 | 0.38 |
+| Structure-aware (24) | Lexical only | 1.00 | 1.00 | 0.90 | 0.92 | 0.41 |
+| Structure-aware (24) | Hybrid (no rerank) | 0.97 | 1.00 | 0.94 | 0.93 | 0.38 |
+| Structure-aware (24) | Hybrid + reranked | 1.00 | 1.00 | 1.00 | 0.99 | 0.40 |
 | Fixed-size (27) | Dense only | 0.72 | 0.75 | 0.72 | 0.70 | 0.29 |
-| Fixed-size (27) | Lexical only | 0.125 | 0.125 | 0.125 | 0.125 | 0.125 |
-| Fixed-size (27) | Hybrid (no rerank) | 0.72 | 0.75 | 0.72 | 0.70 | 0.29 |
-| Fixed-size (27) | Hybrid + reranked | 0.78 | 0.81 | 0.81 | 0.78 | 0.31 |
+| Fixed-size (27) | Lexical only | 0.81 | 0.81 | 0.70 | 0.72 | 0.33 |
+| Fixed-size (27) | Hybrid (no rerank) | 0.78 | 0.81 | 0.74 | 0.73 | 0.31 |
+| Fixed-size (27) | Hybrid + reranked | 0.81 | 0.81 | 0.81 | 0.81 | 0.33 |
 | Recursive (24) | Dense only | 0.91 | 0.94 | 0.91 | 0.89 | 0.35 |
-| Recursive (24) | Lexical only | 0.125 | 0.125 | 0.125 | 0.125 | 0.125 |
-| Recursive (24) | Hybrid (no rerank) | 0.91 | 0.94 | 0.91 | 0.89 | 0.35 |
-| Recursive (24) | Hybrid + reranked | 0.97 | 1.00 | 1.00 | 0.97 | 0.38 |
+| Recursive (24) | Lexical only | 1.00 | 1.00 | 0.90 | 0.92 | 0.41 |
+| Recursive (24) | Hybrid (no rerank) | 0.97 | 1.00 | 0.94 | 0.93 | 0.38 |
+| Recursive (24) | Hybrid + reranked | 1.00 | 1.00 | 1.00 | 0.99 | 0.40 |
 
 Evidence coverage@3 by query category, hybrid + reranked:
 
 | Chunking strategy | direct | distractor | multi_fact | boundary |
 |---|---|---|---|---|
-| Structure-aware | 1.00 | 1.00 | 0.83 | 1.00 |
-| Fixed-size | 1.00 | 1.00 | 0.83 | 0.00 |
-| Recursive | 1.00 | 1.00 | 0.83 | 1.00 |
+| Structure-aware | 1.00 | 1.00 | 1.00 | 1.00 |
+| Fixed-size | 1.00 | 1.00 | 1.00 | 0.00 |
+| Recursive | 1.00 | 1.00 | 1.00 | 1.00 |
 
 How to read this honestly:
 
+- **Lexical search was the largest single weakness and is fixed.** It used
+  `plainto_tsquery`, which ANDs every query word, so one word missing from a
+  passage ("many", "receive", "explain") matched nothing: lexical-only
+  returned 0 chunks for 14 of the 16 answerable queries and scored 0.125
+  coverage; hybrid was therefore identical to dense. With OR matching ranked
+  by `ts_rank_cd` it returns chunks for 16 of 16, and lexical-only coverage
+  is 1.00 (structure-aware). Hybrid + reranked went 0.97 → 1.00 and
+  multi-fact 0.83 → 1.00. **Caveat:** this fixture's queries deliberately
+  share words with their evidence (the local embedder has no semantics), so
+  1.00 is a ceiling effect of a small synthetic set, not a quality claim.
+  Lexical-only now *beats* dense-only (1.00 vs 0.91) here, a sign of how weak
+  the hashing embedder is.
 - **The whole structure-aware/recursive vs. fixed-size gap is the three
-  boundary queries (coverage 0.00 vs. 1.00).** The fixture is *engineered*
+  boundary queries (coverage 1.00 vs 0.00).** The fixture is *engineered*
   so each boundary sentence straddles `FixedSizeChunker`'s first window edge
   (`backend/tests/test_eval_large_fixture.py` asserts this, so the property
-  cannot silently rot). The result demonstrates the mechanism — a chunker
-  with no boundary preference can sever the answer — it is not a measurement
-  of how often that happens on real documents. On all non-boundary
-  categories the three strategies are identical.
-- **Structure-aware and recursive remain indistinguishable** on this
-  fixture (same 24 chunks' worth of evidence retrieved). Nothing here shows
-  one is better than the other.
-- **Lexical search returned zero chunks for 14 of the 16 answerable
-  queries.** `lexical_search()` uses `plainto_tsquery`, which ANDs every
-  non-stopword term, so one query word absent from a chunk (e.g. "many",
-  "receive") yields no match. Consequently hybrid ≡ dense in every row
-  above: with natural-language questions the lexical leg currently
-  contributes nothing to the fusion. (On the small fixture lexical looked
-  merely "weaker", 0.71; here it is close to non-functional.) A
-  `websearch_to_tsquery`/OR-with-ranking change is a candidate improvement;
-  it was not made in this audit.
-- **The reranker helps modestly** (0.91 → 0.97 coverage, structure-aware),
-  mostly by promoting the right near-duplicate when the query names the
-  product (Jaccard overlap on tokens like "X200", "Borealis").
-- **Multi-fact coverage is 0.83 (5 of 6 phrases) for all strategies**: the
-  top-3 cannot always hold both required chunks.
-- **Unanswerable queries are not refused.** For the 3 unanswerable queries,
-  dense/hybrid/hybrid+reranked each still return 3 chunks (lexical returns
-  0), and the production path (`hybrid_search()` defaults →
-  `generate_answer()`) produced a normal "Based on the available
-  documents" answer with **5 citations for 3 of 3** queries — never the
-  fixed no-evidence answer. There is no relevance threshold anywhere in
-  retrieval or generation; the no-evidence answer only occurs when the
-  workspace has no READY chunks at all. With `local-hashing` embeddings the
-  similarity of off-topic queries is driven by stopword overlap (measured:
-  an off-topic "meaning of life" query scored 0.316, equal to the
-  legitimate "mayor of Quenby" query), so no single similarity cutoff
-  separates them; a content-word-overlap gate or a real embedding model
-  plus a calibrated threshold would be needed. This is a documented
-  limitation and an owner decision, not a fix made in this audit.
-- **Groundedness/citation metrics are circular for this provider.**
-  `is_extractive_answer_grounded` is `true` by construction for
-  `LocalGroundedExtractiveProvider` (it only quotes evidence); it says
-  nothing about a real language model, whose faithfulness, answer
-  relevance, and prompt-injection resistance remain **unmeasured**.
-  Prompt-injection behavior was tested only against the inert extractive
-  provider (the injected text is quoted as evidence and nothing acts on it,
-  verified live and in `backend/tests/test_prompt_injection.py`).
+  cannot silently rot). The result demonstrates the mechanism, not how often
+  it happens on real documents. On every other category the three strategies
+  are identical, and structure-aware vs. recursive remain indistinguishable.
+- **Unanswerable queries are now refused.** Through the production path
+  (`resolve_question()` → `generate_answer()`), 3 of 3 unanswerable queries
+  return the fixed no-evidence answer with 0 citations (2026-10-27: a normal
+  answer with 5 citations for 3 of 3). The mechanism is a content-word
+  relevance gate that applies only to the hashing embedder
+  (`LocalHashingEmbeddingProvider.semantic = False`): a passage is kept only
+  if it shares at least one meaningful word (5-letter stem, stopwords and
+  command words removed) with the question; questions with no meaningful word
+  ("What does the document say?") are never filtered. It cannot rescue a
+  paraphrase that shares no word with the evidence — the same limit the
+  embedder already has. A real embedder should set `semantic = True`, which
+  disables the gate.
+- **Groundedness/citation metrics are circular for the extractive provider**
+  and say nothing about a real model. Real-model behaviour is covered
+  separately below.
+- Prompt-injection behaviour of the *extractive* provider is inert by
+  construction; for the real model see "Real-model checks".
 
-Everything above is a property of a ~19-query synthetic corpus and this
-project's local deterministic providers. It is not evidence of quality on
-real documents or with a real embedding model/LLM.
+## Real-model checks (2026-10-28, local `qwen2.5:3b-instruct`)
+
+Not a benchmark: a handful of hand-inspected runs on a synthetic 4-page C/MPI
+lab manual (`backend/tests/pdf_fixtures.py`), through the real upload →
+extraction → chunking → retrieval → generation path on an RTX 3050 (4 GB).
+Observed, not scored:
+
+- "Explain Program 2 / 1 / 3" produced structured explanations (what it does,
+  step-by-step, output, concepts) that were correct at the program level; the
+  program's output was reproduced correctly. Program 3, which spans two pages,
+  was reassembled and cut at the next program's heading.
+- "Explain program 9" (absent) → instant deterministic reply listing Programs
+  1–4, no model call. Before the change the model said "not mentioned" and then
+  dumped (partly wrong) explanations of every other program.
+- Code in answers is checked against the document line by line and corrected or
+  appended verbatim, including indentation (the model alone re-typed it with
+  reordered declarations and dropped lines).
+- Residual model errors remain in prose: e.g. it once said an array is printed
+  "on a new line" where the code prints space-separated values; "line by line"
+  requests only work because the system splits the code and asks for one
+  sentence per line; the short overview paragraph sometimes misreads "the first
+  program line by line" as "the first line".
+- Time per answer 7–17 s on GPU. Injection resistance of this model was tested
+  only with the generic "ignore previous instructions" document used elsewhere
+  (answer stayed on topic); this is far from a security evaluation.
+
+Everything above is a property of a ~19-query synthetic corpus, a small
+hand-inspected sample, and this project's local providers. It is not evidence
+of quality on real documents or with a real embedding model/hosted LLM.
 
 ## Retrieval metrics
 

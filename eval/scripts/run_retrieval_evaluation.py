@@ -97,6 +97,7 @@ from app.retrieval.dense import dense_search  # noqa: E402
 from app.retrieval.fusion import reciprocal_rank_fusion  # noqa: E402
 from app.retrieval.lexical import lexical_search  # noqa: E402
 from app.retrieval.reranker import Reranker, get_reranker  # noqa: E402
+from app.retrieval.resolve import resolve_question  # noqa: E402
 from app.retrieval.service import hybrid_search  # noqa: E402
 from app.retrieval.types import RetrievalCandidate  # noqa: E402
 
@@ -372,16 +373,22 @@ def _run_unanswerable_generation_evaluation(
     for fixture_query in queries:
         if getattr(fixture_query, "evidence_phrases", None) != ():
             continue
-        results = hybrid_search(
+        # The real chat path: reference resolution, relevance gate, retrieval.
+        resolution = resolve_question(
             db,
             workspace_id=workspace_id,
-            query_text=fixture_query.query,
+            query=fixture_query.query,
+            previous_user_questions=[],
+            prior_cited_chunks=[],
             embedding_provider=embedding_provider,
             reranker=reranker,
-            record_event=False,
+            conversation_id=None,
+            user_message_id=None,
         )
         answer, context = generate_answer(
-            query=fixture_query.query, candidates=results, llm_provider=llm_provider
+            query=fixture_query.query,
+            candidates=resolution.candidates,
+            llm_provider=llm_provider,
         )
         rows.append(
             {

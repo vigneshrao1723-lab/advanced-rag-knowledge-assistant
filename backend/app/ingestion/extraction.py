@@ -32,9 +32,11 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import zipfile
+from collections import Counter
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 
 import docx
 from pypdf import PdfReader
@@ -108,6 +110,115 @@ def _enforce_text_budget(text: str) -> str:
     return truncated
 
 
+# --- Code-aware page text --------------------------------------------------
+#
+# pypdf's default `extract_text()` returns text in content-stream order and
+# drops horizontal positioning, so a PDF that places code with positioning
+# operators (LaTeX `listings`, most lab manuals) loses ALL indentation and
+# blank lines: nested braces/Python blocks become flat and ambiguous.
+# `extraction_mode="layout"` reconstructs the geometry (indentation and
+# blank lines) but pads every word gap with extra spaces and offsets
+# centred headings by dozens of columns, and on multi-column prose it
+# interleaves the columns -- so it is only used for pages that look like
+# source code, and its output is normalised below.
+
+_CODE_LINE_ENDINGS = (";", "{", "}", "*/")
+_CODE_LINE_STARTS = (
+    "#include",
+    "#define",
+    "import ",
+    "from ",
+    "def ",
+    "class ",
+    "public ",
+    "private ",
+    "static ",
+    "for ",
+    "for(",
+    "while ",
+    "while(",
+    "if ",
+    "if(",
+    "else",
+    "return",
+    "//",
+    "int ",
+    "void ",
+    "char ",
+    "float ",
+    "double ",
+)
+_MIN_CODE_LINES = 3
+_MIN_CODE_RATIO = 0.2
+_CENTRED_HEADING_MAX_CHARS = 60
+_CENTRED_HEADING_MIN_INDENT = 16
+
+
+def _looks_like_code(text: str) -> bool:
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    if len(lines) < _MIN_CODE_LINES:
+        return False
+    code_lines = sum(
+        1
+        for line in lines
+        if line.endswith(_CODE_LINE_ENDINGS) or line.startswith(_CODE_LINE_STARTS)
+    )
+    return code_lines >= _MIN_CODE_LINES and code_lines / len(lines) >= _MIN_CODE_RATIO
+
+
+def _normalize_layout_text(layout_text: str) -> str:
+    """Turns pypdf layout output into clean text that keeps relative
+    indentation: collapses padded word gaps, drops centred-heading offsets,
+    re-bases indentation to 4 spaces per level and caps blank runs."""
+    raw_lines = [line.rstrip() for line in layout_text.replace("\r\n", "\n").split("\n")]
+    parsed: list[tuple[int, str]] = []
+    for line in raw_lines:
+        body = line.lstrip(" ")
+        indent = len(line) - len(body)
+        body = re.sub(r"(?<=\S) {2,}(?=\S)", " ", body)
+        is_short = bool(body) and len(body) <= _CENTRED_HEADING_MAX_CHARS
+        if is_short and indent >= _CENTRED_HEADING_MIN_INDENT:
+            indent = 0  # a centred title, not code nesting
+        parsed.append((indent, body))
+
+    indents = sorted({indent for indent, body in parsed if body})
+    margin = indents[0] if indents else 0
+    # One indentation level = the most common gap between neighbouring
+    # indentation columns (the smallest gap is unreliable: the first step is
+    # often rounded narrower than the rest).
+    gaps = Counter(b - a for a, b in zip(indents, indents[1:], strict=False) if b - a > 0)
+    unit = max(gaps, key=lambda gap: (gaps[gap], gap)) if gaps else 0
+
+    out: list[str] = []
+    blank_run = 0
+    for indent, body in parsed:
+        if not body:
+            blank_run += 1
+            if blank_run <= 1:
+                out.append("")
+            continue
+        blank_run = 0
+        level = round((indent - margin) / unit) if unit and indent > margin else 0
+        out.append(" " * (4 * level) + body)
+    return "\n".join(out).strip("\n")
+
+
+def _page_text(page: Any) -> str:
+    text = page.extract_text() or ""
+    if not _looks_like_code(text):
+        return text
+    try:
+        layout = page.extract_text(extraction_mode="layout") or ""
+    except Exception:  # noqa: BLE001 - fall back to the plain text, never fail the page
+        return text
+    normalized = _normalize_layout_text(layout)
+    # Never trade content for formatting: if layout mode lost a lot of text,
+    # keep the plain extraction.
+    if len(re.sub(r"\s+", "", normalized)) < 0.9 * len(re.sub(r"\s+", "", text)):
+        return text
+    return normalized
+
+
 def _extract_pdf(content: bytes) -> ExtractedDocument:
     try:
         reader = PdfReader(io.BytesIO(content))
@@ -139,7 +250,7 @@ def _extract_pdf(content: bytes) -> ExtractedDocument:
         if total_bytes >= _MAX_EXTRACTED_TEXT_BYTES:
             break
         try:
-            text = page.extract_text() or ""
+            text = _page_text(page)
         except Exception as exc:  # noqa: BLE001 - a single malformed page must not crash the rest
             raise ExtractionError(
                 f"The PDF could not be read — page {index} is malformed."

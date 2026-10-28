@@ -6,8 +6,9 @@ consequence: a PostgreSQL-native approach, not a second search engine).
 `plainto_tsquery` (not `to_tsquery`) is used deliberately: it takes a
 plain user query string and never interprets `&`/`|`/`!`/`:*` operator
 syntax a user might accidentally type, so a query like "cost & benefit"
-searches for the literal words, never a malformed or unexpectedly
-narrowed boolean expression.
+searches for the literal words, never a malformed expression. Its `&`
+joins are then rewritten to `|` (see `lexical_search`) so a passage need
+only contain *some* of the question's words to be a candidate.
 
 The `to_tsvector('english', content)` expression here must match the
 one `ix_document_chunks_content_fts` (migration `0007`) was built on
@@ -19,7 +20,8 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import Text, cast, func, select
+from sqlalchemy.dialects.postgresql import TSQUERY
 from sqlalchemy.orm import Session
 
 from app.models.document import Document, DocumentStatus
@@ -44,7 +46,15 @@ def lexical_search(
     nothing, never every row.
     """
     tsvector = func.to_tsvector(_LANGUAGE, DocumentChunk.content)
-    tsquery = func.plainto_tsquery(_LANGUAGE, query_text)
+    # `plainto_tsquery` ANDs every non-stop word, so one word of a natural
+    # question that the passage lacks ("how MANY days...", "...RECEIVE") made
+    # the whole query match nothing (measured: 0 results for 14 of 16
+    # questions). OR the terms instead and let `ts_rank_cd` rank by how many
+    # match. Stop-word removal and stemming still happen inside Postgres.
+    tsquery = cast(
+        func.replace(cast(func.plainto_tsquery(_LANGUAGE, query_text), Text), " & ", " | "),
+        TSQUERY,
+    )
     rank = func.ts_rank_cd(tsvector, tsquery).label("rank")
 
     stmt = (

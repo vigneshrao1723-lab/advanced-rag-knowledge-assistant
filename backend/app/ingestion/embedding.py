@@ -89,6 +89,10 @@ class LocalHashingEmbeddingProvider:
     model_name = "local-hashing"
     model_version = "v1"
     dimension = 384
+    # Similarity is purely lexical (hashed words): no meaning-level matching,
+    # so retrieval may apply a content-word relevance gate
+    # (app/retrieval/resolve.py).
+    semantic = False
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         return [self._embed_one(text) for text in texts]

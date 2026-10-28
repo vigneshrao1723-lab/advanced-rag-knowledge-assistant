@@ -14,8 +14,10 @@ from collections.abc import Mapping, Sequence
 
 from app.core.config import get_settings
 from app.generation.context_builder import BuiltContext, build_context
+from app.generation.fidelity import enforce_code_fidelity, find_code_regions
 from app.generation.llm_provider import NO_EVIDENCE_ANSWER, LLMProvider
 from app.generation.prompts import ChatTurn, build_system_prompt
+from app.generation.walkthrough import build_walkthrough, wants_line_by_line
 from app.retrieval.types import RetrievalCandidate
 
 logger = logging.getLogger("app.generation")
@@ -65,12 +67,16 @@ def generate_answer(
     llm_provider: LLMProvider,
     history: Sequence[ChatTurn] = (),
     source_labels: Mapping[uuid.UUID, str] | None = None,
+    cite_all: bool = False,
 ) -> tuple[str, BuiltContext]:
     """Returns `(answer_text, built_context)` — the caller needs
     `built_context.blocks` afterward to build `Citation` rows (see
     `app.generation.citation_engine`), so it's returned rather than
     discarded once generation is done. For a generative provider the
-    returned context is already restricted to the blocks the answer cites.
+    returned context is already restricted to the blocks the answer cites
+    (or every block when `cite_all` is set, e.g. a resolved "Program N"
+    span that was retrieved as one unit), and the answer's code blocks have
+    been verified against that evidence (`app.generation.fidelity`).
 
     With no usable evidence the fixed no-evidence answer is returned and
     **no model is called** -- a language model asked to answer from nothing
@@ -93,13 +99,24 @@ def generate_answer(
 
     generate_started = time.monotonic()
     if generative:
+        regions = find_code_regions(context.blocks) if wants_line_by_line(query) else []
         answer = llm_provider.generate(
-            system_prompt=build_system_prompt(query),
+            system_prompt=build_system_prompt(query, walkthrough_added=bool(regions)),
             context=context.labeled_text,
             query=query,
             history=history,
         )
-        context = select_cited_blocks(answer, context)
+        if not cite_all:
+            context = select_cited_blocks(answer, context)
+        if regions:
+            # Only the regions of the evidence the answer is allowed to cite.
+            kept = {block.marker for block in context.blocks}
+            walkthrough = build_walkthrough(
+                [r for r in regions if r.block_marker in kept], llm_provider
+            )
+            if walkthrough:
+                answer = f"{answer.rstrip()}\n\n**Line by line**\n{walkthrough}"
+        answer = enforce_code_fidelity(answer, context.blocks, query)
     else:
         answer = llm_provider.generate(
             system_prompt=_EXTRACTIVE_SYSTEM_PROMPT, context=context.text, query=query

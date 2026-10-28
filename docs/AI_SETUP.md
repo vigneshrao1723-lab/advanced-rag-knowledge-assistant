@@ -9,8 +9,9 @@ you configure. Two ways to get one — pick one.
 
 ## A. Free and local (recommended): Ollama in Docker
 
-Nothing leaves your computer. Needs roughly 2 GB of disk for the default model
-and ~3 GB of free RAM (or an NVIDIA GPU with ≥ 3 GB VRAM).
+Nothing leaves your computer. Download size: the Ollama Docker image (~3–4 GB; its
+biggest layer alone is ~3.2 GB) plus the default model (1.9 GB). Needs ~3 GB of free
+RAM, or an NVIDIA GPU with ≥ 3 GB VRAM.
 
 ```bash
 infra/scripts/setup-local-llm.sh            # CPU
@@ -61,8 +62,23 @@ project never selects one for you.
 | "took too long" | CPU is slow for this model: use the GPU overlay, a smaller model, or raise `LLM_TIMEOUT_SECONDS`. |
 | "rejected the credentials" | Wrong `LLM_API_KEY` for a hosted provider. |
 
-## Hardware notes
+## Measured on the development machine
 
-Measured on the development machine (12 CPU threads, 7.6 GiB RAM visible to
-WSL2, RTX 3050 4 GB): see the "Measured" section below once a model has been
-run there.
+12 CPU threads, 7.6 GiB RAM visible to WSL2, NVIDIA RTX 3050 Laptop (4 GB VRAM),
+Docker Desktop + WSL2, `USE_GPU=1`, model `rag-assistant` (qwen2.5:3b-instruct, 8192-token
+context):
+
+- Ollama runs the model **100 % on the GPU**: 2.3 GB of the 4 GB VRAM including the
+  context window; first request after a cold start ≈ 6 s (model load).
+- A full explanation of a one-page program: **≈ 7–17 s**. A "line by line" request makes
+  one extra short call per 6 code lines (≈ 6 s for an 11-line program). A question whose
+  answer is absent ("Program 9" when the document has 1–4) is answered instantly (no model
+  call).
+- Quality of this 3B model on synthetic C/MPI lab programs: correct program-level
+  explanations and correct reproduction of the program's output, but occasional factual
+  slips in the *prose* (for example it once said an array was printed "on a new line" when the
+  code prints space-separated). Code shown in answers is checked against the document
+  (`app/generation/fidelity.py`), the prose is not. Treat explanations as a study aid, not as
+  ground truth. A larger or hosted model is more reliable; see option B above.
+
+CPU-only runs have not been measured.
