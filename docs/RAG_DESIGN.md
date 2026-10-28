@@ -218,3 +218,33 @@ audit events, Issue #3), errors (structured logging throughout).
   writes (`document_chunks`, `retrieval_events`, `citations`).
 - [`docs/EVALUATION.md`](EVALUATION.md) — how pipeline quality is measured.
 - [`docs/SECURITY.md`](SECURITY.md) — untrusted-content handling rules.
+
+## Question resolution and generation (2026-10-28 addendum)
+
+What the pipeline actually does today, in order (see ADR 0009–0011):
+
+1. **Resolve what the question points at** (`app/retrieval/references.py`, `outline.py`,
+   `resolve.py`): a named document (filename words), a labelled item ("Program 5", "the
+   first/last program", "Exercise 3") and follow-ups ("explain that line by line"). An
+   item resolves to its complete span from its heading to the next item's heading across
+   chunk/page boundaries; a missing item yields a deterministic reply listing what exists
+   (no model call); several matching documents yield a "which one?" question; follow-ups
+   reuse the focus of the latest earlier question that *resolved to evidence*.
+2. **Hybrid retrieval** (dense + lexical with OR matching, RRF, reranking), scoped to the
+   named document when there is one; deterministic ordering on ties.
+3. **Relevance gate** (hashing embedder only): drop passages sharing no meaningful word
+   with the question; with nothing left, answer with the fixed no-evidence text and do not
+   call the model.
+4. **Generation** through `OpenAICompatibleLLMProvider`: rules in the system message,
+   untrusted evidence only inside a delimited, source-labelled block of the user message,
+   recent history, style hints from the user's own question. Citations are limited to what
+   the model cited (or the whole resolved span).
+5. **Post-processing**: code blocks are verified against the evidence (altered ones replaced
+   by the verbatim slice, indentation restored; the original listing appended for
+   whole-program questions); "line by line" is built by the system in small numbered groups.
+6. **Speech** (optional): transcript → editable box (dictation) or straight into step 1
+   (voice conversation); answers are read aloud in a speakable form.
+
+Ingestion detail relevant to this: PDF pages that look like source code are extracted with
+pypdf's layout mode and normalised so indentation and blank lines survive.
+

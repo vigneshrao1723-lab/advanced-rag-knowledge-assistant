@@ -40,6 +40,21 @@ from app.retrieval.service import hybrid_search
 from app.retrieval.types import RetrievalCandidate
 
 _FOCUS_LOOKBACK = 4
+_WHICH_ONE = (
+    "I'm not sure which part you mean. Tell me the program, section or document you'd like "
+    "me to explain, for example \u201cExplain Program 5\u201d."
+)
+
+
+@dataclass(frozen=True)
+class PreviousQuestion:
+    """An earlier question of this conversation and whether its answer was
+    built from evidence (had citations). Only those can serve as the focus
+    of a follow-up: "Explain Program 1" that found nothing must not become
+    what "explain it as a beginner" refers to."""
+
+    text: str
+    resolved: bool
 
 
 @dataclass
@@ -64,7 +79,7 @@ def resolve_question(
     *,
     workspace_id: uuid.UUID,
     query: str,
-    previous_user_questions: Sequence[str],
+    previous_user_questions: Sequence[PreviousQuestion],
     prior_cited_chunks: Sequence[RetrievalCandidate],
     embedding_provider: EmbeddingProvider,
     reranker: Reranker,
@@ -83,12 +98,17 @@ def resolve_question(
     followup = is_followup(query)
 
     if not locator and not named and followup:
-        for previous in reversed(list(previous_user_questions)[-_FOCUS_LOOKBACK:]):
-            earlier_locator = parse_locator(previous)
-            earlier_named = match_documents(previous, pairs)
+        usable = [q for q in previous_user_questions if q.resolved]
+        for previous in reversed(usable[-_FOCUS_LOOKBACK:]):
+            earlier_locator = parse_locator(previous.text)
+            earlier_named = match_documents(previous.text, pairs)
             if earlier_locator or earlier_named:
                 locator, named = earlier_locator, earlier_named
                 break
+        if not locator and not named and previous_user_questions and not prior_cited_chunks:
+            # A conversation exists but nothing in it resolved to anything the
+            # follow-up could refer to ("it" after a program that wasn't found).
+            return Resolution(direct_reply=_WHICH_ONE)
 
     if len(named) > 1:
         listing = ", ".join(names[d] for d in named)
@@ -137,4 +157,4 @@ def resolve_question(
     return Resolution(candidates=candidates, note="scoped" if scope else "")
 
 
-__all__ = ["Resolution", "resolve_question"]
+__all__ = ["PreviousQuestion", "Resolution", "resolve_question"]

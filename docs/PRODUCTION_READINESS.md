@@ -117,7 +117,7 @@ real UI, and the full test suites:
 
 ### Verified limitations found and NOT fixed (need an owner decision)
 
-1. **No relevance gate before generation.** Off-topic questions still get a
+1. **~~No relevance gate before generation.~~ FIXED 2026-10-28 (#55):** off-topic questions now get the fixed no-evidence answer; the original finding: off-topic questions still got a
    "Based on the available documents…" answer with citations (3/3
    unanswerable eval queries; also reproduced live). `docs/EVALUATION.md`
    "Larger fixture" has the measurements and why a similarity threshold
@@ -131,7 +131,7 @@ real UI, and the full test suites:
    afterwards. Mitigations: run without `REDIS_URL` on a single instance,
    or fix with a circuit breaker / threadpool call (changes ADR 0006's
    failure policy → needs ADR review).
-3. **Lexical search is near non-functional for natural-language questions**
+3. **~~Lexical search is near non-functional for natural-language questions~~ FIXED 2026-10-28 (#55; OR matching, 0 of 16 empty results):** original finding:
    (AND semantics: 0 results for 14 of 16 eval questions), so hybrid
    behaves as dense-only.
 4. **No security response headers** (`X-Content-Type-Options`,
@@ -354,6 +354,43 @@ Sources (all fetched 2026-10-27): [Render pricing](https://render.com/pricing.md
 [Amazon SES pricing](https://aws.amazon.com/ses/pricing/) ·
 [Hetzner Cloud](https://www.hetzner.com/cloud/regular-performance/) ·
 USD/INR from the RBI reference-rate archive (as listed by search results; 30-Jun-2026 value).
+
+## Deployment impact of the AI and voice components (2026-10-28)
+
+The hosting comparison above was researched **before** the app had a language model
+or a neural speech recogniser. It is now materially out of date on sizing and cost:
+
+| Component | Measured footprint (development machine) |
+|---|---|
+| Backend with Whisper "small" loaded | ≈ **1.2 GiB** RAM (was ≈ 0.12 GiB idle) |
+| Speech model files | 464 MB on disk |
+| Local LLM (qwen2.5:3b-instruct, 8192-token context) | ≈ 1.2 GiB RAM in the Ollama container **and 2.3 GB of GPU memory** (100 % on an RTX 3050 4 GB) |
+| Docker images | backend 2.28 GB (was 1.14), frontend 0.31 GB, Ollama **8.47 GB** |
+| Answer time | 7–17 s on that GPU; CPU-only generation was **not measured** and is expected to be far slower |
+
+Consequences for the options:
+
+- **A 1 vCPU / 2 GiB droplet (the earlier Option A) cannot run this**: Postgres + frontend
+  + the backend with Whisper loaded already approach 2 GiB, and there is no GPU for the
+  model. Minimum for the app with local Whisper is roughly the 4 GiB tier ($24/mo ≈ ₹2,280
+  at the same ₹95/USD assumption, before backups) — 2 GiB would need a smaller Whisper
+  (`tiny`/`base`) or hosted speech.
+- **The language model needs a decision of its own** (none of these were researched or
+  priced here — their cost is **unknown**):
+  1. a **hosted OpenAI-compatible API** (set `LLM_BASE_URL`/`LLM_MODEL`/`LLM_API_KEY`):
+     pay per use, and the question, recent history and retrieved passages leave the
+     server — an explicit privacy/cost choice;
+  2. a **GPU host** running Ollama: much more expensive than the plans above;
+  3. a CPU-only local model: not recommended (unmeasured; likely too slow).
+- Speech can stay local (CPU) on a ≥ 4 GiB host, or use a self-hosted/hosted
+  `/audio/transcriptions` server (audio leaves the machine).
+- Browser speech and microphone access need HTTPS (or localhost): another reason a
+  domain and TLS are mandatory.
+
+So the practical shape of a public deployment is now: a ≥ 4 GiB app host **plus** a hosted
+LLM endpoint, with the monthly cost dominated by an LLM bill that has not been estimated.
+The earlier ranking of Options A/B/C by app-host price alone should not be relied on until
+that bill is researched.
 
 ## Exact human decisions and credentials needed before deployment
 
