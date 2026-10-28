@@ -27,10 +27,12 @@ import { Markdown } from "@/components/markdown";
 import { ProtectedRoute } from "@/components/protected-route";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { VoiceConversationButton, VoiceConversationPanel } from "@/components/voice-conversation";
 import { VoiceInputButton, VoiceInputPanel } from "@/components/voice-input";
 import * as api from "@/lib/api-client";
 import { ApiError } from "@/lib/api-client";
 import type { Capabilities, Citation, Conversation, Document, Message } from "@/lib/schemas";
+import { useVoiceConversation } from "@/lib/use-voice-conversation";
 import { useVoiceInput } from "@/lib/use-voice-input";
 import { useWorkspace } from "@/lib/workspace-context";
 
@@ -600,7 +602,33 @@ function ConversationThread({
       inputRef.current?.focus();
     },
   });
-  const isVoiceBusy = voice.phase !== "idle";
+  const [speakAnswers, setSpeakAnswers] = useState(true);
+  const [speechRate, setSpeechRate] = useState(1);
+  const conversation = useVoiceConversation({
+    workspaceId,
+    conversationId,
+    language: voice.language,
+    deviceId: voice.deviceId,
+    speakAnswers,
+    speechRate,
+    onTurn: (spokenQuestion, assistantMessage) => {
+      // The exchange joins the normal thread, so history, citations and source
+      // inspection are exactly those of typed chat.
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `voice-question-${prev.length}`,
+          role: "USER",
+          content: spokenQuestion,
+          created_at: new Date().toISOString(),
+          citations: [],
+          feedback: null,
+        },
+        assistantMessage,
+      ]);
+    },
+  });
+  const isVoiceBusy = voice.phase !== "idle" || conversation.active;
 
   const loadMessages = useCallback(async () => {
     setIsLoading(true);
@@ -715,7 +743,7 @@ function ConversationThread({
               className="border-input bg-background w-full rounded-lg border px-3.5 py-2.5 text-sm"
             />
           </div>
-          <div className="flex shrink-0 gap-2">
+          <div className="flex flex-wrap gap-2 sm:shrink-0">
           <Button type="submit" disabled={isSending || isVoiceBusy || !question.trim()}>
             {isSending ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -724,10 +752,21 @@ function ConversationThread({
             )}
             {isSending ? "Asking…" : "Ask"}
           </Button>
-          <VoiceInputButton voice={voice} disabled={isSending} />
+          <VoiceInputButton voice={voice} disabled={isSending || conversation.active} />
+          <VoiceConversationButton
+            voice={conversation}
+            disabled={isSending || voice.phase !== "idle"}
+          />
           </div>
         </form>
         <VoiceInputPanel voice={voice} transcriptHint={transcriptHint} />
+        <VoiceConversationPanel
+          voice={conversation}
+          speakAnswers={speakAnswers}
+          onSpeakAnswersChange={setSpeakAnswers}
+          speechRate={speechRate}
+          onSpeechRateChange={setSpeechRate}
+        />
         {sendError && (
           <p className="text-destructive text-sm">{sendError}</p>
         )}

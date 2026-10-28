@@ -680,4 +680,25 @@ describe("ChatPage", () => {
     expect(container.querySelector("pre code")?.textContent).toBe("int main() {\n    return 0;\n}");
     expect(container.querySelector("strong")?.textContent).toBe("What it does");
   });
+
+  it("starts a voice conversation: listening state, dictation and typing are locked out, end releases the mic", async () => {
+    setupConversation();
+    const cancel = vi.fn();
+    mockStartVoiceRecording.mockResolvedValue({ stop: vi.fn(), cancel });
+    const user = userEvent.setup();
+
+    render(<ChatPage />);
+    await screen.findByText(/ask a question to get started/i);
+    await user.click(screen.getByRole("button", { name: /start voice conversation/i }));
+
+    expect(await screen.findByText(/listening… speak now/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^ask$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /voice input/i })).toBeDisabled();
+    expect(screen.getByText(/turn-based/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /end conversation/i }));
+
+    expect(cancel).toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("button", { name: /start voice conversation/i })).toBeEnabled());
+  });
 });

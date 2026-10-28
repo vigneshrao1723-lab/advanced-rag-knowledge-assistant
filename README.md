@@ -75,6 +75,12 @@ capture for password-reset emails), the backend (`http://localhost:8000`),
 and the frontend (`http://localhost:3000`). The backend entrypoint
 applies pending database migrations automatically on startup.
 
+**Voice:** the microphone button dictates a question into the box for you to
+check before sending; *Voice conversation* is a hands-free spoken back-and-forth
+(turn-based, not realtime). Both need the one-time speech model install
+(`infra/scripts/setup-local-stt.sh`, ~460 MB) - see
+[`docs/AI_SETUP.md`](docs/AI_SETUP.md).
+
 **AI model:** answers are written by a language model you provide. Run
 `infra/scripts/setup-local-llm.sh` once to install a free local one (≈1.9 GB
 download), or point `LLM_BASE_URL`/`LLM_MODEL` at your own server — see
