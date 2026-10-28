@@ -31,7 +31,7 @@ RUN chmod +x docker-entrypoint.sh
 # included; without this, a brand-new volume is created owned by root,
 # which the non-root appuser below can't write into.
 RUN useradd --create-home --uid 1000 appuser \
-    && mkdir -p /app/data/documents \
+    && mkdir -p /app/data/documents /app/data/models \
     && chown -R appuser:appuser /app
 USER appuser
 

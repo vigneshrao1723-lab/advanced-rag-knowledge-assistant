@@ -11,10 +11,8 @@ This is the first slice to compose Issue #3's ingestion output
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import uuid
-import wave
 
 from fastapi import HTTPException, UploadFile, status
 from pydantic import ValidationError
@@ -49,6 +47,11 @@ from app.schemas.conversation import (
     MessageRead,
     VoiceMessageRead,
 )
+from app.voice.audio_upload import (
+    MAX_VOICE_AUDIO_DURATION_SECONDS,
+    read_and_validate_voice_upload,
+    validate_wav_duration,
+)
 from app.voice.stt_provider import (
     SpeechToTextError,
     SpeechToTextProvider,
@@ -62,8 +65,6 @@ from app.voice.tts_provider import TextToSpeechError, TextToSpeechProvider
 # while still describing an unreasonably long recording. 120s is
 # generous for a spoken chat question (`MessageCreate.content`'s own
 # 4000-character cap is the tighter bound in practice once transcribed).
-_MAX_VOICE_AUDIO_DURATION_SECONDS = 120.0
-_VOICE_UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 logger = logging.getLogger("app.conversations")
 
@@ -385,16 +386,6 @@ async def post_message(
     return _to_message_read(assistant_message, citation_reads)
 
 
-def _voice_audio_too_large_error() -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-        detail={
-            "code": "voice_audio_too_large",
-            "message": "The uploaded audio exceeds the maximum allowed size or duration.",
-        },
-    )
-
-
 def _unsupported_audio_format_error() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -442,43 +433,6 @@ def _audio_synthesis_failed_error() -> HTTPException:
     )
 
 
-async def _read_and_validate_voice_upload(upload: UploadFile, *, max_size_bytes: int) -> bytes:
-    """Streams the upload in bounded chunks -- never buffers an
-    arbitrarily large payload first and checks its length afterward.
-    Mirrors `document_service._read_and_validate_size()`'s identical
-    pattern."""
-    chunks: list[bytes] = []
-    total = 0
-    while True:
-        chunk = await upload.read(_VOICE_UPLOAD_CHUNK_SIZE)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > max_size_bytes:
-            raise _voice_audio_too_large_error()
-        chunks.append(chunk)
-    return b"".join(chunks)
-
-
-def _validate_wav_duration(audio_bytes: bytes, *, max_duration_seconds: float) -> None:
-    """A lightweight header-only check (no full decode). A file that
-    fails to parse as WAV here is deliberately let through unrejected --
-    `SpeechToTextProvider.transcribe()` is the single source of truth
-    for "is this genuinely valid, readable audio," so a malformed file
-    fails there with the correct `transcription_failed` outcome instead
-    of a misleading `voice_audio_too_large` one."""
-    try:
-        with wave.open(io.BytesIO(audio_bytes)) as wav_file:
-            frame_rate = wav_file.getframerate()
-            if frame_rate <= 0:
-                return
-            duration = wav_file.getnframes() / frame_rate
-    except (wave.Error, EOFError):
-        return
-    if duration > max_duration_seconds:
-        raise _voice_audio_too_large_error()
-
-
 async def transcribe_and_post_voice_message(
     db: Session,
     *,
@@ -523,10 +477,10 @@ async def transcribe_and_post_voice_message(
             ip_address=ip_address,
         )
 
-    audio_bytes = await _read_and_validate_voice_upload(
+    audio_bytes = await read_and_validate_voice_upload(
         upload, max_size_bytes=max_audio_size_bytes
     )
-    _validate_wav_duration(audio_bytes, max_duration_seconds=_MAX_VOICE_AUDIO_DURATION_SECONDS)
+    validate_wav_duration(audio_bytes, max_duration_seconds=MAX_VOICE_AUDIO_DURATION_SECONDS)
 
     mime_type = upload.content_type or "audio/wav"
     try:

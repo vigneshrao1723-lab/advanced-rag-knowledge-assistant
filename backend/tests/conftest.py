@@ -41,6 +41,13 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 # process, so it's force-set here unconditionally rather than deferred
 # to the ambient environment.
 os.environ["EMAIL_PROVIDER"] = "console"
+# Hermetic providers: the suite asserts exact answers, which only the
+# deterministic extractive generator and the offline recogniser can give. The
+# ambient environment (e.g. running inside the Docker image, whose Compose
+# config selects a real LLM and Whisper) must not leak into it. Tests that
+# exercise the other providers construct them explicitly.
+os.environ["LLM_PROVIDER"] = "extractive"
+os.environ["SPEECH_TO_TEXT_PROVIDER"] = "local"
 
 from app.core.db import engine, get_db  # noqa: E402
 from app.core.rate_limit import (  # noqa: E402

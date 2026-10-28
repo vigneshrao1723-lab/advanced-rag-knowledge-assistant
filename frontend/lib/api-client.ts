@@ -20,6 +20,7 @@ import {
   MessageSchema,
   SearchResponseSchema,
   SessionListSchema,
+  TranscriptionSchema,
   UserSchema,
   VoiceMessageSchema,
   WorkspaceListSchema,
@@ -38,6 +39,7 @@ import {
   type MessageResponse,
   type SearchResponse,
   type SessionInfo,
+  type Transcription,
   type User,
   type VoiceMessage,
   type Workspace,
@@ -518,6 +520,24 @@ export async function setMessageFeedback(
 }
 
 // --- Voice ---
+
+/** Speech-to-text only: returns the transcript for the user to review and
+ * edit. Nothing is asked of the assistant until they submit it. `language`
+ * is a bare code ("en", "hi") or omitted/"auto" to detect it. */
+export async function transcribeAudio(
+  workspaceId: string,
+  audio: Blob,
+  options: { language?: string; signal?: AbortSignal } = {}
+): Promise<Transcription> {
+  const formData = new FormData();
+  formData.append("audio", audio, "speech.wav");
+  if (options.language && options.language !== "auto") formData.append("language", options.language);
+  const response = await apiRequest(`/api/v1/workspaces/${workspaceId}/transcriptions`, "POST", {
+    body: formData,
+    signal: options.signal,
+  });
+  return TranscriptionSchema.parse(await response.json());
+}
 
 export async function postVoiceMessage(
   workspaceId: string,

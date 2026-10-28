@@ -76,7 +76,11 @@ def lexical_search(
     )
     if document_id is not None:
         stmt = stmt.where(DocumentChunk.document_id == document_id)
-    stmt = stmt.order_by(rank.desc()).limit(top_k)
+    # Ties are common with OR matching; without a tie-break Postgres returns
+    # tied rows in arbitrary order, so the same question could be answered
+    # from differently-ordered evidence on two runs.
+    stmt = stmt.order_by(rank.desc(), DocumentChunk.document_id, DocumentChunk.chunk_index)
+    stmt = stmt.limit(top_k)
 
     rows = db.execute(stmt).all()
     return [

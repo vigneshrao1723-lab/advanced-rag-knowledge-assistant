@@ -104,6 +104,14 @@ services:
       LLM_MODEL: ${LLM_MODEL:-rag-assistant}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-180}
+      # Speech-to-text (ADR 0010): a local neural model (faster-whisper), far
+      # more accurate than the legacy PocketSphinx. The model is NOT
+      # downloaded automatically: run infra/scripts/setup-local-stt.sh once
+      # (~460 MB for "small"). Until then the app says so; it does not hang.
+      SPEECH_TO_TEXT_PROVIDER: ${SPEECH_TO_TEXT_PROVIDER:-faster_whisper}
+      STT_MODEL: ${STT_MODEL:-small}
+      STT_LANGUAGE: ${STT_LANGUAGE:-}
+      STT_MODEL_DIR: /app/data/models
     volumes:
       # Local-dev persistence for uploaded documents (StorageProvider's
       # "local" implementation, app/core/config.py's storage_local_root,
@@ -118,6 +126,8 @@ services:
       # deployment), just parity with how the database is already
       # treated for local dev.
       - backend_documents:/app/data/documents
+      # Speech models installed by infra/scripts/setup-local-stt.sh.
+      - stt_models:/app/data/models
     ports:
       - "8000:8000"
     depends_on:
@@ -149,4 +159,5 @@ services:
 volumes:
   db_data:
   backend_documents:
+  stt_models:
   ollama_models:

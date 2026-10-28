@@ -52,7 +52,9 @@ def dense_search(
     )
     if document_id is not None:
         stmt = stmt.where(DocumentChunk.document_id == document_id)
-    stmt = stmt.order_by(distance).limit(top_k)
+    # Deterministic on ties (identical vectors/duplicate chunks).
+    stmt = stmt.order_by(distance, DocumentChunk.document_id, DocumentChunk.chunk_index)
+    stmt = stmt.limit(top_k)
 
     rows = db.execute(stmt).all()
     return [
