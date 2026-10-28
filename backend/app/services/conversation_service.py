@@ -38,7 +38,7 @@ from app.repositories import (
     message_repository,
 )
 from app.retrieval.reranker import Reranker
-from app.retrieval.resolve import resolve_question
+from app.retrieval.resolve import PreviousQuestion, resolve_question
 from app.retrieval.types import RetrievalCandidate
 from app.schemas.conversation import (
     CitationRead,
@@ -213,7 +213,7 @@ def _run_retrieval_and_generation(
         db,
         workspace_id=workspace_id,
         query=query,
-        previous_user_questions=[m.content for m in prior_messages if m.role == MessageRole.USER],
+        previous_user_questions=_previous_questions(db, prior_messages),
         prior_cited_chunks=_prior_cited_candidates(
             db, workspace_id=workspace_id, prior_messages=prior_messages
         ),
@@ -250,6 +250,25 @@ def _messages_before(
             break
         earlier.append(message)
     return earlier
+
+
+def _previous_questions(db: Session, messages: list[Message]) -> list[PreviousQuestion]:
+    """Each earlier user question with whether the assistant's answer to it
+    had citations (i.e. was built from evidence)."""
+    answer_ids = [m.id for m in messages if m.role == MessageRole.ASSISTANT]
+    cited = citation_repository.list_for_messages(db, message_ids=answer_ids)
+    questions: list[PreviousQuestion] = []
+    for index, message in enumerate(messages):
+        if message.role != MessageRole.USER:
+            continue
+        following = messages[index + 1] if index + 1 < len(messages) else None
+        resolved = (
+            following is not None
+            and following.role == MessageRole.ASSISTANT
+            and bool(cited.get(following.id))
+        )
+        questions.append(PreviousQuestion(text=message.content, resolved=resolved))
+    return questions
 
 
 def _to_history(messages: list[Message]) -> list[ChatTurn]:

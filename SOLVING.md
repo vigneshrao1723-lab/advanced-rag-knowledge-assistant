@@ -995,3 +995,79 @@ module reports as skipped inside the image.
 
 **Prevention:** run the exact CI commands (`ruff check .`, `mypy .`)
 separately and read each result before committing.
+
+---
+
+## 2026-10-28 — Voice-activity detection never fired (noise floor learned from speech)
+
+**Symptom:** In a real-browser run of the voice conversation, nothing was ever
+transcribed: three "I didn't hear anything" turns and then it stopped, although the
+microphone (a looping audio file) clearly contained speech. All 14 unit tests passed.
+
+**Root cause:** The detector estimated room noise from the median of its *first five
+level frames* and set the speech threshold at 2.5× that. The test audio (and a real
+person who starts talking the instant listening begins) put speech in those frames, so
+the "noise floor" was loud and the threshold ended up above anything the voice reached.
+The unit tests always began with quiet baseline frames, so they never covered it.
+
+**Failed attempts:** First suspected the browser (suspended `AudioContext`, autoplay
+policy) and the fake-microphone flags; neither was the cause — the network log was empty
+because nothing ever left the listening phase.
+
+**Fix:** Cap the noise-floor estimate (0.05 meter units) and the threshold (0.3).
+
+**Verification:** A new test that talks from the very first frame fails without the fix
+and passes with it (checked by reverting in place — `git stash` cannot see untracked
+files, which made a first "without the fix" check meaningless); the real-browser loop then
+completed.
+
+**Prevention:** Calibration code must be tested with the signal starting *immediately*,
+not only after a quiet lead-in; and run the real thing, not just the units.
+
+## 2026-10-28 — Sourcing the test environment in the shell that runs `docker compose` reconfigured the live backend
+
+**Symptom:** After a rebuild the backend restarted in a loop with "connection refused to
+127.0.0.1:5432" and a different `SECRET_KEY`.
+
+**Root cause:** One command did `source testenv.sh` (exporting `DATABASE_URL=…localhost…/ragtest`,
+`REDIS_URL`, `SECRET_KEY` for pytest) and then `docker compose up` in the same shell. Compose
+substitutes `${DATABASE_URL:-…}` from the calling environment, so the container received the
+test values. It never reached the owner's database (the connection was refused), but it did
+change the signing key until corrected.
+
+**Fix:** Recreated the backend with `env -u DATABASE_URL -u REDIS_URL -u SECRET_KEY docker
+compose …`; confirmed `db:5432/ragdb`, the documented dev key and the data counts.
+
+**Prevention:** Run pytest in a subshell `( source testenv.sh; pytest )` and wrap compose
+calls with `env -u …`. Tests that need the database now use a separate `ragtest` database
+and Redis db 15, never the owner's.
+
+## 2026-10-28 — A test suite that inherits a real-LLM environment is flaky
+
+**Symptom:** `test_voice_message_and_text_message_produce_identical_answers_for_the_same_transcript`
+failed intermittently when the suite ran inside the Docker image (the answers differed in
+wording).
+
+**Root cause:** Not retrieval: Compose now selects the real model (`LLM_PROVIDER=openai_compatible`)
+and Whisper, whose text legitimately varies run to run, and the tests read the ambient
+environment. (A deterministic tie-break was added to retrieval along the way; it is a
+worthwhile hardening but was not the cause.)
+
+**Fix:** `tests/conftest.py` forces the deterministic providers (as it already did for
+`EMAIL_PROVIDER`); tests that exercise other providers construct them explicitly.
+
+**Prevention:** Tests must never depend on the ambient provider environment.
+
+## 2026-10-28 — Installing faster-whisper silently swapped the HTTP library under every test
+
+**Symptom:** After `uv add faster-whisper`, `mypy` reported 15 errors in four unrelated
+cookie/password tests (`httpx2._models.Response` vs `httpx._models.Response`).
+
+**Root cause:** `huggingface-hub` 2.x depends on a new package `httpx2`, and Starlette's
+`TestClient` uses it when installed.
+
+**Fix:** pin `huggingface-hub>=0.21,<2` and `uv sync` to prune the orphaned copy.
+
+**Prevention:** after adding a dependency, check what it pulled in (`uv tree --invert`) and
+run `mypy` over the tests, not just the application.
+

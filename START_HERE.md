@@ -6,20 +6,18 @@ touching any file.
 
 ## 1. What this repository is, right now
 
-This is the **Advanced RAG Knowledge Intelligence Assistant** repository.
-The documentation/project-memory system (this file, `AGENTS.md`, `docs/`,
-etc.) is committed. **GitHub Issue #1 (Application Foundation)** — a FastAPI
-backend, a Next.js frontend, PostgreSQL + pgvector, Docker/Compose for local
-development, and a GitHub Actions CI workflow — has been implemented and
-locally verified (see `PROJECT_STATE.md`), but as of this writing it exists
-only in the local working tree on branch `issue-1-application-foundation`
-and has **not yet been committed, pushed, or merged** — `git status` is the
-ground truth for this, not this file. No product functionality (auth,
-ingestion, retrieval, generation, chat, voice) exists yet; that is real,
-tracked, future work — see §1a. The target system is described in `docs/`,
-but describing a system is not evidence that it exists. Treat the actual
-files on disk (and `git log`/`git status`) as ground truth, not this
-document's description.
+This is the **Advanced RAG Knowledge Intelligence Assistant**: a FastAPI backend
+(PostgreSQL + pgvector, Redis), a Next.js frontend, Docker Compose for local
+development and a GitHub Actions CI workflow. The product works end to end locally —
+authentication and workspaces, document ingestion, hybrid retrieval, answers written by
+a real language model with citations, dictation and a turn-based voice conversation,
+collections, search, document management and an evaluation harness. It is **not
+deployed anywhere** and the hosting target is undecided.
+
+`PROJECT_STATE.md` is the authoritative, current description (what exists, known
+limitations, priorities) and `HANDOFF.md` the in-flight task — read those, and treat
+`git log`/`git status` and the real files as ground truth over any prose. The local
+AI/speech setup is in `docs/AI_SETUP.md`.
 
 ## 1a. GitHub issue tracking
 

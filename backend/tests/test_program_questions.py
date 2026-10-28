@@ -295,6 +295,51 @@ def test_a_follow_up_after_a_missing_program_still_needs_a_real_one(
     assert body["citations"]
 
 
+def test_follow_ups_skip_a_question_that_found_nothing_and_return_to_the_last_real_topic(
+    client: TestClient, provider: ScriptedProvider
+) -> None:
+    # Regression (found by running the owner's checklist): after "Explain
+    # Program 1" found nothing, every follow-up repeated "I couldn't find
+    # Program 1" because it was taken as the focus.
+    ws, conv, _ = _setup(client)
+    _ask(client, ws, conv, "Explain Program 2")
+    _ask(client, ws, conv, "Explain Program 9")  # not in the manual
+    assert len(provider.calls) == 1
+
+    body = _ask(client, ws, conv, "Explain it as a beginner")
+
+    assert "couldn't find" not in body["content"]
+    assert "MPI_Reduce(&local, &total" in provider.calls[1]["context"]  # Program 2 again
+    assert "Program 9" not in provider.calls[1]["context"]
+    assert "BEGINNER" in provider.calls[1]["system"]
+
+
+def test_a_follow_up_with_nothing_to_refer_to_asks_what_is_meant(
+    client: TestClient, provider: ScriptedProvider
+) -> None:
+    ws, conv, _ = _setup(client)
+    _ask(client, ws, conv, "Explain Program 9")  # nothing resolved in this conversation
+
+    body = _ask(client, ws, conv, "Explain it as a beginner")
+
+    assert provider.calls == []
+    assert "not sure which part you mean" in body["content"]
+    assert body["citations"] == []
+    # ...and naming something fixes it straight away.
+    _ask(client, ws, conv, "Explain Program 2 as a beginner")
+    assert "Program 2: Sum of an array" in provider.calls[0]["context"]
+
+
+def test_a_follow_up_style_question_in_a_new_conversation_is_not_blocked(
+    client: TestClient, provider: ScriptedProvider
+) -> None:
+    ws, conv, _ = _setup(client)
+
+    body = _ask(client, ws, conv, "Explain this as a beginner")  # no history at all
+
+    assert "not sure which part you mean" not in body["content"]
+
+
 # --- missing evidence -------------------------------------------------------------------------
 
 

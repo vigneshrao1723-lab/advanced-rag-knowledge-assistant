@@ -12,6 +12,47 @@ with invented history of either kind.
 
 ## [Unreleased — committed]
 
+### 2026-10-28 — owner-acceptance fixes (Issue #53): #54 `a970c07`, #55 `f31a7f7`, #56 `7e20324`, #57 `24bfd77`, and a follow-up fix + project memory (#58)
+
+*(After hands-on testing the owner judged the app not release-ready: document
+questions returned raw PDF text, speech recognition was inaccurate, no
+conversational voice. Four cycles, each its own PR with all 4 required CI checks
+green, squash-merged. Implementation is complete; **owner acceptance is pending**.)*
+
+- **#54 — real answer generation (ADR 0009).** `get_llm_provider()` always returned
+  the extractive provider, which only quotes passages. Added
+  `OpenAICompatibleLLMProvider` (local Ollama is the free default; hosted only by
+  explicit config), explanation-oriented prompting with an untrusted-evidence
+  boundary, conversation history, citations limited to what the model cited, no
+  silent fallback (`503 llm_unavailable`, question withdrawn), `/system/capabilities`,
+  chat banner, Markdown/code rendering, opt-in `ollama` compose service, setup script.
+- **#55 — document fidelity and retrieval.** Code-aware PDF extraction (indentation
+  kept; real pdfTeX file: indented lines per page 0 → 13/31/8/14/20); "Program N",
+  first/last program, filename mentions and follow-ups resolve to the item's complete
+  span, absent items get a deterministic reply; relevance gate (hashing embedder);
+  code-fidelity guard; structural line-by-line walkthrough; lexical search ORs query
+  words (eval: lexical coverage 0.125 → 1.00, unanswerable 3/3 refused).
+- **#56 — speech-to-text (ADR 0010).** Local faster-whisper provider (never downloads
+  during a request), transcription-only endpoint, review-before-send dictation,
+  16 kHz mono capture with silence/short checks and specific errors, workspace
+  vocabulary hint ("verbal sort" → "bubble sort"); hermetic test suite;
+  `huggingface-hub<2` pin.
+- **#57 — voice conversation (ADR 0011).** Hands-free, turn-based listen → transcribe
+  → ask → speak → listen loop with Stop-speaking/End, local browser voices else server
+  audio, speakable answer text; not full-duplex.
+- **#58 — follow-up fix + project memory.** Found by running the owner's checklist: after
+  "Explain Program 1" found nothing, every follow-up repeated "couldn't find Program 1".
+  Follow-ups now use only questions that resolved to evidence and otherwise ask what is
+  meant. PROJECT_STATE/HANDOFF/CHANGELOG/SOLVING/PRODUCTION_READINESS updated.
+- **Verification (final, from `main`):** backend 981 passed + 2 skipped inside the
+  image (978 before #58's 3 new tests), `ruff`/`mypy` clean; frontend 181/181, lint/tsc/build
+  clean; Playwright 21/21 against the live stack with the real model; 30-check browser
+  UI regression 29/30 (expected pre-login 401); real headless-Chromium voice runs with
+  a fake microphone fed from audio files; the owner's Stage-1 question sequence run
+  against the live stack with the real model. **Not verified:** real human voices,
+  accents, microphones/speakers, Windows browser voices, answer quality on the owner's
+  own documents.
+
 ### 2026-10-27 — final release audit (Issue #50): `fix: non-Latin-1 download filenames…` (#51), merged as `6a6e44e`; evaluation fixture + docs (#52)
 
 *(Audit run from a clean `main` @ `52985a9` against a freshly built,
