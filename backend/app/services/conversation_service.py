@@ -52,6 +52,7 @@ from app.voice.audio_upload import (
     read_and_validate_voice_upload,
     validate_wav_duration,
 )
+from app.voice.speakable import speakable_text
 from app.voice.stt_provider import (
     SpeechToTextError,
     SpeechToTextProvider,
@@ -555,7 +556,7 @@ async def synthesize_message_audio(
         raise _message_not_found_error()
 
     try:
-        return await asyncio.to_thread(tts_provider.synthesize, message.content)
+        return await asyncio.to_thread(tts_provider.synthesize, speakable_text(message.content))
     except TextToSpeechError as exc:
         raise _audio_synthesis_failed_error() from exc
 

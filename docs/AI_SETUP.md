@@ -73,6 +73,21 @@ synthetic espeak speech: "Explain program number five" → exactly right; "bubbl
 sort" was misheard as "verbal sort" without the workspace hint and right with it.
 Real human voices and accents are not covered by any automated test.
 
+## Voice conversation (hands-free)
+
+*Voice conversation* in the chat (next to *Voice input*) is a separate, hands-free
+mode: it listens until you stop talking, transcribes, answers using your documents,
+**speaks the answer**, and listens again. Everything it says also appears in the
+chat with its sources.
+
+It is **turn-based, not realtime/full-duplex**: it cannot hear you while it speaks,
+you interrupt with **Stop speaking**, and each turn takes several seconds (speech
+recognition ≈ 3 s plus the model's answer time). It needs the speech model above and
+a working AI model. Spoken output uses a voice already installed on your computer
+(e.g. the Windows voices) when the browser offers one; otherwise it falls back to
+the built-in robotic voice. Code is never read aloud — the spoken answer says the
+code is on screen. Hosted cloud voices are not used.
+
 ## Settings
 
 `LLM_TIMEOUT_SECONDS` (180), `LLM_TEMPERATURE` (0.2), `LLM_MAX_OUTPUT_TOKENS`
