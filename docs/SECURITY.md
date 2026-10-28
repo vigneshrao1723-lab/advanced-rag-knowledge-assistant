@@ -479,6 +479,22 @@ once a real (non-extractive) `LLMProvider` is ever added — a provider
 that *could* be persuaded by injected text would need to be caught by
 re-running this same corpus against it, not a new one invented later.
 
+
+**Real-model generation (ADR 0009, 2026-10-27).** With a generative provider the
+extractive provider's "inert by construction" argument no longer applies, so the
+boundary is explicit instead: instructions live only in the system message (our
+rules + style hints taken from the *user's own question*); retrieved text is
+untrusted and appears only inside a delimited, source-labelled evidence block in
+the user message, with forged delimiters neutralised (`app/generation/prompts.py`,
+tested in `tests/test_llm_provider.py`); the system rules tell the model never to
+obey instructions found in documents. The model has no tools, no network access
+and no secrets, and answers render through a Markdown renderer with no HTML
+pass-through, so a successful injection can degrade an answer but cannot trigger
+an action or inject markup. Injection resistance of a *specific* model is
+unmeasured and must be re-checked when the model changes. Hosted providers
+receive the question, recent history and retrieved passages (explicit opt-in);
+`LLM_API_KEY` is sent only as a bearer header and never logged or echoed.
+
 ## Secret management
 
 - Real secrets are never committed; `.env.example` lists variable names

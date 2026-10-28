@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 import uuid
 import wave
 
@@ -21,15 +22,22 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import AuditEvent
 from app.core.audit import record as record_audit_event
+from app.core.config import get_settings
 from app.generation.citation_engine import create_citations
 from app.generation.context_builder import BuiltContext
-from app.generation.llm_provider import LLMProvider
+from app.generation.llm_provider import LLMProvider, LLMUnavailableError
+from app.generation.prompts import ChatTurn
 from app.generation.service import generate_answer
 from app.ingestion.embedding import EmbeddingProvider
 from app.models.citation import Citation
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageFeedback, MessageRole
-from app.repositories import citation_repository, conversation_repository, message_repository
+from app.repositories import (
+    citation_repository,
+    conversation_repository,
+    document_repository,
+    message_repository,
+)
 from app.retrieval.reranker import Reranker
 from app.retrieval.service import hybrid_search
 from app.retrieval.types import RetrievalCandidate
@@ -55,6 +63,8 @@ from app.voice.tts_provider import TextToSpeechError, TextToSpeechProvider
 # 4000-character cap is the tighter bound in practice once transcribed).
 _MAX_VOICE_AUDIO_DURATION_SECONDS = 120.0
 _VOICE_UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+logger = logging.getLogger("app.conversations")
 
 
 def _conversation_not_found_error(
@@ -201,7 +211,49 @@ def _run_retrieval_and_generation(
         conversation_id=conversation_id,
         message_id=user_message_id,
     )
-    return generate_answer(query=query, candidates=candidates, llm_provider=llm_provider)
+    documents = document_repository.list_by_ids_for_workspace(
+        db,
+        workspace_id=workspace_id,
+        document_ids=list({candidate.document_id for candidate in candidates}),
+    )
+    return generate_answer(
+        query=query,
+        candidates=candidates,
+        llm_provider=llm_provider,
+        history=_history_before(db, conversation_id=conversation_id, before_id=user_message_id),
+        source_labels={document.id: document.filename for document in documents},
+    )
+
+
+def _history_before(
+    db: Session, *, conversation_id: uuid.UUID, before_id: uuid.UUID
+) -> list[ChatTurn]:
+    """The conversation's earlier turns (oldest first), excluding the
+    message being answered and anything after it, capped at the configured
+    number of turns -- what lets a follow-up like "explain it line by
+    line" resolve against what was just discussed."""
+    limit = get_settings().llm_history_turns
+    if limit <= 0:
+        return []
+    earlier: list[ChatTurn] = []
+    for message in message_repository.list_for_conversation(db, conversation_id=conversation_id):
+        if message.id == before_id:
+            break
+        earlier.append(
+            ChatTurn(
+                role="user" if message.role == MessageRole.USER else "assistant",
+                content=message.content,
+            )
+        )
+    return earlier[-limit:]
+
+
+def _llm_unavailable_http_error(exc: LLMUnavailableError) -> HTTPException:
+    logger.warning("llm_unavailable", extra={"reason": exc.code})
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={"code": "llm_unavailable", "message": exc.message},
+    )
 
 
 async def post_message(
@@ -244,17 +296,26 @@ async def post_message(
     )
     db.commit()
 
-    answer, context = await asyncio.to_thread(
-        _run_retrieval_and_generation,
-        db,
-        workspace_id=workspace_id,
-        query=content,
-        embedding_provider=embedding_provider,
-        reranker=reranker,
-        llm_provider=llm_provider,
-        conversation_id=conversation.id,
-        user_message_id=user_message.id,
-    )
+    try:
+        answer, context = await asyncio.to_thread(
+            _run_retrieval_and_generation,
+            db,
+            workspace_id=workspace_id,
+            query=content,
+            embedding_provider=embedding_provider,
+            reranker=reranker,
+            llm_provider=llm_provider,
+            conversation_id=conversation.id,
+            user_message_id=user_message.id,
+        )
+    except LLMUnavailableError as exc:
+        # The model could not be reached/used: withdraw the question so
+        # the history has no unanswered orphan, and tell the user exactly
+        # why (the UI keeps their text so they can retry).
+        db.rollback()
+        message_repository.delete(db, message=user_message)
+        db.commit()
+        raise _llm_unavailable_http_error(exc) from exc
 
     assistant_message = message_repository.create(
         db,
@@ -638,17 +699,21 @@ async def regenerate_message(
     if question is None:
         raise _cannot_regenerate_error()
 
-    answer, context = await asyncio.to_thread(
-        _run_retrieval_and_generation,
-        db,
-        workspace_id=workspace_id,
-        query=question.content,
-        embedding_provider=embedding_provider,
-        reranker=reranker,
-        llm_provider=llm_provider,
-        conversation_id=conversation.id,
-        user_message_id=question.id,
-    )
+    try:
+        answer, context = await asyncio.to_thread(
+            _run_retrieval_and_generation,
+            db,
+            workspace_id=workspace_id,
+            query=question.content,
+            embedding_provider=embedding_provider,
+            reranker=reranker,
+            llm_provider=llm_provider,
+            conversation_id=conversation.id,
+            user_message_id=question.id,
+        )
+    except LLMUnavailableError as exc:
+        db.rollback()  # the existing answer and citations stay untouched
+        raise _llm_unavailable_http_error(exc) from exc
 
     message = message_repository.update_content(db, message=message, content=answer, feedback=None)
     citation_repository.delete_for_message(db, message_id=message.id)

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import Link from "next/link";
 import {
+  AlertTriangle,
   ChevronDown,
   ChevronUp,
   ExternalLink,
@@ -23,12 +24,13 @@ import {
   Trash2,
 } from "lucide-react";
 
+import { Markdown } from "@/components/markdown";
 import { ProtectedRoute } from "@/components/protected-route";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import * as api from "@/lib/api-client";
 import { ApiError } from "@/lib/api-client";
-import type { Citation, Conversation, Document, Message } from "@/lib/schemas";
+import type { Capabilities, Citation, Conversation, Document, Message } from "@/lib/schemas";
 import { startVoiceRecording, type VoiceRecorder } from "@/lib/voice-recorder";
 import { useWorkspace } from "@/lib/workspace-context";
 
@@ -522,13 +524,13 @@ function MessageBubble({
   return (
     <div className={`flex flex-col gap-1.5 ${isUser ? "items-end" : "items-start"}`}>
       <div
-        className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-6 whitespace-pre-wrap ${
+        className={`rounded-2xl px-4 py-2.5 text-sm leading-6 ${
           isUser
-            ? "rounded-br-md bg-indigo-700 text-white"
-            : "rounded-bl-md border border-slate-200 bg-slate-50 text-slate-900"
+            ? "max-w-[80%] rounded-br-md bg-indigo-700 whitespace-pre-wrap text-white"
+            : "max-w-full rounded-bl-md border border-slate-200 bg-slate-50 text-slate-900 sm:max-w-[90%]"
         }`}
       >
-        {message.content}
+        {isUser ? message.content : <Markdown content={message.content} />}
       </div>
       {!isUser && !message.id.startsWith("pending-") && (
         <div className="flex items-center gap-2">
@@ -633,9 +635,15 @@ function ConversationThread({
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (err) {
       setSendError(err instanceof ApiError ? err.message : "Could not send that question.");
-      // The optimistic user bubble is left in place rather than removed
-      // -- it reflects what the user actually asked, and reopening this
-      // conversation later shows the real persisted state regardless.
+      if (err instanceof ApiError && err.status === 503) {
+        // The AI model is unavailable: the server withdrew the question
+        // (nothing was answered or saved), so drop the optimistic bubble and
+        // give the user their text back to retry once the model is up.
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith("pending-")));
+        setQuestion(content);
+      }
+      // For other failures the optimistic bubble stays: it reflects what the
+      // user asked, and reopening the conversation shows the persisted state.
     } finally {
       setIsSending(false);
     }
@@ -768,6 +776,45 @@ function ConversationThread({
   );
 }
 
+/** Tells the user up front when answers can't be real explanations (model
+ * not running / not configured) instead of letting the first question fail. */
+function ModelStatusBanner() {
+  const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getCapabilities()
+      .then((result) => {
+        if (!cancelled) setCapabilities(result);
+      })
+      .catch(() => {
+        // The banner is advisory; if the check itself fails, say nothing.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!capabilities || capabilities.llm.status === "ready") return null;
+  const isExtractive = capabilities.llm.status === "extractive";
+  return (
+    <div
+      role="status"
+      className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+    >
+      <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+      <div>
+        <p className="font-medium">
+          {isExtractive ? "No AI model is set up" : "The AI model is not available"}
+        </p>
+        <p>{capabilities.llm.message}</p>
+        <p className="text-amber-800">Setup guide: docs/AI_SETUP.md</p>
+      </div>
+    </div>
+  );
+}
+
 function ChatContent() {
   const { currentWorkspace, isLoading: isWorkspaceLoading } = useWorkspace();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -821,7 +868,9 @@ function ChatContent() {
   const documentsById = new Map(documents.map((document) => [document.id, document]));
 
   return (
-    <div className="flex min-h-[calc(100vh-11rem)] flex-col gap-4 sm:flex-row">
+    <div className="flex flex-col gap-3">
+      <ModelStatusBanner />
+      <div className="flex min-h-[calc(100vh-14rem)] flex-col gap-4 sm:flex-row">
       <ConversationList
         workspaceId={currentWorkspace.id}
         conversations={conversations}
@@ -856,6 +905,7 @@ function ChatContent() {
           </CardContent>
         </Card>
       )}
+      </div>
     </div>
   );
 }

@@ -34,6 +34,13 @@ vi.mock("@/lib/api-client", async () => {
     getDocumentChunk: vi.fn(),
     setMessageFeedback: vi.fn(),
     regenerateMessage: vi.fn(),
+    getCapabilities: vi.fn(() =>
+      Promise.resolve({
+        llm: { provider: "openai_compatible", model: "m", status: "ready", message: "ready" },
+        stt: { provider: "local", model: null, status: "ready", message: "ready" },
+        tts: { provider: "espeak-ng", model: null, status: "ready", message: "ready" },
+      })
+    ),
   };
 });
 
@@ -478,5 +485,76 @@ describe("ChatPage", () => {
       "aria-pressed",
       "false"
     );
+  });
+
+  it("warns up front when the AI model is not available", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([]);
+    vi.mocked(api.listDocuments).mockResolvedValue([]);
+    vi.mocked(api.getCapabilities).mockResolvedValueOnce({
+      llm: {
+        provider: "openai_compatible",
+        model: "rag-assistant",
+        status: "unreachable",
+        message: "The AI model server cannot be reached.",
+      },
+      stt: { provider: "local", model: null, status: "ready", message: "ready" },
+      tts: { provider: "espeak-ng", model: null, status: "ready", message: "ready" },
+    });
+
+    render(<ChatPage />);
+
+    expect(await screen.findByText("The AI model is not available")).toBeTruthy();
+    expect(screen.getByText("The AI model server cannot be reached.")).toBeTruthy();
+  });
+
+  it("restores the question and drops the bubble when the model is unavailable (503)", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([
+      { id: "c1", title: "Chat", created_at: "", updated_at: "" },
+    ]);
+    vi.mocked(api.listDocuments).mockResolvedValue([]);
+    vi.mocked(api.listMessages).mockResolvedValue([]);
+    vi.mocked(api.postMessage).mockRejectedValue(
+      new api.ApiError(503, "The AI model server cannot be reached.")
+    );
+
+    render(<ChatPage />);
+    const user = userEvent.setup();
+    const input = await screen.findByLabelText("Ask a question");
+    await user.type(input, "Explain program 5");
+    await user.click(screen.getByRole("button", { name: /^ask$/i }));
+
+    expect(await screen.findByText("The AI model server cannot be reached.")).toBeTruthy();
+    await waitFor(() => expect((input as HTMLInputElement).value).toBe("Explain program 5"));
+    expect(screen.queryByText("Ask a question to get started.")).toBeTruthy();
+  });
+
+  it("renders an assistant answer's code as a formatted block, not raw text", async () => {
+    mockAuthenticated();
+    mockWorkspace();
+    vi.mocked(api.listConversations).mockResolvedValue([
+      { id: "c1", title: "Chat", created_at: "", updated_at: "" },
+    ]);
+    vi.mocked(api.listDocuments).mockResolvedValue([]);
+    vi.mocked(api.listMessages).mockResolvedValue([
+      { id: "u1", role: "USER", content: "Explain", created_at: "", citations: [], feedback: null },
+      {
+        id: "a1",
+        role: "ASSISTANT",
+        content: "**What it does**\n```c\nint main() {\n    return 0;\n}\n```",
+        created_at: "",
+        citations: [],
+        feedback: null,
+      },
+    ]);
+
+    const { container } = render(<ChatPage />);
+
+    await waitFor(() => expect(container.querySelector("pre code")).toBeTruthy());
+    expect(container.querySelector("pre code")?.textContent).toBe("int main() {\n    return 0;\n}");
+    expect(container.querySelector("strong")?.textContent).toBe("What it does");
   });
 });

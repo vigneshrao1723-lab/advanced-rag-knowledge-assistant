@@ -7,10 +7,15 @@ to treat that evidence as untrusted data, never instructions.
 from __future__ import annotations
 
 import logging
+import re
 import time
+import uuid
+from collections.abc import Mapping, Sequence
 
+from app.core.config import get_settings
 from app.generation.context_builder import BuiltContext, build_context
-from app.generation.llm_provider import LLMProvider
+from app.generation.llm_provider import NO_EVIDENCE_ANSWER, LLMProvider
+from app.generation.prompts import ChatTurn, build_system_prompt
 from app.retrieval.types import RetrievalCandidate
 
 logger = logging.getLogger("app.generation")
@@ -22,7 +27,7 @@ logger = logging.getLogger("app.generation")
 # here explicitly so any future real provider implementation has it to
 # work with, even though the shipped LocalGroundedExtractiveProvider
 # does not need it (it never interprets `context` at all).
-_SYSTEM_PROMPT = (
+_EXTRACTIVE_SYSTEM_PROMPT = (
     "You are a helpful assistant that answers questions using ONLY the "
     "evidence provided in the EVIDENCE section below. Do not use any "
     "other knowledge. If the evidence does not contain enough "
@@ -34,31 +39,71 @@ _SYSTEM_PROMPT = (
     "cite from."
 )
 
+_EXTRACTIVE_CONTEXT_CHARS = 4000
+_MARKER_RE = re.compile(r"\[(\d+)\]")
+# When a model forgets to cite, fall back to the best-ranked evidence rather
+# than showing no sources at all.
+_FALLBACK_CITATION_COUNT = 3
+
+
+def select_cited_blocks(answer: str, context: BuiltContext) -> BuiltContext:
+    """For a generative answer, keep only the evidence blocks the model
+    actually cited (`[n]`), preserving each block's own marker so the
+    numbers in the answer text still match the citation chips. If the model
+    cited nothing valid, keep the top few blocks instead of none."""
+    cited = {int(m) for m in _MARKER_RE.findall(answer)}
+    kept = [block for block in context.blocks if block.marker in cited]
+    if not kept:
+        kept = context.blocks[:_FALLBACK_CITATION_COUNT]
+    return BuiltContext(text=context.text, blocks=kept, labeled_text=context.labeled_text)
+
 
 def generate_answer(
-    *, query: str, candidates: list[RetrievalCandidate], llm_provider: LLMProvider
+    *,
+    query: str,
+    candidates: list[RetrievalCandidate],
+    llm_provider: LLMProvider,
+    history: Sequence[ChatTurn] = (),
+    source_labels: Mapping[uuid.UUID, str] | None = None,
 ) -> tuple[str, BuiltContext]:
     """Returns `(answer_text, built_context)` — the caller needs
     `built_context.blocks` afterward to build `Citation` rows (see
     `app.generation.citation_engine`), so it's returned rather than
-    discarded once generation is done.
+    discarded once generation is done. For a generative provider the
+    returned context is already restricted to the blocks the answer cites.
+
+    With no usable evidence the fixed no-evidence answer is returned and
+    **no model is called** -- a language model asked to answer from nothing
+    is exactly where hallucination comes from.
 
     Logs per-stage latency (docs/RAG_DESIGN.md "Observability": "context
     build latency, generation latency") as one structured record per
     call. "Token usage" is tracked as character counts of the context/
-    answer, not real model tokens: the shipped `LocalGroundedExtractiveProvider`
-    is deterministic and non-tokenizing (see
-    `docs/DECISIONS/0007-local-providers-for-embedding-reranking-generation.md`)
-    -- character counts are the closest honest analog available today,
-    not a claim of real token accounting; a future tokenizing provider
-    can report real token counts through the same log field names.
+    answer, not real model tokens (see ADR 0007/0009).
     """
+    generative = bool(getattr(llm_provider, "is_generative", False))
+    max_chars = get_settings().llm_context_max_chars if generative else _EXTRACTIVE_CONTEXT_CHARS
+
     build_started = time.monotonic()
-    context = build_context(candidates)
+    context = build_context(candidates, max_chars=max_chars, source_labels=source_labels)
     context_build_ms = int((time.monotonic() - build_started) * 1000)
 
+    if not context.blocks:
+        return NO_EVIDENCE_ANSWER, context
+
     generate_started = time.monotonic()
-    answer = llm_provider.generate(system_prompt=_SYSTEM_PROMPT, context=context.text, query=query)
+    if generative:
+        answer = llm_provider.generate(
+            system_prompt=build_system_prompt(query),
+            context=context.labeled_text,
+            query=query,
+            history=history,
+        )
+        context = select_cited_blocks(answer, context)
+    else:
+        answer = llm_provider.generate(
+            system_prompt=_EXTRACTIVE_SYSTEM_PROMPT, context=context.text, query=query
+        )
     generation_ms = int((time.monotonic() - generate_started) * 1000)
 
     logger.info(
@@ -70,9 +115,10 @@ def generate_answer(
             "answer_chars": len(answer),
             "candidate_count": len(candidates),
             "citation_count": len(context.blocks),
+            "generative": generative,
         },
     )
     return answer, context
 
 
-__all__ = ["generate_answer"]
+__all__ = ["generate_answer", "select_cited_blocks"]

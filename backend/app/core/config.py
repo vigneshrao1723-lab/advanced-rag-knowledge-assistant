@@ -219,8 +219,41 @@ class Settings(BaseSettings):
     text_to_speech_provider: Literal["local"] = "local"
     max_voice_audio_size_bytes: int = 10 * 1024 * 1024
 
-    # Reserved for future issues — not consumed by any code path yet.
+    # Answer generation (ADR 0009). "extractive" (the deterministic
+    # `LocalGroundedExtractiveProvider`) only quotes the retrieved passages
+    # -- it is kept for tests, CI and offline evaluation, NOT as a real
+    # assistant. "openai_compatible" talks to any server that implements
+    # the OpenAI `/chat/completions` API: a local Ollama / llama.cpp /
+    # LM Studio / vLLM (free, nothing leaves the machine) or a hosted
+    # provider (explicit opt-in: only the retrieved passages and the
+    # question are sent). No vendor is hardcoded and nothing here is
+    # silently switched: an unreachable or unconfigured model surfaces a
+    # clear "model unavailable" error, never a quiet fallback to excerpts.
+    llm_provider: Literal["extractive", "openai_compatible"] = "extractive"
+    llm_base_url: str | None = None
+    llm_model: str | None = None
     llm_api_key: str | None = None
+    llm_timeout_seconds: float = 180.0
+    llm_temperature: float = 0.2
+    llm_max_output_tokens: int = 1200
+    # Character budget for the evidence block sent to a generative model
+    # (the extractive provider keeps its own historical 4000-char budget).
+    llm_context_max_chars: int = 6000
+    # How many previous chat turns are sent so follow-ups ("explain it line
+    # by line") have context; each turn is truncated.
+    llm_history_turns: int = 6
+
+    @model_validator(mode="after")
+    def _validate_llm_numbers(self) -> "Settings":
+        if self.llm_timeout_seconds <= 0:
+            raise ValueError("llm_timeout_seconds must be > 0.")
+        if self.llm_max_output_tokens <= 0 or self.llm_context_max_chars <= 0:
+            raise ValueError("llm_max_output_tokens and llm_context_max_chars must be > 0.")
+        if self.llm_history_turns < 0:
+            raise ValueError("llm_history_turns must be >= 0.")
+        return self
+
+    # Reserved for future issues — not consumed by any code path yet.
     embedding_api_key: str | None = None
     reranker_api_key: str | None = None
     stt_api_key: str | None = None

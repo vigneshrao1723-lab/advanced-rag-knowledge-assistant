@@ -75,6 +75,12 @@ capture for password-reset emails), the backend (`http://localhost:8000`),
 and the frontend (`http://localhost:3000`). The backend entrypoint
 applies pending database migrations automatically on startup.
 
+**AI model:** answers are written by a language model you provide. Run
+`infra/scripts/setup-local-llm.sh` once to install a free local one (≈1.9 GB
+download), or point `LLM_BASE_URL`/`LLM_MODEL` at your own server — see
+[`docs/AI_SETUP.md`](docs/AI_SETUP.md). Until then the chat shows a banner and
+will not answer.
+
 Then, in a browser at `http://localhost:3000`:
 
 1. **Register** an account and **log in**.
